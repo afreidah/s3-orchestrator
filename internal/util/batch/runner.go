@@ -12,9 +12,7 @@
 package batch
 
 import (
-	"cmp"
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -27,14 +25,13 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// Runner drives one batch. Name labels its cycle log line and defaults to the
-// context's workload. Concurrency is passed through to workerpool.Run
-// (1 = sequential); Key, when set, supplies each item's progress label;
-// Observer, when set, receives the per-item progress steps.
+// Runner drives one batch. Concurrency is passed through to workerpool.Run
+// (1 = sequential). Admission, when set, runs each item under one of its
+// slots and skips an item refused one. Key, when set, supplies each item's
+// progress label, and Observer, when set, receives the per-item steps.
 type Runner[T any] struct {
-	Name        string
-	Log         *slog.Logger
 	Concurrency int
+	Admission   Admission
 	Observer    progress.Observer
 	Key         func(T) string
 }
@@ -62,7 +59,7 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 			label = r.Key(item)
 		}
 		progress.Track(r.Observer, label, func() string {
-			res = fn(ctx, item)
+			res = r.runItem(ctx, item, fn)
 			return res.Status
 		})
 		mu.Lock()
@@ -73,12 +70,18 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 	sum := Tally(results, start)
 	sum.Planned = len(items)
 	sum.Usage = usage.Usage()
-	// An idle tick has nothing to report, and a worker polling an empty queue
-	// would otherwise log every interval.
-	if sum.Planned > 0 {
-		LogCycle(ctx, r.Log, cmp.Or(r.Name, string(audit.WorkloadOf(ctx))), sum)
-	}
 	return sum
+}
+
+// runItem runs fn for one item, under an admission slot when the runner has
+// admission.
+func (r Runner[T]) runItem(ctx context.Context, item T, fn func(context.Context, T) ItemResult) ItemResult {
+	if r.Admission == nil {
+		return fn(ctx, item)
+	}
+	res := Skipped(progress.StatusSkipped)
+	Admit(ctx, r.Admission, func() { res = fn(ctx, item) })
+	return res
 }
 
 // Tally folds per-item results gathered without a Runner into a Summary,
@@ -97,14 +100,4 @@ func Tally(results []ItemResult, start time.Time) Summary {
 	}
 	sum.Attempted = sum.Succeeded + sum.Failed
 	return sum
-}
-
-// LogCycle emits the one "<name> cycle complete" line every batch reports,
-// with the usage charged to each backend. A nil log emits nothing.
-func LogCycle(ctx context.Context, log *slog.Logger, name string, sum Summary) {
-	if log == nil {
-		return
-	}
-	log.LogAttrs(ctx, slog.LevelInfo, name+" cycle complete",
-		append(sum.AuditAttrs(), slog.String("outcome", sum.Outcome()), slog.Duration("duration", sum.Duration))...)
 }

@@ -84,8 +84,8 @@ func placeMovingSource(_ context.Context, p *core.Placement) (int64, []core.Clea
 
 // planMove builds a rebalance move of key, read as a copy of size bytes on
 // from stored at the key itself, toward to.
-func planMove(key, from, to string, size int64) RebalanceMove {
-	return RebalanceMove{
+func planMove(key, from, to string, size int64) rebalanceMove {
+	return rebalanceMove{
 		Source:    &core.ObjectLocation{ObjectKey: key, BackendName: from, StorageKey: key, SizeBytes: size},
 		ToBackend: to,
 	}
@@ -146,13 +146,13 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
 	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	var plan []RebalanceMove
+	var plan []rebalanceMove
 	for i := range 5 {
 		plan = append(plan, planMove(fmt.Sprintf("key%d", i), "src", "dest", 4))
 	}
 
 	start := time.Now()
-	moved := w.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
+	moved := w.executeMoves(context.Background(), plan, "spread", 3, nil).Succeeded
 	elapsed := time.Since(start)
 
 	if moved != 5 {
@@ -180,13 +180,13 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
 	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	plan := []RebalanceMove{
+	plan := []rebalanceMove{
 		planMove("ok1", "src", "dest", 4),
 		planMove("fail", "src", "dest", 4),
 		planMove("ok2", "src", "dest", 4),
 	}
 
-	moved := w.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
+	moved := w.executeMoves(context.Background(), plan, "spread", 3, nil).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2 (one should fail)", moved)
 	}
@@ -204,11 +204,11 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
 	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	plan := []RebalanceMove{
+	plan := []rebalanceMove{
 		planMove("a", "src", "dest", 5),
 		planMove("b", "src", "dest", 5),
 	}
-	moved := w.ExecuteMoves(context.Background(), plan, "pack", 1, nil).Succeeded
+	moved := w.executeMoves(context.Background(), plan, "pack", 1, nil).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2", moved)
 	}
@@ -224,7 +224,7 @@ func TestExceedsThreshold_AtThreshold(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if !ExceedsThreshold(stats, []string{"b1", "b2"}, 0.50) {
+	if !exceedsThreshold(stats, []string{"b1", "b2"}, 0.50) {
 		t.Error("60% spread should exceed 50% threshold")
 	}
 }
@@ -237,7 +237,7 @@ func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 0, BytesLimit: 0},
 	}
-	if ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
 		t.Error("zero-limit backends should be skipped")
 	}
 }
@@ -249,7 +249,7 @@ func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 	}
-	if ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
 		t.Error("missing stats should be skipped, leaving single backend")
 	}
 }
@@ -422,7 +422,7 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	plan, err := w.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -431,6 +431,52 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	}
 	if plan[0].Source.BackendName != "b2" || plan[0].ToBackend != "b1" {
 		t.Errorf("expected move from b2 to b1, got %s -> %s", plan[0].Source.BackendName, plan[0].ToBackend)
+	}
+}
+
+// TestPlanPackTight_UnrecordedBytesTakeDestinationRoom asserts orphaned and
+// in-flight bytes on the destination count against its room, as its claim
+// counts them: 100 bytes fit by the ledger alone, but not beside what the
+// backend holds unrecorded, and a move planned anyway would only be refused.
+func TestPlanPackTight_UnrecordedBytesTakeDestinationRoom(t *testing.T) {
+	t.Parallel()
+	store := rebalanceStoreWithList(t, []core.ObjectLocation{
+		{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
+	}, nil, nil)
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
+
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 120, InflightBytes: 30},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+	plan, err := w.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("planned %d moves into a destination with no room left, want 0", len(plan))
+	}
+}
+
+// TestPlanSpreadEven_UnrecordedBytesTakeDestinationRoom is the spread
+// planner's half of the same rule.
+func TestPlanSpreadEven_UnrecordedBytesTakeDestinationRoom(t *testing.T) {
+	t.Parallel()
+	store := rebalanceStoreWithList(t, []core.ObjectLocation{
+		{ObjectKey: "a.txt", BackendName: "b1", SizeBytes: 100},
+	}, nil, nil)
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
+
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000, OrphanBytes: 850},
+	}
+	plan, err := w.planSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("planned %d moves into a destination with no room left, want 0", len(plan))
 	}
 }
 
@@ -452,7 +498,7 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		"b2": {BytesUsed: 900, BytesLimit: 1000},
 	}
-	plan, err := w.PlanPackTight(context.Background(), stats, 3)
+	plan, err := w.planPackTight(context.Background(), stats, 3)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -474,7 +520,7 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := w.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -494,7 +540,7 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 		"b1": {BytesUsed: 0, BytesLimit: 0},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := w.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -516,7 +562,7 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -543,7 +589,7 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -565,7 +611,7 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := w.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -580,7 +626,7 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	store := newPermissiveStore(t)
 	w := newRebalancerOver(t, store, []string{"b1"})
 
-	plan, err := w.PlanSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
+	plan, err := w.planSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -599,7 +645,7 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -618,7 +664,7 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := w.PlanSpreadEven(context.Background(), stats, 10); err == nil {
+	if _, err := w.planSpreadEven(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -634,7 +680,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := w.PlanPackTight(context.Background(), stats, 10); err == nil {
+	if _, err := w.planPackTight(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -659,7 +705,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if !w.ExecuteOneMove(context.Background(), move, "spread") {
+	if !w.executeOneMove(context.Background(), move, "spread") {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
@@ -681,7 +727,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"src": src}, &fleetOpts{Order: []string{"src"}})
 
 	move := planMove("key", "src", "nonexistent", 4)
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest backend not found")
 	}
 }
@@ -699,7 +745,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when source get fails")
 	}
 }
@@ -718,7 +764,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest put fails")
 	}
 }
@@ -743,7 +789,7 @@ func TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when PlaceCopy fails")
 	}
 	if !dest.HasCopyOf("key") {
@@ -777,7 +823,7 @@ func TestExecuteOneMove_RefusalSettleFails_RetriesTheRow(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
-	if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
+	if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 		t.Error("expected false")
 	}
 	if len(reasons) != 1 || reasons[0] != writepath.RebalanceMove.Reasons {
@@ -809,7 +855,7 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 				&fleetOpts{Order: []string{"src", "dest"}})
 			w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
-			if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
+			if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 				t.Error("expected false when the placement is declined")
 			}
 			if len(dest.Objects) != 0 {
@@ -845,7 +891,7 @@ func TestExecuteOneMove_SourceDeleteFails_RetriesTheRow(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if !w.ExecuteOneMove(context.Background(), move, "spread") {
+	if !w.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
 	if len(rr.ids) != 1 || rr.ids[0] != rebalCleanupID {
@@ -872,7 +918,7 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := w.PlanSpreadEven(context.Background(), stats, 5)
+	plan, err := w.planSpreadEven(context.Background(), stats, 5)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -898,7 +944,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	moved := w.ExecuteMoves(ctx, []RebalanceMove{
+	moved := w.executeMoves(ctx, []rebalanceMove{
 		planMove("key1", "b1", "b2", 4),
 	}, "pack", 1, nil).Succeeded
 	if moved != 0 {

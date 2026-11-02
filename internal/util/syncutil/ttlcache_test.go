@@ -219,9 +219,7 @@ func BenchmarkTTLCache_Eviction(b *testing.B) {
 			c := &TTLCache[string, string]{
 				entries: make(map[string]cacheEntry[string], n),
 				ttl:     time.Minute,
-				stop:    make(chan struct{}),
 			}
-			defer close(c.stop)
 
 			// All entries expired
 			expired := time.Now().Add(-time.Second)

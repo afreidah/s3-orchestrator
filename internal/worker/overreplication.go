@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -36,13 +37,12 @@ import (
 // -------------------------------------------------------------------------
 
 // OverReplicationCleanerStore is the narrow persistence surface the
-// over-replication cleaner needs: over-replicated discovery + excess copy
-// removal + per-backend quota stats for the deletion target. Declared
-// locally so the worker does not pull in the full MetadataStore.
+// over-replication cleaner needs: over-replicated discovery and per-backend
+// quota stats for choosing which copy goes. Declared locally so the worker
+// does not pull in the full MetadataStore.
 type OverReplicationCleanerStore interface {
 	core.ReplicationStore
 	core.QuotaStore
-	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
 }
 
 // reasonOverReplication labels the cleanup of an excess copy's bytes.
@@ -93,7 +93,8 @@ func NewOverReplicationCleaner(deps OverReplicationCleanerDeps) *OverReplication
 // target replication factor. Returns the number of copies removed. observer,
 // when non-nil, receives a start and end step per object cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	return runOpsCycle(ctx, audit.WorkloadOverReplication, func(ctx context.Context) (OverReplicationSummary, error) {
+	pass := cycle.Pass{Workload: audit.WorkloadOverReplication, Refresh: c.ops}
+	return cycle.Run(ctx, pass, func(ctx context.Context) (OverReplicationSummary, error) {
 		return c.clean(ctx, cfg, observer)
 	})
 }
@@ -110,6 +111,11 @@ type OverReplicationSummary struct {
 // AuditAttrs adds the copies removed to the tally's attributes.
 func (s OverReplicationSummary) AuditAttrs() []slog.Attr {
 	return append(s.Summary.AuditAttrs(), slog.Int("copies_removed", s.CopiesRemoved))
+}
+
+// Changed says the cycle removed a copy.
+func (s OverReplicationSummary) Changed() bool {
+	return s.CopiesRemoved > 0
 }
 
 // clean is the body of Clean after observe.Run sets up the span.
@@ -141,7 +147,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 
 	// The pending gauge is the fleet snapshot's ledger count, which every
 	// instance serves; this pass's sets are one batch of it.
-	pass := copySetPass{log: c.log, concurrency: cfg.Concurrency, observer: observer}
+	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
 	sum, removed := pass.run(ctx, c.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
 		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, cfg.Factor, quotaStats)
 		return n, cleanupItemResult(n, failures)
@@ -162,7 +168,7 @@ func cleanupItemResult(removed, failures int) batch.ItemResult {
 	case failures > 0:
 		return batch.Failed()
 	default:
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
+		return batch.Skipped(progress.StatusSkipped)
 	}
 }
 
@@ -183,14 +189,14 @@ type scoredCopy struct {
 	score float64
 }
 
-// ScoreCopy assigns a retention score to a copy based on its backend's state:
+// scoreCopy assigns a retention score to a copy based on its backend's state:
 //   - backend refusing writes, such as a draining one: 0 (always remove first)
 //   - backend refusing reads: 1 (remove next)
 //   - healthy backend: 2 + (1 - utilization_ratio), range [2..3]
 //
 // Among healthy backends the most utilized scores lowest, so its copy is
 // removed first.
-func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
+func (c *OverReplicationCleaner) scoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
 	if !c.ops.BackendFlags(loc.BackendName).AcceptedBy(core.AcceptForWrite) {
 		return 0
 	}
@@ -218,7 +224,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 	// Score each copy
 	scored := make([]scoredCopy, len(copies))
 	for i := range copies {
-		scored[i] = scoredCopy{loc: copies[i], score: c.ScoreCopy(&copies[i], stats)}
+		scored[i] = scoredCopy{loc: copies[i], score: c.scoreCopy(&copies[i], stats)}
 	}
 
 	// Sort ascending: lowest score = first to remove
@@ -236,7 +242,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// replicator never sees a ghost copy. A concurrent delete or earlier
 		// tick may have absorbed the excess, or a client overwrite replaced the
 		// victim; either is skipped.
-		dropped, err := c.store.DeleteObjectLocation(ctx, &victim, factor, reasonOverReplication)
+		err := c.placement.DropCopy(ctx, &victim, factor, reasonOverReplication)
 		switch {
 		case errors.Is(err, core.ErrCopyNotExcess), errors.Is(err, core.ErrCopyChanged):
 			continue
@@ -259,7 +265,6 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			failures++
 			continue
 		}
-		c.placement.Settle(ctx, dropped)
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

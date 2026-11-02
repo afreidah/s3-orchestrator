@@ -27,8 +27,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -43,15 +41,27 @@ func replicationFactorTwo() config.ReplicationConfig {
 	}
 }
 
-// backfillPage hashes the first page of copies a backfill run would take from
-// store, which covers every copy these tests write.
-func backfillPage(ctx context.Context, t *testing.T, scrubber *worker.Scrubber, store *postgres.Store) batch.Summary {
+// backfill hashes every copy that has no hash yet, which covers every copy
+// these tests write.
+func backfill(ctx context.Context, t *testing.T, scrubber *worker.Scrubber) batch.Summary {
 	t.Helper()
-	locs, err := store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredHashed, ManagedOnly: true}, 100, core.Cursor{})
+	res, err := scrubber.Backfill(ctx, worker.BackfillRequest{BatchSize: 100}, nil)
 	if err != nil {
-		t.Fatalf("ListCopiesByForm: %v", err)
+		t.Fatalf("Backfill: %v", err)
 	}
-	return scrubber.HashCopies(ctx, locs, nil)
+	return res.Summary
+}
+
+// passOf returns a pass's tally, failing the test when the pass errored, so a
+// call site reads passOf(t)(w.Pass(ctx)).
+func passOf(t *testing.T) func(batch.Summary, error) batch.Summary {
+	return func(sum batch.Summary, err error) batch.Summary {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("pass: %v", err)
+		}
+		return sum
+	}
 }
 
 // queryHashedCopies counts the copies of key that carry a stored content hash,
@@ -322,7 +332,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// Backfill records the hashes the scrub will later compare against. The
 	// write path only stores them when integrity is configured, so this also
 	// exercises the backfill path itself.
-	sum := backfillPage(ctx, t, testWorkers.Scrubber, testStore)
+	sum := backfill(ctx, t, testWorkers.Scrubber)
 	if sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
@@ -339,7 +349,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	assertProxyServes(t, ctx, client, key, body, "after corruption")
 
 	backdateObjectLocations(t, testDB, key)
-	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
+	scrubSum := passOf(t)(testWorkers.Scrubber.Scrub(ctx, 100, "", nil))
 	if scrubSum.Failed != 1 {
 		t.Errorf("scrub reported %d mismatches, want 1 (%+v)", scrubSum.Failed, scrubSum)
 	}
@@ -383,17 +393,17 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if sum := backfillPage(ctx, t, testWorkers.Scrubber, testStore); sum.Succeeded == 0 {
+	if sum := backfill(ctx, t, testWorkers.Scrubber); sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
 
 	// Copies written moments ago sit inside the re-verification floor.
-	if sum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil); sum.Attempted != 0 {
+	if sum := passOf(t)(testWorkers.Scrubber.Scrub(ctx, 100, "", nil)); sum.Attempted != 0 {
 		t.Errorf("scrub read %d fresh copies, want 0 (%+v)", sum.Attempted, sum)
 	}
 
 	backdateObjectLocations(t, testDB, key)
-	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
+	scrubSum := passOf(t)(testWorkers.Scrubber.Scrub(ctx, 100, "", nil))
 	if scrubSum.Succeeded != 2 || scrubSum.Failed != 0 {
 		t.Errorf("scrub verified %d copies with %d mismatches, want 2 and 0 (%+v)",
 			scrubSum.Succeeded, scrubSum.Failed, scrubSum)
@@ -619,7 +629,7 @@ func seedHashedObject(t *testing.T, ctx context.Context, client *s3.Client, pref
 	}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if backfillPage(ctx, t, testWorkers.Scrubber, testStore); queryHashedCopies(t, key) != 1 {
+	if backfill(ctx, t, testWorkers.Scrubber); queryHashedCopies(t, key) != 1 {
 		t.Fatalf("expected the written copy of %q to carry a hash after backfill", key)
 	}
 	return key

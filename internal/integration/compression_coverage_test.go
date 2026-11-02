@@ -234,7 +234,7 @@ func TestCompression_ScrubberDetectsCorruptedCompressedCopy(t *testing.T) {
 	// the replica inherited it; backfill runs anyway to cover a copy that
 	// somehow arrived without one, and finding nothing to do is a pass. What
 	// the scrub actually needs is a stored hash on both copies.
-	backfillPage(ctx, t, h.workers.Scrubber, h.store)
+	backfill(ctx, t, h.workers.Scrubber)
 	if hashed := h.hashedCopies(key); hashed != 2 {
 		t.Fatalf("expected 2 copies with a stored hash, got %d", hashed)
 	}
@@ -252,7 +252,7 @@ func TestCompression_ScrubberDetectsCorruptedCompressedCopy(t *testing.T) {
 	}
 
 	backdateObjectLocations(t, h.db, key)
-	if sum := h.workers.Scrubber.Scrub(ctx, 100, "", nil); sum.Failed != 1 {
+	if sum := passOf(t)(h.workers.Scrubber.Scrub(ctx, 100, "", nil)); sum.Failed != 1 {
 		t.Errorf("scrub reported %d mismatches, want 1 (%+v)", sum.Failed, sum)
 	}
 

@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Small helpers the rebalance planners share. PlacementSet answers "does this
+// Small helpers the rebalance planners share. placementSet answers "does this
 // key already live on this backend?" in O(1) so the per-object loops avoid
 // slice scans and per-object lookup-map allocations. candidateCache memoizes a
 // source backend's candidate objects together with their placement set, so the
@@ -20,15 +20,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// PlacementSet maps an object key to the set of backends that already hold it.
+// placementSet maps an object key to the set of backends that already hold it.
 // Built once from a copy map (key -> backend names) so planners can ask "is key
 // already on backend?" without rescanning a slice or allocating a lookup map
 // per object.
-type PlacementSet map[string]map[string]struct{}
+type placementSet map[string]map[string]struct{}
 
-// NewPlacementSet builds a PlacementSet from a key -> backend-names copy map.
-func NewPlacementSet(copyMap map[string][]string) PlacementSet {
-	p := make(PlacementSet, len(copyMap))
+// newPlacementSet builds a placementSet from a key -> backend-names copy map.
+func newPlacementSet(copyMap map[string][]string) placementSet {
+	p := make(placementSet, len(copyMap))
 	for key, backends := range copyMap {
 		set := make(map[string]struct{}, len(backends))
 		for _, b := range backends {
@@ -40,50 +40,50 @@ func NewPlacementSet(copyMap map[string][]string) PlacementSet {
 }
 
 // Has reports whether key already lives on backend.
-func (p PlacementSet) Has(key, backend string) bool {
+func (p placementSet) Has(key, backend string) bool {
 	_, ok := p[key][backend]
 	return ok
 }
 
-// SourceCandidates bundles a source backend's candidate objects with their
+// sourceCandidates bundles a source backend's candidate objects with their
 // placement set, fetched together so a planner pays the two store queries once
 // per source.
-type SourceCandidates struct {
+type sourceCandidates struct {
 	Objects   []core.ObjectLocation
-	Placement PlacementSet
+	Placement placementSet
 }
 
-// candidateCache memoizes SourceCandidates per source backend across a single
+// candidateCache memoizes sourceCandidates per source backend across a single
 // planning run. The pack planner pairs each source against several
 // destinations; without the cache it would re-list the source and re-query its
 // copy map on every pairing.
 type candidateCache struct {
 	r         *Rebalancer
 	limit     int
-	byBackend map[string]SourceCandidates
+	byBackend map[string]sourceCandidates
 }
 
 // newCandidateCache returns a candidate cache that lists up to limit objects
 // per source.
 func (r *Rebalancer) newCandidateCache(limit int) *candidateCache {
-	return &candidateCache{r: r, limit: limit, byBackend: make(map[string]SourceCandidates)}
+	return &candidateCache{r: r, limit: limit, byBackend: make(map[string]sourceCandidates)}
 }
 
 // forBackend returns the cached candidates for src, fetching (list + copy map)
 // on the first request and reusing the result thereafter.
-func (c *candidateCache) forBackend(ctx context.Context, src string) (SourceCandidates, error) {
+func (c *candidateCache) forBackend(ctx context.Context, src string) (sourceCandidates, error) {
 	if sc, ok := c.byBackend[src]; ok {
 		return sc, nil
 	}
 	objects, err := c.r.store.ListObjectsByBackend(ctx, src, c.limit, core.SizeCursor{})
 	if err != nil {
-		return SourceCandidates{}, fmt.Errorf("failed to list objects on %s: %w", src, err)
+		return sourceCandidates{}, fmt.Errorf("failed to list objects on %s: %w", src, err)
 	}
 	copyMap, err := c.r.fetchCopyMap(ctx, objects)
 	if err != nil {
-		return SourceCandidates{}, err
+		return sourceCandidates{}, err
 	}
-	sc := SourceCandidates{Objects: objects, Placement: NewPlacementSet(copyMap)}
+	sc := sourceCandidates{Objects: objects, Placement: newPlacementSet(copyMap)}
 	c.byBackend[src] = sc
 	return sc, nil
 }

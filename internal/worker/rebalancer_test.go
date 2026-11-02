@@ -42,7 +42,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 450, BytesLimit: 1000},
 	}
-	if ExceedsThreshold(stats, []string{"b1", "b2"}, 0.1) {
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.1) {
 		t.Error("5% spread should not exceed 10% threshold")
 	}
 }
@@ -54,7 +54,7 @@ func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	if !ExceedsThreshold(stats, []string{"b1", "b2"}, 0.1) {
+	if !exceedsThreshold(stats, []string{"b1", "b2"}, 0.1) {
 		t.Error("80% spread should exceed 10% threshold")
 	}
 }
@@ -65,7 +65,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 	}
-	if ExceedsThreshold(stats, []string{"b1"}, 0.1) {
+	if exceedsThreshold(stats, []string{"b1"}, 0.1) {
 		t.Error("single backend cannot exceed threshold")
 	}
 }
@@ -73,7 +73,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 // TestExceedsThreshold_EmptyStats verifies the exceeds threshold empty stats behaviour described by the test name.
 func TestExceedsThreshold_EmptyStats(t *testing.T) {
 	t.Parallel()
-	if ExceedsThreshold(nil, []string{"b1", "b2"}, 0.1) {
+	if exceedsThreshold(nil, []string{"b1", "b2"}, 0.1) {
 		t.Error("empty stats should not exceed threshold")
 	}
 }
@@ -96,7 +96,7 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,22 +148,22 @@ func TestRebalance_PlansNoMovesOntoANonWriteTarget(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name  string
-		plan  func(*Rebalancer, map[string]core.QuotaStat) ([]RebalanceMove, error)
+		plan  func(*Rebalancer, map[string]core.QuotaStat) ([]rebalanceMove, error)
 		stats map[string]core.QuotaStat
 		src   string
 	}{
 		{
 			name: "spread",
-			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]RebalanceMove, error) {
-				return r.PlanSpreadEven(context.Background(), s, 10)
+			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]rebalanceMove, error) {
+				return r.planSpreadEven(context.Background(), s, 10)
 			},
 			stats: map[string]core.QuotaStat{"b1": {BytesUsed: 800, BytesLimit: 1000}, "b2": {BytesUsed: 200, BytesLimit: 1000}},
 			src:   "b1",
 		},
 		{
 			name: "pack",
-			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]RebalanceMove, error) {
-				return r.PlanPackTight(context.Background(), s, 10)
+			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]rebalanceMove, error) {
+				return r.planPackTight(context.Background(), s, 10)
 			},
 			stats: map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}, "b2": {BytesUsed: 800, BytesLimit: 1000}},
 			src:   "b1",
@@ -228,7 +228,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("PlanSpreadEven: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := r.PlanPackTight(context.Background(), stats, 10)
+	plan, err := r.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("PlanPackTight: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 
 	r := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultRebalance})
 	move := planMove("key1", "b1", "b2", 100)
-	if !r.ExecuteOneMove(context.Background(), move, "spread") {
+	if !r.executeOneMove(context.Background(), move, "spread") {
 		t.Error("expected successful move")
 	}
 	if got == nil {
@@ -341,7 +341,7 @@ func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("stream copy: timeout"))
 
 	r := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultRebalance})
-	if r.ExecuteOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
+	if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
 		t.Error("expected failed move on MoveObject error")
 	}
 }
@@ -366,7 +366,7 @@ func TestExecuteOneMove_PlacementDeclined(t *testing.T) {
 				Return(int64(0), fmt.Errorf("place copy b1 -> b2: %w", declined))
 
 			r := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: &mockMetadataStore{}, Config: defaultRebalance})
-			if r.ExecuteOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
+			if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
 				t.Error("expected no move when the placement is declined")
 			}
 		})
@@ -560,7 +560,7 @@ func TestPlanPackTight_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	plan, err := r.PlanPackTight(context.Background(), stats, 10)
+	plan, err := r.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("PlanPackTight: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestPlanSpreadEven_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 		"b2": {BytesUsed: 0, BytesLimit: 1000},
 	}
 
-	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("PlanSpreadEven: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestPlanSpreadEven_StillPlansWhenBudgetAllows(t *testing.T) {
 		"b2": {BytesUsed: 0, BytesLimit: 1000},
 	}
 
-	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("PlanSpreadEven: %v", err)
 	}

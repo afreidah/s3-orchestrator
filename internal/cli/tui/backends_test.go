@@ -629,6 +629,11 @@ func TestBackendActions_ReportOutcomes(t *testing.T) {
 	if status, _ := finish(t, m, m.requeueDLQ("minio-a")()); status.text != "requeued 7 rows from minio-a" {
 		t.Errorf("status = %+v, want the requeued count", status)
 	}
+
+	f.reconcileResp = &adminapi.ReconcileResponse{Imported: 2, BackendsScanned: 1, BackendsFailed: 1}
+	if status, _ := finish(t, m, m.reconcileBackend("minio-a")()); !strings.Contains(status.text, "failed partway") {
+		t.Errorf("status = %+v, want a scan that failed partway said so", status)
+	}
 }
 
 // TestBackendsFooter_OffersCancelWhileDraining asserts the cancel key is only

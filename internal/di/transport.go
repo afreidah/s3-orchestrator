@@ -145,7 +145,6 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 func ProvideOps(i do.Injector) (*ops.Services, error) {
 	r := NewResolver(i)
 	live := r.Resolve[*config.Live]()
-	rt := r.Resolve[*infra.BackendRuntime]()
 	objectManager := r.Resolve[*object.Manager]()
 	stores := r.Resolve[metadataStore]()
 	coord := r.Resolve[*writepath.Coordinator]()
@@ -175,13 +174,11 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		EncStore:     stores,
 		Codec:        codec,
 		CompStore:    stores,
-		Runtime:      rt,
 		Mover:        coord,
 		Replicator:   replicator,
 		OverRep:      overRep,
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
-		Unhashed:     stores,
 		Locker:       stores,
 		Expiry:       expirer,
 		Provisioning: stores,

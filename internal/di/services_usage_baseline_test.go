@@ -67,14 +67,16 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 		t.Fatal("read refused before any baseline was loaded")
 	}
 
-	svc := NewUsageFlushService(&UsageFlushDeps{
+	svc := newUsageFlush(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
 		Tracker: rt.Usage(),
 		Fleet:   rt,
 		States:  noStates{},
 		Config:  defaultFlush,
-	}).(*usageFlushService)
-	svc.flushTick(context.Background())
+	})
+	if err := svc.flushTick(context.Background()); err != nil {
+		t.Fatalf("flushTick: %v", err)
+	}
 
 	if rt.Usage().WithinLimits(name, s3op.GetObject, 200, 0) {
 		t.Error("tick admitted a read past its egress limit: usage baseline was not refreshed")

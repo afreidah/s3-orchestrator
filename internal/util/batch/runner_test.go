@@ -5,17 +5,14 @@
 //
 // Covers tallying sequentially and concurrently, a cancelled context
 // dispatching nothing while Planned still reflects the input, Tally over
-// gathered results, and the cycle log line.
+// gathered results, admission, and what makes a cycle reported or changed.
 // -------------------------------------------------------------------------------
 
 package batch
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"reflect"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +24,7 @@ import (
 func TestRunner_Run_Tallies(t *testing.T) {
 	t.Parallel()
 	items := []int{1, 2, 3, 4, 5}
-	runner := Runner[int]{Name: "test", Concurrency: 1}
+	runner := Runner[int]{Concurrency: 1}
 	sum := runner.Run(context.Background(), items, func(_ context.Context, n int) ItemResult {
 		switch {
 		case n%3 == 0: // 3 -> skipped
@@ -56,7 +53,7 @@ func TestRunner_Run_Concurrent(t *testing.T) {
 		items[i] = i
 	}
 	var ran atomic.Int64
-	runner := Runner[int]{Name: "test", Concurrency: 8}
+	runner := Runner[int]{Concurrency: 8}
 	sum := runner.Run(context.Background(), items, func(_ context.Context, _ int) ItemResult {
 		ran.Add(1)
 		return ItemResult{Outcome: ItemSucceeded}
@@ -72,7 +69,7 @@ func TestRunner_Run_CancelledCtx(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	runner := Runner[int]{Name: "test", Concurrency: 4}
+	runner := Runner[int]{Concurrency: 4}
 	sum := runner.Run(ctx, []int{1, 2, 3}, func(_ context.Context, _ int) ItemResult {
 		t.Error("fn must not run under a cancelled context")
 		return ItemResult{Outcome: ItemSucceeded}
@@ -117,66 +114,74 @@ func TestTally_Empty(t *testing.T) {
 	}
 }
 
-// TestLogCycle_WritesOneLine verifies LogCycle emits the named cycle line with
-// the summary's counts and outcome.
-func TestLogCycle_WritesOneLine(t *testing.T) {
+// TestRunner_Run_RefusedAdmissionSkips verifies an item refused an admission
+// slot is skipped without running, and an admitted one releases its slot.
+func TestRunner_Run_RefusedAdmissionSkips(t *testing.T) {
 	t.Parallel()
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, nil))
-	LogCycle(context.Background(), log, "sweep", Summary{Planned: 2, Attempted: 2, Succeeded: 1, Failed: 1})
-	out := buf.String()
-	for _, want := range []string{`msg="sweep cycle complete"`, "planned=2", "succeeded=1", "failed=1", "skipped=0", "outcome=" + OutcomePartial} {
-		if !strings.Contains(out, want) {
-			t.Errorf("log %q missing %q", out, want)
+	slots := &fakeAdmission{free: 1}
+	runner := Runner[int]{Concurrency: 1, Admission: slots}
+	var ran atomic.Int64
+	sum := runner.Run(context.Background(), []int{1, 2}, func(context.Context, int) ItemResult {
+		ran.Add(1)
+		slots.free = 0
+		return Succeeded()
+	})
+	if ran.Load() != 1 || sum.Succeeded != 1 || sum.Skipped != 1 {
+		t.Errorf("ran=%d summary=%+v, want one run and one skipped", ran.Load(), sum)
+	}
+	if slots.released != 1 {
+		t.Errorf("released = %d, want the admitted item's slot back", slots.released)
+	}
+}
+
+// fakeAdmission hands out free slots and counts the ones given back.
+type fakeAdmission struct {
+	free     int
+	released int
+}
+
+// AcquireAdmission takes a slot while one is free.
+func (f *fakeAdmission) AcquireAdmission(context.Context) bool {
+	if f.free == 0 {
+		return false
+	}
+	f.free--
+	return true
+}
+
+// ReleaseAdmission counts a slot given back.
+func (f *fakeAdmission) ReleaseAdmission() { f.released++ }
+
+// TestSummary_ReportedAndChanged pins what makes a cycle worth a completion
+// entry and what makes it refresh the quota gauges.
+func TestSummary_ReportedAndChanged(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name              string
+		sum               Summary
+		reported, changed bool
+	}{
+		{"idle", Summary{}, false, false},
+		{"all skipped", Summary{Planned: 2, Skipped: 2}, true, false},
+		{"only deferred", Summary{Deferred: 3}, true, false},
+		{"one succeeded", Summary{Planned: 1, Succeeded: 1}, true, true},
+	}
+	for _, tc := range tests {
+		if tc.sum.Reported() != tc.reported || tc.sum.Changed() != tc.changed {
+			t.Errorf("%s: Reported, Changed = %v, %v; want %v, %v",
+				tc.name, tc.sum.Reported(), tc.sum.Changed(), tc.reported, tc.changed)
 		}
 	}
-	if strings.Count(out, "\n") != 1 {
-		t.Errorf("log %q, want exactly one line", out)
-	}
 }
 
-// TestLogCycle_NilLogger verifies a nil logger emits nothing and does not
-// panic.
-func TestLogCycle_NilLogger(t *testing.T) {
-	t.Parallel()
-	LogCycle(context.Background(), nil, "sweep", Summary{Planned: 1})
-}
-
-// TestRunner_Run_LogsCycle verifies a Runner with a logger reports its cycle
-// through LogCycle.
-func TestRunner_Run_LogsCycle(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewTextHandler(&buf, nil)), Concurrency: 1}
-	runner.Run(context.Background(), []int{1}, func(context.Context, int) ItemResult {
-		return ItemResult{Outcome: ItemSucceeded}
-	})
-	if !strings.Contains(buf.String(), `msg="test cycle complete"`) {
-		t.Errorf("log %q, want the cycle line", buf.String())
-	}
-}
-
-// TestRunner_Run_IdleCycleLogsNothing verifies a cycle with nothing to do
-// writes no line, so a worker polling an empty queue stays quiet.
-func TestRunner_Run_IdleCycleLogsNothing(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewTextHandler(&buf, nil)), Concurrency: 1}
-	runner.Run(context.Background(), nil, func(context.Context, int) ItemResult { return ItemResult{} })
-	if buf.Len() != 0 {
-		t.Errorf("log %q, want nothing for an idle cycle", buf.String())
-	}
-}
-
-// TestRunner_Run_ReportsItemUsage verifies the summary and the cycle line carry
-// what the items were charged, and nothing charged outside the run.
+// TestRunner_Run_ReportsItemUsage verifies the summary carries what the items
+// were charged, and nothing charged outside the run.
 func TestRunner_Run_ReportsItemUsage(t *testing.T) {
 	t.Parallel()
 	ctx, outer := audit.WithTally(context.Background())
 	audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 9})
 
-	var buf bytes.Buffer
-	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewJSONHandler(&buf, nil)), Concurrency: 2}
+	runner := Runner[int]{Concurrency: 2}
 	sum := runner.Run(ctx, []int{1, 2}, func(ctx context.Context, _ int) ItemResult {
 		audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 1, EgressBytes: 10})
 		return ItemResult{Outcome: ItemSucceeded}
@@ -187,8 +192,5 @@ func TestRunner_Run_ReportsItemUsage(t *testing.T) {
 	}
 	if got := outer.Usage()["b1"].APIRequests; got != 11 {
 		t.Errorf("enclosing tally APIRequests = %d, want 11", got)
-	}
-	if !strings.Contains(buf.String(), `"usage":{"b1":{"api_requests":2,"egress_bytes":20,"ingress_bytes":0}}`) {
-		t.Errorf("cycle line %q does not report the usage", buf.String())
 	}
 }

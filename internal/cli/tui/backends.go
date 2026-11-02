@@ -156,7 +156,8 @@ func (m *model) setCordon(backend string, cordoned bool) tea.Cmd {
 }
 
 // reconcileBackend returns a command that reconciles metadata against one
-// backend's storage and reports what it changed.
+// backend's storage and reports what it changed, and whether the scan failed
+// partway.
 func (m *model) reconcileBackend(backend string) tea.Cmd {
 	client := m.client
 	return runAction("reconcile "+backend,
@@ -164,7 +165,11 @@ func (m *model) reconcileBackend(backend string) tea.Cmd {
 			return client.ReconcileBackend(ctx, backend)
 		},
 		func(m *model, resp *adminapi.ReconcileResponse) (string, tea.Cmd) {
-			return fmt.Sprintf("reconciled %s: imported %d, removed %d", backend, resp.Imported, resp.Removed),
+			verb := "reconciled"
+			if resp.BackendsFailed > 0 {
+				verb = "reconcile failed partway on"
+			}
+			return fmt.Sprintf("%s %s: imported %d, removed %d", verb, backend, resp.Imported, resp.Removed),
 				m.fetch(pollStatus)
 		})
 }

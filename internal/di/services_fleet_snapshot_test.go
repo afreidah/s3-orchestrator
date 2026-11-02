@@ -203,13 +203,15 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 	other := newRedisInstance(t, shared)
 
 	fleetTick(computer, testx.Locker{})
-	NewUsageFlushService(&UsageFlushDeps{
+	if err := newUsageFlush(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
 		Tracker: other.Usage(),
 		Fleet:   other,
 		States:  noStates{},
 		Config:  defaultFlush,
-	}).(*usageFlushService).flushTick(context.Background())
+	}).flushTick(context.Background()); err != nil {
+		t.Fatalf("flushTick: %v", err)
+	}
 
 	want := computer.MetricsCollector().ReplicationSnapshot(context.Background())
 	got := other.MetricsCollector().ReplicationSnapshot(context.Background())

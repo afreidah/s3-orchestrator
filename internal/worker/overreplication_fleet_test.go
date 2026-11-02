@@ -84,7 +84,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": cbBackend}, &fleetOpts{Order: []string{"b1"}})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	score := w.ScoreCopy(&loc, nil)
+	score := w.scoreCopy(&loc, nil)
 
 	if score != 1 {
 		t.Errorf("expected score 1 for a backend refusing reads, got %f", score)
@@ -98,7 +98,7 @@ func TestScoreCopy_NoQuotaData(t *testing.T) {
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	score := w.ScoreCopy(&loc, nil)
+	score := w.scoreCopy(&loc, nil)
 
 	if score != 2.5 {
 		t.Errorf("expected score 2.5, got %f", score)

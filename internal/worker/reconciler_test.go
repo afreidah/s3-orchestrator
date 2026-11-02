@@ -41,7 +41,9 @@ func TestReconciler_NoBuckets(t *testing.T) {
 	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})
-	r.Run(context.Background()) // should not panic
+	if _, err := r.Run(context.Background()); !errors.Is(err, errNoBuckets) {
+		t.Errorf("Run = %v, want the pass refused for having no buckets", err)
+	}
 }
 
 // TestReconciler_SyncsAllBackends verifies the reconciler syncs all backends path by exercising gomock.NewController, syncer.EXPECT, gomock.Any.
@@ -60,7 +62,10 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	r.Run(context.Background())
+	res, err := r.Run(context.Background())
+	if err != nil || res.Imported != 2 || res.NotImported != 15 || res.Succeeded != 2 {
+		t.Errorf("Run = %+v, %v; want 2 imported and 15 not across both backends", res, err)
+	}
 }
 
 // TestReconciler_ContinuesOnBackendError verifies the reconciler continues on backend error path by exercising gomock.NewController, syncer.EXPECT, gomock.Any.
@@ -79,7 +84,10 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	r.Run(context.Background()) // should not panic
+	res, err := r.Run(context.Background())
+	if err != nil || res.Failed != 1 || res.Succeeded != 1 || res.Imported != 1 {
+		t.Errorf("Run = %+v, %v; want b1 failed and b2's import kept", res, err)
+	}
 }
 
 // TestReconciler_ReconcilesUsageEachPass verifies usage reconciliation runs
@@ -99,7 +107,9 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	r.Run(context.Background())
+	if _, err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 }
 
 // TestReconciler_ReconcileUsageError verifies a usage-reconcile failure is
@@ -117,7 +127,9 @@ func TestReconciler_ReconcileUsageError(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	r.Run(context.Background()) // must not panic
+	if _, err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run = %v, want the usage failure swallowed", err)
+	}
 }
 
 // TestReconcile_AllBackends verifies the reconcile all backends contract.
@@ -149,8 +161,8 @@ func TestReconcile_AllBackends(t *testing.T) {
 	if result.Removed != 5 {
 		t.Errorf("removed = %d, want 5", result.Removed)
 	}
-	if result.BackendsScanned != 2 {
-		t.Errorf("backends_scanned = %d, want 2", result.BackendsScanned)
+	if result.Attempted != 2 || result.Failed != 0 {
+		t.Errorf("backends scanned, failed = %d, %d; want 2, 0", result.Attempted, result.Failed)
 	}
 }
 
@@ -169,7 +181,9 @@ func TestReconciler_SkipsDrainingBackends(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	r.Run(context.Background())
+	if _, err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 }
 
 // TestReconcile_RefusesANamedDrainingBackend verifies an explicit reconcile of
@@ -212,8 +226,8 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	if result.Removed != 10 {
 		t.Errorf("removed = %d, want 10", result.Removed)
 	}
-	if result.BackendsScanned != 1 {
-		t.Errorf("backends_scanned = %d, want 1", result.BackendsScanned)
+	if result.Attempted != 1 {
+		t.Errorf("backends scanned = %d, want 1", result.Attempted)
 	}
 }
 

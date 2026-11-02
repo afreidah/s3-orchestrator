@@ -146,9 +146,7 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bo
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return e.store.ListCopiesByForm(ctx, &filter, limit, after)
 		},
-		CursorOf: func(loc core.ObjectLocation) core.Cursor {
-			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
-		},
+		CursorOf: func(loc core.ObjectLocation) core.Cursor { return loc.Cursor() },
 	}
 	_, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
 		e.rotateBatch(ctx, locs, &res)
@@ -168,7 +166,7 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bo
 
 // rotateBatch re-wraps one page of locations and folds the outcomes into res.
 func (e *Encryption) rotateBatch(ctx context.Context, locs []core.ObjectLocation, res *RotateKeyResult) {
-	runner := batch.Runner[core.ObjectLocation]{Name: "key-rotation", Concurrency: 1}
+	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1}
 	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 		return e.rotateOneLocation(ctx, &loc)
 	})

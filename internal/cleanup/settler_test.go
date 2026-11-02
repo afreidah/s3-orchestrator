@@ -13,12 +13,9 @@
 package cleanup
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -315,7 +312,7 @@ func TestSettle_GivesEachRowItsOutcome(t *testing.T) {
 	d.errs["k!exhausted"] = errDelete
 
 	before := statusCounts()
-	sum := New(Deps{Deleter: d, Store: s, Concurrency: 4, Name: "settle-test"}).Settle(context.Background(), []core.CleanupItem{
+	sum := New(Deps{Deleter: d, Store: s, Concurrency: 4}).Settle(context.Background(), []core.CleanupItem{
 		row(1, beA, pathOK, 0),
 		row(2, beA, pathAbsent, 0),
 		row(3, beA, pathFail, 2),
@@ -548,24 +545,38 @@ func TestSettle_StoreWriteFailures(t *testing.T) {
 	}
 }
 
-// TestSettle_AdmissionWrapsEachBackend verifies an admission hook that runs
-// the delete is called once per backend and every row is settled.
+// slots is an admission that grants every slot while open and counts the ones
+// taken.
+type slots struct {
+	mu       sync.Mutex
+	open     bool
+	acquired int
+}
+
+// AcquireAdmission grants a slot while the admission is open.
+func (s *slots) AcquireAdmission(context.Context) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.open {
+		s.acquired++
+	}
+	return s.open
+}
+
+// ReleaseAdmission gives a slot back.
+func (s *slots) ReleaseAdmission() {}
+
+// TestSettle_AdmissionWrapsEachBackend verifies each backend's delete takes
+// one admission slot and every row is settled.
 func TestSettle_AdmissionWrapsEachBackend(t *testing.T) {
 	t.Parallel()
 	d, s := newFakeDeleter(beA, beB), newFakeStore()
-	var mu sync.Mutex
-	admitted := 0
-	admit := func(_ context.Context, fn func()) {
-		mu.Lock()
-		admitted++
-		mu.Unlock()
-		fn()
-	}
-	New(Deps{Deleter: d, Store: s, Admit: admit, Concurrency: 2}).Settle(context.Background(), []core.CleanupItem{
+	admission := &slots{open: true}
+	New(Deps{Deleter: d, Store: s, Admission: admission, Concurrency: 2}).Settle(context.Background(), []core.CleanupItem{
 		row(1, beA, "k!1", 0), row(2, beA, "k!2", 0), row(3, beB, "k!3", 0),
 	})
-	if admitted != 2 {
-		t.Errorf("admitted %d times, want once per backend", admitted)
+	if admission.acquired != 2 {
+		t.Errorf("admitted %d times, want once per backend", admission.acquired)
 	}
 	if got := s.sortedRetired(); !slices.Equal(got, []int64{1, 2, 3}) {
 		t.Errorf("retired %v, want every row", got)
@@ -578,8 +589,7 @@ func TestSettle_AdmissionWrapsEachBackend(t *testing.T) {
 func TestSettle_DeclinedAdmissionLeavesRowsUnsettled(t *testing.T) {
 	t.Parallel()
 	d, s := newFakeDeleter(beA), newFakeStore()
-	decline := func(context.Context, func()) {}
-	sum := New(Deps{Deleter: d, Store: s, Admit: decline}).Settle(context.Background(), []core.CleanupItem{
+	sum := New(Deps{Deleter: d, Store: s, Admission: &slots{}}).Settle(context.Background(), []core.CleanupItem{
 		row(1, beA, "k!1", 0), row(2, beA, pathFail, 0),
 	})
 	if len(d.calls) != 0 {
@@ -590,29 +600,6 @@ func TestSettle_DeclinedAdmissionLeavesRowsUnsettled(t *testing.T) {
 	}
 	if sum.Skipped != 2 || sum.Attempted != 0 {
 		t.Errorf("summary = %+v, want both rows skipped", sum)
-	}
-}
-
-// TestSettle_LogsCycleOnlyWhenNamed verifies the cycle log line is emitted
-// under the settler's name and omitted when it has none.
-func TestSettle_LogsCycleOnlyWhenNamed(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		want bool
-	}{
-		{"", false},
-		{"settle-log", true},
-	}
-	for _, tc := range cases {
-		var buf bytes.Buffer
-		st := New(Deps{Deleter: newFakeDeleter(beA), Store: newFakeStore(), Name: tc.name})
-		st.log = slog.New(slog.NewTextHandler(&buf, nil))
-		st.Settle(context.Background(), []core.CleanupItem{row(1, beA, pathOK, 0)})
-
-		if got := strings.Contains(buf.String(), tc.name+" cycle complete"); got != tc.want {
-			t.Errorf("name %q: logged cycle = %v, want %v (log %q)", tc.name, got, tc.want, buf.String())
-		}
 	}
 }
 

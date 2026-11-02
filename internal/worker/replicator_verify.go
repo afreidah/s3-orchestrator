@@ -19,109 +19,41 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// integrityOpReplicate labels this worker's checks in the integrity metrics,
-// alongside the read path's "read" and the scrubber's "scrub".
-const integrityOpReplicate = "replicate"
-
-// replicaVerdict is what verifyReplica established about a freshly written
-// copy. Only replicaMismatch discards the copy: the other three all record it,
-// and differ in whether anything was actually proven about it.
-type replicaVerdict int
-
-// Verdicts reported by verifyReplica.
-const (
-	replicaNotChecked replicaVerdict = iota + 1
-	replicaVerified
-	replicaUnverified
-	replicaMismatch
-)
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// admitVerifiedReplica applies the verify-on-replicate verdict to a copy that
-// has just landed at intent's path, tallying it on out. Returns false when the
-// copy was rejected and its intent discarded, in which case the caller must
-// try another target.
-func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.PendingObject, source *core.ObjectLocation, out *ReplicationOutcome) bool {
-	switch r.verifyReplica(ctx, intent.BackendName, intent.StorageKey, source) {
-	case replicaMismatch:
+// admitVerifiedReplica checks a copy that has just landed at intent's path
+// against its source, when verification on replicate is on, and tallies the
+// outcome on out. Only a disagreeing digest rejects the copy: its intent is
+// discarded and false returned, so the caller tries another target. A copy
+// that could not be checked is recorded, since it is not known to be bad;
+// backends without read-after-write consistency make unreadable copies
+// routine.
+func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.PendingObject, source *core.ObjectLocation, out *replicationOutcome) bool {
+	if !r.integrity.Config().ShouldVerifyOnReplicate() {
+		return true
+	}
+	// StreamCopy moves bytes verbatim, so the source row describes the new
+	// copy once the backend and path are swapped.
+	replica := source.CopyAt(intent.BackendName, intent.StorageKey)
+	switch r.hasher.verify(ctx, replica, source, integrityOpReplicate, r.hasher.admitsRead) {
+	case CopyVerified:
+		return true
+	case CopyMismatch:
+		// Which end is damaged is not knowable from here: a source that has
+		// already rotted produces a faithful copy of bad bytes. Both backends
+		// are named so an operator can settle it with a scrub of the key.
+		audit.Log(ctx, "integrity.replica_rejected",
+			slog.String("key", source.ObjectKey),
+			slog.String("src_backend", source.BackendName),
+			slog.String("target_backend", intent.BackendName),
+		)
 		r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 		out.VerifyMismatch++
 		return false
-	case replicaUnverified:
+	default:
 		out.VerifyUnchecked++
+		return true
 	}
-	return true
-}
-
-// verifyReplica reads a newly written copy back from its target and compares
-// its plaintext digest against the source row's content_hash.
-//
-// Only a disagreeing digest rejects the copy. No stored hash, no egress
-// headroom, or an unreadable copy reports replicaUnverified and keeps it, since
-// a copy that cannot be checked is not known to be bad; backends without
-// read-after-write consistency make unreadable copies routine.
-func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey string, source *core.ObjectLocation) replicaVerdict {
-	if !r.integrity.Config().ShouldVerifyOnReplicate() {
-		return replicaNotChecked
-	}
-
-	if !source.Form().Has(core.StoredHashed) {
-		// The object predates integrity, or backfill has not reached it.
-		// Reading the copy would produce a digest with nothing to judge it by.
-		r.log.WarnContext(ctx, "replica not verified, source has no content hash",
-			"key", source.ObjectKey, "source", source.BackendName, "target", target)
-		return replicaUnverified
-	}
-
-	// StreamCopy moves bytes verbatim, so the source row describes the new
-	// copy once the backend and path are swapped. Reading the source's path
-	// on the target would miss the replica or hash a different object.
-	replica := source.CopyAt(target, targetStorageKey)
-
-	if !r.ops.Acct().Allow(target, s3op.GetObject, replica.SizeBytes, 0) {
-		telemetry.IntegrityUsageDeclinedTotal.Inc()
-		r.log.WarnContext(ctx, "replica verification declined by usage limits",
-			"key", source.ObjectKey, "target", target, "size", replica.SizeBytes)
-		return replicaUnverified
-	}
-
-	actual, err := r.hasher.hashStored(ctx, replica)
-	if err != nil {
-		r.log.WarnContext(ctx, "could not verify new replica, recording it unverified",
-			"key", source.ObjectKey, "target", target, "error", err)
-		return replicaUnverified
-	}
-
-	telemetry.IntegrityChecksTotal.WithLabelValues(integrityOpReplicate).Inc()
-	if actual.SHA256 == source.ContentHash {
-		return replicaVerified
-	}
-
-	// Which end is damaged is not knowable from here: the copy is verbatim, so
-	// a source that has already rotted produces a faithful copy of bad bytes
-	// and every target will disagree the same way. Both names are logged so an
-	// operator can settle it with a scrub of the source key.
-	telemetry.IntegrityErrorsTotal.WithLabelValues(integrityOpReplicate).Inc()
-	r.log.ErrorContext(ctx, "new replica failed integrity check, discarding it",
-		"key", source.ObjectKey, "source", source.BackendName, "target", target,
-		"expected_hash", source.ContentHash, "actual_hash", actual)
-	audit.Log(ctx, "integrity.replica_rejected",
-		slog.String("key", source.ObjectKey),
-		slog.String("src_backend", source.BackendName),
-		slog.String("target_backend", target),
-	)
-	return replicaMismatch
 }

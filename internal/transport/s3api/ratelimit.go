@@ -17,6 +17,7 @@
 package s3api
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -37,15 +39,12 @@ import (
 
 // RateLimiter provides per-IP token-bucket rate limiting.
 type RateLimiter struct {
-	mu              sync.Mutex
-	limiters        map[string]*visitorLimiter
-	rate            rate.Limit
-	burst           int
-	trustedProxies  []*net.IPNet
-	cleanupInterval time.Duration
-	cleanupMaxAge   time.Duration
-	stop            chan struct{}
-	closeOnce       sync.Once
+	mu             sync.Mutex
+	limiters       map[string]*visitorLimiter
+	rate           rate.Limit
+	burst          int
+	trustedProxies []*net.IPNet
+	stop           context.CancelFunc
 }
 
 // visitorLimiter is the per-IP token bucket plus the lastSeen
@@ -65,37 +64,21 @@ type visitorLimiter struct {
 // NewRateLimiter creates a rate limiter with the given configuration, whose
 // defaults the config loader filled.
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
+	ctx, stop := context.WithCancel(context.Background())
 	rl := &RateLimiter{
-		limiters:        make(map[string]*visitorLimiter),
-		rate:            rate.Limit(cfg.RequestsPerSec),
-		burst:           cfg.Burst,
-		trustedProxies:  httputil.ParseTrustedProxies(cfg.TrustedProxies),
-		cleanupInterval: cfg.CleanupInterval,
-		cleanupMaxAge:   cfg.CleanupMaxAge,
-		stop:            make(chan struct{}),
+		limiters:       make(map[string]*visitorLimiter),
+		rate:           rate.Limit(cfg.RequestsPerSec),
+		burst:          cfg.Burst,
+		trustedProxies: httputil.ParseTrustedProxies(cfg.TrustedProxies),
+		stop:           stop,
 	}
-
-	go func() {
-		ticker := time.NewTicker(rl.cleanupInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				rl.cleanup(rl.cleanupMaxAge)
-			case <-rl.stop:
-				return
-			}
-		}
-	}()
-
+	go syncutil.Every(ctx, cfg.CleanupInterval, func(context.Context) { rl.cleanup(cfg.CleanupMaxAge) })
 	return rl
 }
 
 // Close stops the background cleanup goroutine. Safe to call multiple times.
 func (rl *RateLimiter) Close() {
-	rl.closeOnce.Do(func() {
-		close(rl.stop)
-	})
+	rl.stop()
 }
 
 // UpdateLimits changes the rate and burst and resets all existing per-IP

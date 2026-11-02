@@ -110,9 +110,8 @@ func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK {
 		t.Errorf("last event = %+v, want result/ok", last)
 	}
-	// 10 processed per pass, stops once total >= 25: 3 passes => 30.
-	if last.Processed != 30 {
-		t.Errorf("result processed = %d, want 30", last.Processed)
+	if last.Processed != 25 {
+		t.Errorf("result processed = %d, want 25", last.Processed)
 	}
 	if drained, _ := last.Fields["done"].(bool); drained {
 		t.Errorf("result done = true, want false (max bound hit, backlog not drained)")
@@ -120,8 +119,8 @@ func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 
 	// Each object emits a start and an end event; the key is carried on start.
 	stepStarts, stepEnds := countStepEvents(events)
-	if stepStarts != 30 || stepEnds != 30 {
-		t.Errorf("step events = %d start / %d end, want 30 / 30", stepStarts, stepEnds)
+	if stepStarts != 25 || stepEnds != 25 {
+		t.Errorf("step events = %d start / %d end, want 25 / 25", stepStarts, stepEnds)
 	}
 	if !allStepStartsLabeled(events) {
 		t.Error("step_start missing the object key")
@@ -177,7 +176,7 @@ func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
 func TestHandleReconcile_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.d.Reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
+	h.d.Reconciler = newReconciler(t, reconciled(4, 1, 2, 0), nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, streamReq("/admin/api/reconcile"))

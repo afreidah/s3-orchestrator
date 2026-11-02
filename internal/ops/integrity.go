@@ -41,15 +41,6 @@ const defaultUnreadableBatchSize = 100
 // TYPES
 // -------------------------------------------------------------------------
 
-// BackfillResult reports one backfill run: Succeeded counts the copies hashed
-// and Skipped the ones that could not be decoded. Done is true only when the
-// backlog drained; a run stopped by the object cap or a cancelled context
-// reports false so the caller knows more work remains.
-type BackfillResult struct {
-	batch.Summary
-	Done bool
-}
-
 // UnreadableList reports copies that are encrypted with no key: up to the
 // requested number of them, and how many exist in total.
 type UnreadableList struct {
@@ -60,7 +51,6 @@ type UnreadableList struct {
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
 	Scrubber ScrubberOps
-	Store    UnhashedLister
 	Locker   AdvisoryLocker
 	Config   *config.Live
 }
@@ -70,7 +60,6 @@ type IntegrityDeps struct {
 type Integrity struct {
 	log      *slog.Logger
 	scrubber ScrubberOps
-	store    UnhashedLister
 	locker   AdvisoryLocker
 	cfg      *config.Live
 }
@@ -78,13 +67,11 @@ type Integrity struct {
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
-	must.NotNil("d.Store", d.Store)
 	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
 	return &Integrity{
 		log:      slog.Default().With(logfmt.Component("ops")),
 		scrubber: d.Scrubber,
-		store:    d.Store,
 		locker:   d.Locker,
 		cfg:      d.Config,
 	}
@@ -115,8 +102,9 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 
 	var sum batch.Summary
 	acquired, err := i.locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
-		sum = i.scrubber.Scrub(lockCtx, batchSize, backend, observer)
-		return nil
+		var err error
+		sum, err = i.scrubber.Scrub(lockCtx, batchSize, backend, observer)
+		return err
 	})
 	if err != nil {
 		return batch.Summary{}, err
@@ -154,9 +142,9 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // batchSize <= 0 uses the default pass size. An empty backend hashes copies on
 // every backend. observer, when non-nil, receives a start and end step per
 // object hashed.
-func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (BackfillResult, error) {
+func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (worker.BackfillResult, error) {
 	if !i.cfg.Load().Integrity.IsEnabled() {
-		return BackfillResult{}, ErrIntegrityDisabled
+		return worker.BackfillResult{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {
 		batchSize = defaultBackfillBatchSize
@@ -165,45 +153,9 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 	i.log.InfoContext(ctx, "backfill-checksums started",
 		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 
-	return i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, observer), nil
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// drainBackfill hashes the backlog a page at a time until it drains, the
-// max-objects cap is hit, or the context is cancelled. Done is set only when
-// the backlog ran out; a listing failure ends the run as not drained.
-func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) BackfillResult {
-	var res BackfillResult
-	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
-		PageSize: batch.FixedPage(batchSize),
-		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return i.store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredHashed, Backend: backend, ManagedOnly: true}, limit, after)
-		},
-		CursorOf: func(loc core.ObjectLocation) core.Cursor {
-			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
-		},
-	}
-	// The cap and the pause sit between pages, so stopping on them leaves the
-	// page that was just hashed complete.
-	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
-		sum := i.scrubber.HashCopies(ctx, locs, observer)
-		res.Summary = res.Plus(sum)
-		if maxObjects > 0 && res.Succeeded >= maxObjects {
-			return batch.Step{Stop: true}, nil
-		}
-		if len(locs) < batchSize {
-			return batch.Step{}, nil // the last page, so there is nothing to pause before
-		}
-		return batch.Step{Stop: pause > 0 && !sleepOrCancel(ctx, pause)}, nil
-	})
-	if stop == batch.Errored {
-		i.log.ErrorContext(ctx, "backfill list failed", "error", err)
-	}
-	res.Done = stop == batch.Exhausted
-	return res
+	return i.scrubber.Backfill(ctx, worker.BackfillRequest{
+		BatchSize: batchSize, MaxObjects: maxObjects, Pause: pause, Backend: backend,
+	}, observer)
 }
 
 // ListUnreadable returns up to limit copies that are encrypted with no key, and
@@ -222,20 +174,9 @@ func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableLi
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
 // at a time, and reports its tally; Succeeded counts the copies purged.
 // batchSize <= 0 uses the default.
-func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary {
+func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error) {
 	if batchSize <= 0 {
 		batchSize = defaultUnreadableBatchSize
 	}
 	return i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
-}
-
-// sleepOrCancel waits for d or for ctx to be cancelled, returning false when
-// cancellation wins so the caller stops early.
-func sleepOrCancel(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
 }

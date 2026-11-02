@@ -321,7 +321,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 // stale row. A copy a client overwrite or delete replaced mid-read is left
 // alone: that write already queued the discarded bytes.
 func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
-	removed, err := o.stores.DeleteObjectLocation(ctx, loc, 0, reasonIntegrityFailed)
+	err := o.coord.DropCopy(ctx, loc, 0, reasonIntegrityFailed)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return
@@ -330,7 +330,6 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLoc
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return
 	}
-	o.coord.Settle(ctx, removed)
 	o.cache.Delete(loc.ObjectKey)
 }
 

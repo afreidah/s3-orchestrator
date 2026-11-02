@@ -1,14 +1,14 @@
 // -------------------------------------------------------------------------------
-// Tick Runner - Advisory-Locked Periodic Service Primitive
+// Tick Runner - The Periodic Service Primitive
 //
 // Author: Alex Freidah
 //
-// Shared lifecycle.Runner implementation that drives a worker function on a
-// fixed interval under a PostgreSQL advisory lock. Owns audit-context
-// creation per tick, lock-busy / startup-jitter handling, per-service
-// health snapshotting, and the worker-tick telemetry counters. A package
-// of its own so worker subsystems can construct their services without
-// going through DI.
+// Shared lifecycle.Runner that drives a function on an interval, either under
+// a PostgreSQL advisory lock so one instance runs each tick, or with no lock
+// so every instance does. Owns the request ID per tick, startup jitter for
+// locked services, per-service health snapshots, and the worker-tick
+// telemetry counters. A package of its own so worker subsystems can construct
+// their services without going through DI.
 // -------------------------------------------------------------------------------
 
 package tickrunner
@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -40,12 +40,45 @@ type AdvisoryLocker interface {
 	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
 }
 
-// QuotaMetricsRefresher is the single-method subset of
-// *infra.BackendRuntime that HandlePassResult calls to push fresh quota
-// gauges after a successful worker pass. Lives here so the worker
-// packages can take it as a typed dep without importing DI.
-type QuotaMetricsRefresher interface {
-	UpdateQuotaMetrics(ctx context.Context) error
+// Config bundles the inputs needed to construct a Service. Name and Work are
+// required. Name is the snake_case slug used for the metrics label and the
+// logger's component, and Log defaults to ComponentLogger(Name).
+//
+// Locker, when set, runs each tick under LockID so one instance runs it; nil
+// runs every tick on every instance. Interval is the wait between ticks, and
+// Next, when set, replaces it for a service whose period changes. ShouldRun
+// skips a tick without recording a failure, RunAtStartup also ticks as the
+// service starts, and OnError replaces the default log for a lock failure.
+type Config struct {
+	Locker       AdvisoryLocker
+	LockID       int64
+	Interval     time.Duration
+	Next         func() time.Duration
+	Name         string
+	Log          *slog.Logger
+	ShouldRun    func() bool
+	RunAtStartup bool
+	Work         func(ctx context.Context) error
+	OnError      func(err error)
+}
+
+// Service runs a function on an interval, under an advisory lock when it has
+// one. Health state is recorded after each tick for the admin endpoint and
+// Prometheus staleness alerts.
+type Service struct {
+	cfg      Config
+	locked   bool
+	healthMu sync.Mutex
+	health   lifecycle.WorkerHealth
+}
+
+// everyInstance is the locker of a service with no advisory lock: every tick
+// runs, on every instance.
+type everyInstance struct{}
+
+// WithAdvisoryLock runs fn without taking a lock.
+func (everyInstance) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+	return true, fn(ctx)
 }
 
 // -------------------------------------------------------------------------
@@ -58,142 +91,87 @@ func ComponentLogger(slug string) *slog.Logger {
 	return slog.Default().With(logfmt.Component(slug))
 }
 
-// QueueWork adapts a queue-draining pass into a Config.Work function. The
-// queue workers report the same way: run one pass, and say what it did only if
-// it did something. A quiet queue is the normal state, so logging every tick
-// would write a line a minute per instance forever and bury the ticks that
-// matter.
-func QueueWork(log *slog.Logger, msg string, pass func(ctx context.Context) (succeeded, failed int)) func(context.Context) error {
-	return func(ctx context.Context) error {
-		succeeded, failed := pass(ctx)
-		if succeeded > 0 || failed > 0 {
-			log.InfoContext(ctx, msg, "processed", succeeded, "failed", failed)
-		}
-		return nil
-	}
-}
-
-// HandlePassResult is the shared post-call handling for the pass workers
-// (rebalance, over-replication, replication). It returns non-DB errors as tick
-// failures, and when work was done logs the count under countKey and
-// refreshes quota metrics.
-func HandlePassResult(ctx context.Context, log *slog.Logger, manager QuotaMetricsRefresher, count int, err error, countKey string) error {
-	if err != nil {
-		if errors.Is(err, core.ErrDBUnavailable) {
-			return nil
-		}
-		return err
-	}
-	if count > 0 {
-		log.InfoContext(ctx, "pass completed", countKey, count)
-		if qerr := manager.UpdateQuotaMetrics(ctx); qerr != nil {
-			log.WarnContext(ctx, "quota metrics refresh failed after pass", "error", qerr)
-		}
-	}
-	return nil
-}
-
-// Config bundles the inputs needed to construct a Service. Work and Name are
-// required; ShouldRun, Startup, and OnError are optional.
-//
-// Name is the snake_case component slug used for both the metrics label and
-// the logger's component attribute. ShouldRun skips a tick without recording
-// a failure. OnError replaces the default failure log.
-type Config struct {
-	Locker   AdvisoryLocker
-	Interval time.Duration // between ticks, post-jitter
-	LockID   int64         // core.LockRebalancer and friends
-	Name     string
-	Log      *slog.Logger // ComponentLogger(Name) is the default contract
-
-	ShouldRun func() bool
-	Startup   func(ctx context.Context) error // runs once before the first tick
-	Work      func(ctx context.Context) error // required
-	OnError   func(err error)
-}
-
-// New constructs a Service from cfg. Required fields (Locker, Interval,
-// LockID, Name, Log, Work) must be non-nil/positive; the constructor
-// trusts the caller to supply them.
+// New constructs a Service from cfg, filling the logger and the locker of a
+// service that runs on every instance.
 //
 //nolint:gocritic // hugeParam: Config is a value struct by design; copying it once at construction is fine and the call sites read better than a pointer.
 func New(cfg Config) *Service {
-	return &Service{cfg: cfg}
+	s := &Service{cfg: cfg, locked: cfg.Locker != nil}
+	if s.cfg.Locker == nil {
+		s.cfg.Locker = everyInstance{}
+	}
+	if s.cfg.Log == nil {
+		s.cfg.Log = ComponentLogger(cfg.Name)
+	}
+	return s
 }
 
-// -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
-
-// Service runs a function on a fixed interval under an advisory lock.
-// Handles audit context creation, lock acquisition, skip/error logging,
-// and context cancellation. Health state is recorded after each tick for the
-// admin endpoint and Prometheus staleness alerts.
-type Service struct {
-	cfg      Config
-	healthMu sync.Mutex
-	health   lifecycle.WorkerHealth
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-// Tick runs one iteration under the same lock, audit and health recording Run
-// uses.
-func (s *Service) Tick(ctx context.Context) {
-	s.runOnce(ctx, s.cfg.Work)
-}
-
-// Run implements lifecycle.Runner with a jittered first tick to
-// prevent thundering herd on the advisory lock at startup.
+// Run implements lifecycle.Runner. A locked service waits a random part of its
+// first interval, so instances started together do not all contend for the
+// lock at once.
 func (s *Service) Run(ctx context.Context) error {
-	if s.cfg.Startup != nil {
-		s.runOnce(ctx, s.cfg.Startup)
-	}
+	syncutil.Schedule{
+		Interval:    s.cfg.Interval,
+		Next:        s.cfg.Next,
+		Jitter:      s.locked,
+		Immediately: s.cfg.RunAtStartup,
+	}.Run(ctx, s.Tick)
+	return nil
+}
 
-	jitter := rand.N(s.cfg.Interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
-	select {
-	case <-time.After(jitter):
-	case <-ctx.Done():
+// Tick runs one tick as Run does: skipped when ShouldRun declines it,
+// otherwise under the lock, request ID and health recording.
+func (s *Service) Tick(ctx context.Context) {
+	if s.cfg.ShouldRun != nil && !s.cfg.ShouldRun() {
+		s.recordSkip()
+		return
+	}
+	ctx = audit.WithRequestID(ctx, audit.NewID())
+	var workErr error
+	acquired, lockErr := s.cfg.Locker.WithAdvisoryLock(ctx, s.cfg.LockID, func(lockCtx context.Context) error {
+		workErr = s.cfg.Work(lockCtx)
 		return nil
-	}
+	})
+	s.record(ctx, acquired, lockErr, workErr)
+}
 
-	ticker := time.NewTicker(s.cfg.Interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if s.cfg.ShouldRun != nil && !s.cfg.ShouldRun() {
-				s.recordSkip()
-				continue
-			}
-			s.runOnce(ctx, s.cfg.Work)
-		case <-ctx.Done():
-			return nil
-		}
-	}
+// Name returns the service's snake_case component slug.
+func (s *Service) Name() string { return s.cfg.Name }
+
+// LockID returns the advisory-lock identifier this service holds per
+// tick. Exposed so DI invariant tests can pin "no two services share
+// a lock ID."
+func (s *Service) LockID() int64 { return s.cfg.LockID }
+
+// Interval returns the configured tick period. Exposed so DI
+// invariant tests can pin "no interval is zero or pathologically
+// large."
+func (s *Service) Interval() time.Duration { return s.cfg.Interval }
+
+// Health implements lifecycle.HealthReporter. Returns a snapshot of
+// the service's last tick outcomes plus its registered name so the
+// admin endpoint can render a per-service status table.
+func (s *Service) Health() lifecycle.WorkerHealth {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	h := s.health
+	h.Name = s.cfg.Name
+	return h
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// runOnce creates an audit context, acquires the advisory lock, runs
-// fn, and records the resulting health state. Lock-busy and
-// shouldRun-gated ticks are accounted as "skipped" so health metrics
-// can distinguish them from outright failures.
-func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) error) {
-	tickCtx := audit.WithRequestID(ctx, audit.NewID())
-	var workErr error
-	acquired, lockErr := s.cfg.Locker.WithAdvisoryLock(tickCtx, s.cfg.LockID,
-		func(lockCtx context.Context) error {
-			workErr = fn(lockCtx)
-			return nil
-		})
-
+// record accounts for how a tick ended. A tick the database was down for, or
+// whose lock another instance held, is skipped: it did no work and is not the
+// service's failure, and its last success stays where it was.
+func (s *Service) record(ctx context.Context, acquired bool, lockErr, workErr error) {
 	switch {
-	case lockErr != nil && !errors.Is(lockErr, core.ErrDBUnavailable):
+	case errors.Is(lockErr, core.ErrDBUnavailable) || errors.Is(workErr, core.ErrDBUnavailable):
+		s.cfg.Log.DebugContext(ctx, "tick skipped, database unavailable")
+		s.recordSkip()
+	case lockErr != nil:
 		if s.cfg.OnError != nil {
 			s.cfg.OnError(lockErr)
 		} else {
@@ -211,8 +189,8 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 	}
 }
 
-// recordSkip counts a tick that did no work and is not a failure: the lock was
-// held elsewhere, or ShouldRun declined it. Health is left as it was.
+// recordSkip counts a tick that did no work and is not a failure. Health is
+// left as it was.
 func (s *Service) recordSkip() {
 	telemetry.WorkerTicksTotal.WithLabelValues(s.cfg.Name, "skipped").Inc()
 }
@@ -246,32 +224,4 @@ func (s *Service) recordHealth(success bool, err error) {
 		telemetry.WorkerTicksTotal.WithLabelValues(s.cfg.Name, "error").Inc()
 		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.cfg.Name).Set(float64(failures))
 	}
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-// Name returns the service's snake_case component slug.
-func (s *Service) Name() string { return s.cfg.Name }
-
-// LockID returns the advisory-lock identifier this service holds per
-// tick. Exposed so DI invariant tests can pin "no two services share
-// a lock ID."
-func (s *Service) LockID() int64 { return s.cfg.LockID }
-
-// Interval returns the configured tick period. Exposed so DI
-// invariant tests can pin "no interval is zero or pathologically
-// large."
-func (s *Service) Interval() time.Duration { return s.cfg.Interval }
-
-// Health implements lifecycle.HealthReporter. Returns a snapshot of
-// the service's last tick outcomes plus its registered name so the
-// admin endpoint can render a per-service status table.
-func (s *Service) Health() lifecycle.WorkerHealth {
-	s.healthMu.Lock()
-	defer s.healthMu.Unlock()
-	h := s.health
-	h.Name = s.cfg.Name
-	return h
 }

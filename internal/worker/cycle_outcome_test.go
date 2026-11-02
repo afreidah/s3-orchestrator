@@ -295,15 +295,15 @@ func TestReplicaOutcomeResult_ClassifiesAnObject(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		out  ReplicationOutcome
+		out  replicationOutcome
 		want batch.ItemOutcome
 	}{
-		{"copies made", ReplicationOutcome{Created: 2}, batch.ItemSucceeded},
-		{"copy errored", ReplicationOutcome{CopyErrors: 1}, batch.ItemFailed},
-		{"record errored", ReplicationOutcome{RecordErrors: 1}, batch.ItemFailed},
-		{"source superseded", ReplicationOutcome{Superseded: 1}, batch.ItemFailed},
-		{"partly created still fails", ReplicationOutcome{Created: 1, CopyErrors: 1}, batch.ItemFailed},
-		{"nowhere to put it", ReplicationOutcome{NoTarget: true}, batch.ItemSkipped},
+		{"copies made", replicationOutcome{Created: 2}, batch.ItemSucceeded},
+		{"copy errored", replicationOutcome{CopyErrors: 1}, batch.ItemFailed},
+		{"record errored", replicationOutcome{RecordErrors: 1}, batch.ItemFailed},
+		{"source superseded", replicationOutcome{Superseded: 1}, batch.ItemFailed},
+		{"partly created still fails", replicationOutcome{Created: 1, CopyErrors: 1}, batch.ItemFailed},
+		{"nowhere to put it", replicationOutcome{NoTarget: true}, batch.ItemSkipped},
 	}
 	for _, tc := range cases {
 		if got := replicaOutcomeResult(&tc.out); got.Outcome != tc.want {
@@ -349,6 +349,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
 	f.pl.EXPECT().Settle(gomock.Any(), gomock.Any()).AnyTimes()
+	dropThroughStore(f.pl, store.DeleteObjectLocation)
 	return f
 }
 

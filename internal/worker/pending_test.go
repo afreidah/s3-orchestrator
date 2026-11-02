@@ -95,7 +95,7 @@ func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
@@ -119,7 +119,7 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
@@ -143,7 +143,7 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
@@ -171,7 +171,7 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
@@ -197,7 +197,7 @@ func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", pendSum.Succeeded, pendSum.Failed)
 	}
@@ -223,7 +223,7 @@ func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", pendSum.Succeeded, pendSum.Failed)
 	}
@@ -249,7 +249,7 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
@@ -272,7 +272,7 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
@@ -296,7 +296,7 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
@@ -321,7 +321,7 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
@@ -339,7 +339,7 @@ func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 0/0 when admission denied", resolved, failed)
@@ -366,7 +366,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedSettles(t *testing.T) {
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, _ := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 {
 		t.Errorf("resolved=%d, want 1", resolved)
@@ -380,7 +380,7 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 
 	ms.stalePending = nil
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 0/0 for empty queue", resolved, failed)
@@ -414,7 +414,7 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission().Times(2)
 	ops.EXPECT().GetBackend("broken").Return(cb, nil).Times(2)
 
-	pendSum := r.ProcessPendingQueue(context.Background())
+	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 {
 		t.Errorf("resolved = %d, want 0", resolved)

@@ -435,15 +435,15 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	// 10 processed per batch, stops once total >= 25: 3 batches => 30.
-	if resp["processed"].(float64) != 30 {
-		t.Errorf("processed = %v, want 30", resp["processed"])
+	if resp["processed"].(float64) != 25 {
+		t.Errorf("processed = %v, want 25", resp["processed"])
 	}
 	if resp["done"] != false {
 		t.Errorf("done = %v, want false (backlog not drained)", resp["done"])
 	}
-	if scrubs.backfillCalls != 3 {
-		t.Errorf("backfillCalls = %d, want 3", scrubs.backfillCalls)
+	want := worker.BackfillRequest{BatchSize: 10, MaxObjects: 25, Pause: time.Millisecond}
+	if scrubs.backfillReq != want {
+		t.Errorf("backfill ran with %+v, want %+v", scrubs.backfillReq, want)
 	}
 }
 
@@ -457,7 +457,7 @@ func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.d.BackendNames = func() []string { return []string{"b1"} }
-	h.d.Reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
+	h.d.Reconciler = newReconciler(t, reconciled(4, 1, 2, 1), nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
@@ -467,7 +467,8 @@ func TestHandleReconcile_Success(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["imported"].(float64) != 4 || resp["removed"].(float64) != 1 {
+	if resp["imported"].(float64) != 4 || resp["removed"].(float64) != 1 ||
+		resp["backends_scanned"].(float64) != 2 || resp["backends_failed"].(float64) != 1 {
 		t.Errorf("counts wrong: %v", resp)
 	}
 }

@@ -80,7 +80,7 @@ func TestInt_PendingIntent_ClearedByOverwritingWrite(t *testing.T) {
 
 	// Nothing is left for the reaper, which is the point: it exists for a
 	// process that died, not for intents a later write already settled.
-	pendSum := testWorkers.PendingReaper.ProcessPendingQueue(ctx)
+	pendSum := passOf(t)(testWorkers.PendingReaper.ProcessPendingQueue(ctx))
 	if pendSum.Succeeded != 0 || pendSum.Failed != 0 {
 		t.Errorf("reaper tick: resolved=%d failed=%d, want both 0", pendSum.Succeeded, pendSum.Failed)
 	}

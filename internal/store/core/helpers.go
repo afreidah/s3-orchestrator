@@ -106,6 +106,27 @@ func removedFromExisting(existing []ExistingCopy) []removedCopy {
 	return removed
 }
 
+// KeysOf returns the object key of each copy in locs, in order. A key held on
+// several backends appears once per copy.
+func KeysOf(locs []ObjectLocation) []string {
+	keys := make([]string, len(locs))
+	for i := range locs {
+		keys[i] = locs[i].ObjectKey
+	}
+	return keys
+}
+
+// Cursor returns the position a by-key listing resumes from after this copy.
+func (l *ObjectLocation) Cursor() Cursor {
+	return Cursor{ObjectKey: l.ObjectKey, BackendName: l.BackendName}
+}
+
+// SizeCursor returns the position a backend's smallest-first listing resumes
+// from after this copy.
+func (l *ObjectLocation) SizeCursor() SizeCursor {
+	return SizeCursor{SizeBytes: l.SizeBytes, ObjectKey: l.ObjectKey}
+}
+
 // LocationOn returns the copy in locs held on backendName, or nil when there is
 // none. An object holds at most one copy per backend.
 func LocationOn(locs []ObjectLocation, backendName string) *ObjectLocation {

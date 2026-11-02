@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -34,13 +35,6 @@ import (
 )
 
 //go:generate mockgen -destination=mock_test.go -package=expiry github.com/afreidah/s3-orchestrator/internal/proxy/expiry ObjectDeleter
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// defaultBatchSize bounds one store query when the operator configured none.
-const defaultBatchSize = 100
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -86,20 +80,15 @@ func (m *Manager) logger() *slog.Logger {
 // A sweep that attempted a delete publishes LifecycleCompleted, whether a tick
 // or an operator ran it.
 func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
-	batchSize := batchSizeFor(m.Config())
-
-	ctx = audit.WithWorkload(ctx, audit.WorkloadLifecycle)
-	ctx, span := telemetry.StartSpan(ctx, "ProcessLifecycleRules",
-		telemetry.AttrOperation.String("lifecycle"),
-	)
-	defer span.End()
-
-	var total batch.Summary
-	for _, rule := range rules {
-		total = total.Plus(m.applyRule(ctx, rule, batchSize, obs))
-	}
+	total, _ := cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadLifecycle}, func(ctx context.Context) (batch.Summary, error) {
+		batchSize := m.Config().BatchSize
+		var total batch.Summary
+		for _, rule := range rules {
+			total = total.Plus(m.applyRule(ctx, rule, batchSize, obs))
+		}
+		return total, nil
+	})
 	if total.Attempted > 0 {
-		m.logger().InfoContext(ctx, "expiration completed", "deleted", total.Succeeded, "failed", total.Failed)
 		event.Publish(event.LifecycleCompleted, "", map[string]any{
 			"deleted": total.Succeeded,
 			"failed":  total.Failed,
@@ -111,15 +100,6 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// batchSizeFor returns the per-tick batch size, falling back to the default
-// when the operator configured none.
-func batchSizeFor(cfg *config.LifecycleConfig) int {
-	if cfg != nil && cfg.BatchSize > 0 {
-		return cfg.BatchSize
-	}
-	return defaultBatchSize
-}
 
 // applyRule walks one rule's expired objects by key and deletes each page in
 // one batch. An object whose delete fails is passed over, so a backend outage

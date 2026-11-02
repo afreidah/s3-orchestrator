@@ -13,10 +13,8 @@ package ops
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -45,17 +43,15 @@ type SurplusCount struct {
 type ReplicationDeps struct {
 	Replicator Replicator
 	OverRep    OverReplicationOps
-	Runtime    RuntimeOps
 	Config     *config.Live
 }
 
 // Replication serves the copy-count operations shared by the admin API and
-// the web UI.
+// the web UI. The workers report their own passes, so it only resolves the
+// running config and passes the request on.
 type Replication struct {
-	log        *slog.Logger
 	replicator Replicator
 	overRep    OverReplicationOps
-	runtime    RuntimeOps
 	cfg        *config.Live
 }
 
@@ -63,13 +59,10 @@ type Replication struct {
 func NewReplication(d ReplicationDeps) *Replication {
 	must.NotNil("d.Replicator", d.Replicator)
 	must.NotNil("d.OverRep", d.OverRep)
-	must.NotNil("d.Runtime", d.Runtime)
 	must.NotNil("d.Config", d.Config)
 	return &Replication{
-		log:        slog.Default().With(logfmt.Component("ops")),
 		replicator: d.Replicator,
 		overRep:    d.OverRep,
-		runtime:    d.Runtime,
 		cfg:        d.Config,
 	}
 }
@@ -86,19 +79,7 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	if err != nil {
 		return worker.ReplicationSummary{}, err
 	}
-
-	sum, err := r.replicator.Replicate(ctx, runCfg, observer)
-	if err != nil {
-		return worker.ReplicationSummary{}, err
-	}
-
-	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
-		r.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
-	}
-
-	r.log.InfoContext(ctx, "replication cycle completed",
-		"copies_created", sum.CopiesCreated, "objects_failed", sum.Failed)
-	return sum, nil
+	return r.replicator.Replicate(ctx, runCfg, observer)
 }
 
 // CountSurplus reports the current over-replication backlog at the running
@@ -127,19 +108,7 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 	if batchSize > 0 {
 		runCfg.BatchSize = min(batchSize, maxCleanBatchSize)
 	}
-
-	sum, err := r.overRep.Clean(ctx, runCfg, observer)
-	if err != nil {
-		return worker.OverReplicationSummary{}, err
-	}
-
-	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
-		r.log.WarnContext(ctx, "failed to update quota metrics after surplus cleanup", "error", mErr)
-	}
-
-	r.log.InfoContext(ctx, "surplus cleanup completed",
-		"copies_removed", sum.CopiesRemoved, "objects_failed", sum.Failed)
-	return sum, nil
+	return r.overRep.Clean(ctx, runCfg, observer)
 }
 
 // runConfig returns the running config for one manual cycle, whose defaults

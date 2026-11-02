@@ -49,12 +49,13 @@ s3-orchestrator admin reconcile -backend g3
 
 Response:
 ```json
-{"status":"ok","imported":0,"removed":57,"backends_scanned":1}
+{"status":"ok","imported":0,"removed":57,"backends_scanned":1,"backends_failed":0}
 ```
 
 - **imported**: objects on the backend but not in the DB (brought under management)
 - **removed**: DB entries whose objects no longer exist on the backend (stale metadata cleaned up)
 - **backends_scanned**: how many backends were processed
+- **backends_failed**: how many of those failed partway; what they found before failing is still counted
 
 The background reconciler (`reconcile.enabled: true`) runs the same logic on a timer. The admin endpoint is for immediate use after incidents.
 
@@ -325,8 +326,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated, by the worker's name |
 | `s3o_lifecycle_deleted_total` | Counter | - | Objects deleted by lifecycle expiration |
 | `s3o_lifecycle_failed_total` | Counter | - | Objects that failed lifecycle deletion |
-| `s3o_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
-| `s3o_worker_ticks_total` | Counter | service, result | Locked-ticker service ticks by service and outcome |
+| `s3o_worker_ticks_total` | Counter | service, result | Ticks of each periodic service by outcome: `success`, `error`, or `skipped` when the lock was held elsewhere, the service was turned off, or the database was unavailable |
 | `s3o_worker_last_success_timestamp_seconds` | Gauge | service | Unix time of the most recent successful tick per service |
 | `s3o_worker_consecutive_failures` | Gauge | service | Consecutive failed ticks per service since the last success |
 | `s3o_worker_cycles_total` | Counter | service, outcome | Worker passes by how their items ended (see below) |
@@ -368,8 +368,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_head_served_from_metadata_total` | Counter | - | HEAD responses answered from the object ledger, each one a backend request and a metered API call avoided |
 | `s3o_cache_flush_total` | Counter | - | Admin-triggered object data cache flushes |
 | `s3o_cache_admin_invalidations_total` | Counter | - | Admin-triggered single-key cache invalidations |
-| `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |
-| `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
+| `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, replicate, scrub), counting a single key's verification as a scrub |
+| `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup, or a new replica discarded) |
 | `s3o_integrity_oldest_unverified_seconds` | Gauge | - | How long the most overdue reachable object copy has gone unverified |
 | `s3o_integrity_never_verified_copies` | Gauge | - | Reachable copies with a content hash that have never been verified |
 | `s3o_integrity_deferred_copies` | Gauge | - | Copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve |
@@ -388,9 +388,9 @@ The fleet-wide gauges - quota bytes, object, multipart, plaintext and unreadable
 
 #### Worker cycle outcomes
 
-Each worker goes by one name everywhere: its service in `/admin/api/workers` and the TUI, the `service` label on the worker metrics, the `worker` label on admission rejections, its log `component`, and its usage `workload`. The names are `replication`, `over_replication`, `rebalance`, `drain`, `scrub`, `cleanup`, `pending_reaper` and `reconcile`.
+Each worker goes by one name everywhere: its service in `/admin/api/workers` and the TUI, the `service` label on the worker metrics, the `worker` label on admission rejections, its log `component`, and its usage `workload`. The names are `replication`, `over_replication`, `rebalance`, `drain`, `scrub`, `cleanup`, `pending_reaper`, `reconcile`, `lifecycle`, `multipart_cleanup` and `notifier`. The operator-run `backfill` and `purge` passes report under their own names too.
 
-`s3o_worker_cycles_total` counts every pass of those workers under an `outcome` label describing how it finished, taken from the per-item tally rather than from the fact that the pass returned. `s3o_worker_ticks_total` says whether a tick ran; this says what the pass did:
+`s3o_worker_cycles_total` counts every pass of those workers, scheduled or run by an operator, under an `outcome` label describing how it finished, taken from the per-item tally rather than from the fact that the pass returned. `s3o_worker_ticks_total` says whether a tick ran; this says what the pass did:
 
 | Value | Meaning |
 |---|---|
@@ -402,7 +402,7 @@ Each worker goes by one name everywhere: its service in `/admin/api/workers` and
 
 Alert on `partial` and `failed` to catch a worker that is running on schedule but not achieving anything - a backend that rejects every write, for instance, produces `failed` cycles indefinitely while the process stays healthy. `empty` is the normal steady state for a fleet that is already in shape.
 
-Every pass that did something also writes a `<name>.complete` audit entry with its tally: `planned`, `succeeded`, `failed`, `skipped`, `deferred`, `outcome`, `duration` and `usage`, plus the worker's own count (`copies_created` for replication, `copies_removed` for over-replication, `drains_completed` for drain, `imported` and `skipped` for reconcile).
+Every pass that failed, set out to process anything, or left work for later also writes a `<name>.complete` audit entry with its tally: `planned`, `succeeded`, `failed`, `skipped`, `deferred`, `outcome`, `duration` and `usage`, plus the worker's own count (`copies_created` for replication, `copies_removed` for over-replication, `drains_completed` for drain, and `imported`, `removed`, `not_imported` and `suppressed_pending_cleanup` for reconcile). A pass with nothing to do writes nothing, so a worker polling an empty queue stays quiet. This entry is the one report of a pass: workers write no separate completion log line.
 
 ### OpenTelemetry tracing
 
@@ -426,7 +426,6 @@ Key audit events:
 | `<worker>.complete` | Workers | A worker pass that did something, with its tally (see [worker cycle outcomes](#worker-cycle-outcomes)) |
 | `rebalance.start`, `rebalance.move` | Rebalancer | Object redistribution runs |
 | `replication.start`, `replication.copy` | Replicator | Replica creation runs |
-| `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Queued bytes deleted and the row retired, on the request path or by the worker |
 | `cleanup_queue.already_absent` | Cleanup queue | Backend DELETE returned 404 - the object is already gone. Row dropped as idempotent success instead of retrying nine more times |
 | `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a worker tick (typical after a process died before settling the rows it queued) |
@@ -439,14 +438,14 @@ Key audit events:
 | `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
 | `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, and the panic value. The matching error-level slog entry carries the captured stack trace |
 
-Each S3 API request produces correlated audit entries sharing the same `request_id`: the HTTP-level and storage-level entries, plus one `backend.*` entry per request it sent to a backend. Internal operations (rebalance, replication) generate their own correlation IDs, so a worker's `backend.*` entries share the ID of the operation that made them. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
+Each S3 API request produces correlated audit entries sharing the same `request_id`: the HTTP-level and storage-level entries, plus one `backend.*` entry per request it sent to a backend. A scheduled worker pass gets an ID of its own each tick, and a pass an admin request started keeps that request's ID, so a worker's `backend.*` entries share the ID of the operation that made them. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
 
 The `workload` field on a `backend.*` entry is the same tag usage accounting charges under, so summing `bytes` by workload and backend from the audit log matches `s3o_usage_workload_bytes`. Backend spans carry the same two values as `s3o.workload` and `s3o.bytes_moved`.
 
-Batch cycle summaries (the `<name> cycle complete` log lines, `scrub completed`, and the `<worker>.complete` audit entries) carry a `usage` group with the requests, egress bytes and ingress bytes the cycle was charged on each backend:
+The `<worker>.complete` audit entries carry a `usage` group with the requests, egress bytes and ingress bytes the pass was charged on each backend:
 
 ```json
-{"msg":"scrub cycle complete","planned":50,"succeeded":50,"usage":{"r2":{"api_requests":50,"egress_bytes":52428800,"ingress_bytes":0}}}
+{"audit":true,"event":"scrub.complete","workload":"scrub","planned":50,"succeeded":50,"outcome":"success","usage":{"r2":{"api_requests":50,"egress_bytes":52428800,"ingress_bytes":0}}}
 ```
 
 ### HTTP panic recovery

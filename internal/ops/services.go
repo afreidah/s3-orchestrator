@@ -33,14 +33,12 @@ type Deps struct {
 	EncStore     RewriteStore
 	Codec        storedform.Codec
 	CompStore    RewriteStore
-	Runtime      RuntimeOps
 	Mover        Mover
 	Replicator   Replicator
 	OverRep      OverReplicationOps
 	Rebalancer   Rebalancer
 	Expiry       RuleProcessor
 	Scrubber     ScrubberOps
-	Unhashed     UnhashedLister
 	Locker       AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
@@ -76,19 +74,16 @@ func New(d *Deps) *Services {
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
 			Scrubber: d.Scrubber,
-			Store:    d.Unhashed,
 			Locker:   d.Locker,
 			Config:   cfg,
 		}),
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,
 			OverRep:    d.OverRep,
-			Runtime:    d.Runtime,
 			Config:     cfg,
 		}),
 		Rebalance: NewRebalance(RebalanceDeps{
 			Rebalancer: d.Rebalancer,
-			Runtime:    d.Runtime,
 			Config:     cfg,
 		}),
 		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry, Config: cfg}),

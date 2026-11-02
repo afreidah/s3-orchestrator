@@ -64,6 +64,32 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**One report per worker pass, one periodic loop, shared verification ([#1854](https://github.com/afreidah/s3-orchestrator/issues/1854), v0.179.4)**
+
+Logs, metrics and alerts that read a worker's completion lines need updating.
+
+- Every background pass reports once, through the `<worker>.complete` audit entry. These log lines are gone:
+  - `<name> cycle complete`, `pass completed`, `queue processed`, `pending queue processed` and `outbox drained`
+  - `scrub completed`, `expiration completed`, `reconcile complete` and `backfill batch starting`
+  - the admin-run `replication cycle completed`, `surplus cleanup completed` and `rebalance completed`
+- A pass now writes its entry when it failed, set out to process anything, or deferred work. A pass whose every item was skipped used to write none.
+- `s3o_lifecycle_runs_total` is removed. Use `s3o_worker_cycles_total{service="lifecycle"}`; the bundled Grafana dashboard is updated.
+- `s3o_worker_cycles_total` gains the `lifecycle`, `multipart_cleanup`, `notifier`, `backfill` and `purge` services, and counts admin-run reconciles.
+- The `storage.MultipartCleanup` audit event is now `multipart_cleanup.complete`.
+- `reconcile.complete` has one shape for both passes. The scheduled pass's `skipped` is now `not_imported`, and a backend whose scan failed counts as failed.
+- `POST /admin/api/reconcile` reports `backends_failed`. A pass where every backend failed used to look like a clean one.
+- A tick the database was down for counts as `skipped` in `s3o_worker_ticks_total` and leaves the worker's last success where it was, so staleness alerts fire during an outage. It used to count as a success.
+- A worker whose batch listing fails now fails its tick: the cleanup queue, the pending reaper, the notifier and the scrubber used to log the error and count the tick as a success. A scheduled reconcile with no buckets declared also fails.
+- The usage flush appears in `/admin/api/workers` and the worker tick metrics as `usage_flush`, and a tick where any step failed counts as failed. With adaptive flushing on, a backend already near its limit at startup is flushed at the fast interval from the first tick.
+- Every interval is counted from the end of the previous tick. A pass that ran past its interval used to be followed straight away by another.
+- A pass run from the admin API carries that request's `request_id` in its audit entries instead of minting a new one, and a backfill run gets one ID and one span instead of one per page.
+- A backfill or purge whose listing fails is answered `500`. A backfill used to answer `200` with `done: false`.
+- Verifying one key from the admin API counts in `s3o_integrity_checks_total{operation="scrub"}`. A replica that fails verification publishes `integrity.corruption_detected`, as a corrupt scrubbed copy does.
+- The rebalancer counts a destination's orphaned and in-flight bytes against its room, as the claim on it does, so it no longer plans moves the destination would refuse.
+- A pending intent dropped because its backend was removed writes a `pending_reaper.dropped` audit entry with `reason`, as a 404 drop does.
+- On the progress stream, a replication or over-replication object with nothing to do and an item refused an admission slot report `skipped` rather than `ok` or nothing.
+- The scrubber registers no service at all while `integrity.scrubber_interval` is 0, rather than counting a skipped tick every interval.
+
 **Config validation, defaults, restart reporting and admission pools ([#1859](https://github.com/afreidah/s3-orchestrator/issues/1859), v0.179.3)**
 
 A config that loaded before may now be refused at startup: check it with `s3-orchestrator validate` before upgrading.

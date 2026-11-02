@@ -246,6 +246,20 @@ func (mr *MockOpsMockRecorder) StreamCopy(ctx, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockOps)(nil).StreamCopy), ctx, req)
 }
 
+// UpdateQuotaMetrics mocks base method.
+func (m *MockOps) UpdateQuotaMetrics(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateQuotaMetrics", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateQuotaMetrics indicates an expected call of UpdateQuotaMetrics.
+func (mr *MockOpsMockRecorder) UpdateQuotaMetrics(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateQuotaMetrics", reflect.TypeOf((*MockOps)(nil).UpdateQuotaMetrics), ctx)
+}
+
 // Usage mocks base method.
 func (m *MockOps) Usage() *counter.UsageTracker {
 	m.ctrl.T.Helper()
@@ -337,6 +351,20 @@ func (m *MockPlacement) Discard(ctx context.Context, p *core.PendingObject, reas
 func (mr *MockPlacementMockRecorder) Discard(ctx, p, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Discard", reflect.TypeOf((*MockPlacement)(nil).Discard), ctx, p, reason)
+}
+
+// DropCopy mocks base method.
+func (m *MockPlacement) DropCopy(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DropCopy", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DropCopy indicates an expected call of DropCopy.
+func (mr *MockPlacementMockRecorder) DropCopy(ctx, loc, keepAtLeast, reason any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DropCopy", reflect.TypeOf((*MockPlacement)(nil).DropCopy), ctx, loc, keepAtLeast, reason)
 }
 
 // MoveObject mocks base method.

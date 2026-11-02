@@ -15,10 +15,8 @@ package ops
 import (
 	"context"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -48,12 +46,6 @@ type ObjectAPI interface {
 // listing that answers what exists without reading any bytes.
 type ObjectStore interface {
 	core.ObjectStore
-}
-
-// UnhashedLister lists the copies a checksum backfill still has to hash, which
-// the backfill selects by stored form.
-type UnhashedLister interface {
-	ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error)
 }
 
 // RewriteStore is the store surface the bulk rewrite passes and key rotation
@@ -97,14 +89,6 @@ type RegistryPublisher interface {
 // RUNTIME AND WORKERS
 // -------------------------------------------------------------------------
 
-// RuntimeOps is the backend-runtime surface: backend lookup for the bulk
-// rewrite passes, and the post-mutation quota-metric refresh.
-// *infra.BackendRuntime satisfies it.
-type RuntimeOps interface {
-	GetBackend(name string) (s3be.ObjectBackend, error)
-	UpdateQuotaMetrics(ctx context.Context) error
-}
-
 // Mover moves one copy through the placement step, which is how a bulk rewrite
 // replaces a copy with its reformed bytes. *writepath.Coordinator satisfies it.
 type Mover interface {
@@ -143,11 +127,11 @@ type OverReplicationOps interface {
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.
 type ScrubberOps interface {
-	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary
+	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error)
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
-	HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary
+	Backfill(ctx context.Context, req worker.BackfillRequest, observer progress.Observer) (worker.BackfillResult, error)
 	ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error)
-	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary
+	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error)
 }
 
 // AdvisoryLocker is the cluster-wide mutual exclusion an operator-triggered
@@ -164,7 +148,6 @@ type AdvisoryLocker interface {
 // Compile-time assertions.
 var (
 	_ ObjectAPI          = (*object.Manager)(nil)
-	_ RuntimeOps         = (*infra.BackendRuntime)(nil)
 	_ Mover              = (*writepath.Coordinator)(nil)
 	_ Replicator         = (*worker.Replicator)(nil)
 	_ Rebalancer         = (*worker.Rebalancer)(nil)

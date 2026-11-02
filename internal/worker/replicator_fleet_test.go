@@ -315,7 +315,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
 	replica := internalkey.StorageKey("key1", "0123456789abcdef0123456789abcdef")
-	source, err := w.CopyToReplica(context.Background(), "key1", replica, copies, "b3")
+	source, err := w.copyToReplica(context.Background(), "key1", replica, copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 	}
 	before := []string{copies[0].BackendName, copies[1].BackendName}
 
-	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b3"); err != nil {
+	if _, err := w.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b3"); err != nil {
 		t.Fatalf("CopyToReplica: %v", err)
 	}
 
@@ -399,7 +399,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "nonexistent"); err == nil {
+	if _, err := w.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "nonexistent"); err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
 }
@@ -417,7 +417,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2"); err == nil {
+	if _, err := w.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2"); err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
 }
@@ -662,7 +662,7 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 		"b2": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	if names := w.UnhealthyBackends(0); len(names) != 0 {
+	if names := w.unhealthyBackends(0); len(names) != 0 {
 		t.Errorf("expected empty, got %v", names)
 	}
 }
@@ -723,7 +723,7 @@ func TestServesReads_OnlyWritesRefused(t *testing.T) {
 	if !w.servesReads("b1") {
 		t.Error("backend refusing only uploads should serve reads")
 	}
-	if names := w.UnhealthyBackends(time.Nanosecond); len(names) != 0 {
+	if names := w.unhealthyBackends(time.Nanosecond); len(names) != 0 {
 		t.Errorf("UnhealthyBackends = %v, want none while reads are served", names)
 	}
 }

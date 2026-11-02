@@ -164,11 +164,7 @@ func driveWorkers(t *testing.T, h *harness) {
 	// The harness writes without hashing, and a scrub only reads hashed copies,
 	// so the backfill comes first. ScrubKey rather than the tick's Scrub: the
 	// tick passes over copies younger than the scrubber's minimum age.
-	locs, err := h.store.GetAllObjectLocations(ctx, internalKey("wl/a"))
-	if err != nil {
-		t.Fatalf("GetAllObjectLocations: %v", err)
-	}
-	h.workers.Scrubber.HashCopies(ctx, locs, nil)
+	backfill(ctx, t, h.workers.Scrubber)
 	if _, err := h.workers.Scrubber.ScrubKey(ctx, internalKey("wl/a")); err != nil {
 		t.Fatalf("ScrubKey: %v", err)
 	}

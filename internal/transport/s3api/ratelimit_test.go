@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -304,25 +305,35 @@ func TestExtractIP_WithTrustedProxies(t *testing.T) {
 	}
 }
 
-// TestRateLimiter_CustomCleanupIntervals verifies the rate limiter custom cleanup intervals contract.
-// Asserts that cleanupInterval = , want 2s.
-func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
-	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:         true,
-		RequestsPerSec:  100,
-		Burst:           100,
-		CleanupInterval: 2 * time.Second,
-		CleanupMaxAge:   10 * time.Second,
-	})
-	defer rl.Close()
+// TestRateLimiter_SweepsOnTheConfiguredInterval verifies the cleanup runs
+// every cleanup_interval and drops an IP idle longer than cleanup_max_age: the
+// sweep at 2s keeps it, the one at 4s removes it.
+func TestRateLimiter_SweepsOnTheConfiguredInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rl := NewRateLimiter(config.RateLimitConfig{
+			Enabled:         true,
+			RequestsPerSec:  100,
+			Burst:           100,
+			CleanupInterval: 2 * time.Second,
+			CleanupMaxAge:   3 * time.Second,
+		})
+		defer rl.Close()
+		rl.Allow("10.0.0.1")
 
-	if rl.cleanupInterval != 2*time.Second {
-		t.Errorf("cleanupInterval = %v, want 2s", rl.cleanupInterval)
-	}
-	if rl.cleanupMaxAge != 10*time.Second {
-		t.Errorf("cleanupMaxAge = %v, want 10s", rl.cleanupMaxAge)
-	}
+		for _, step := range []struct {
+			after time.Duration
+			want  int
+		}{{2 * time.Second, 1}, {2 * time.Second, 0}} {
+			time.Sleep(step.after)
+			synctest.Wait()
+			rl.mu.Lock()
+			got := len(rl.limiters)
+			rl.mu.Unlock()
+			if got != step.want {
+				t.Fatalf("limiters = %d, want %d", got, step.want)
+			}
+		}
+	})
 }
 
 // TestParseCIDRs verifies the parse cidrs contract.

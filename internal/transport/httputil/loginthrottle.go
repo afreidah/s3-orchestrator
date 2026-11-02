@@ -12,8 +12,11 @@
 package httputil
 
 import (
+	"context"
 	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -26,8 +29,7 @@ type LoginThrottle struct {
 	attempts        map[string]*loginAttempt
 	maxFailures     int
 	lockoutDuration time.Duration
-	stop            chan struct{}
-	closeOnce       sync.Once
+	stop            context.CancelFunc
 }
 
 // loginAttempt is the per-IP entry the throttle keeps in memory:
@@ -39,29 +41,19 @@ type loginAttempt struct {
 	lockedUntil time.Time
 }
 
+// loginThrottleSweep is how often stale per-IP entries are removed.
+const loginThrottleSweep = 5 * time.Minute
+
 // NewLoginThrottle creates a login throttle with the given limits.
 func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThrottle {
+	ctx, stop := context.WithCancel(context.Background())
 	lt := &LoginThrottle{
 		attempts:        make(map[string]*loginAttempt),
 		maxFailures:     maxFailures,
 		lockoutDuration: lockoutDuration,
-		stop:            make(chan struct{}),
+		stop:            stop,
 	}
-
-	// Background cleanup of stale entries every 5 minutes
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				lt.cleanup()
-			case <-lt.stop:
-				return
-			}
-		}
-	}()
-
+	go syncutil.Every(ctx, loginThrottleSweep, func(context.Context) { lt.cleanup() })
 	return lt
 }
 
@@ -71,9 +63,7 @@ func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThro
 
 // Close stops the background cleanup goroutine. Safe to call multiple times.
 func (lt *LoginThrottle) Close() {
-	lt.closeOnce.Do(func() {
-		close(lt.stop)
-	})
+	lt.stop()
 }
 
 // IsLockedOut returns true if the given IP is currently locked out.
