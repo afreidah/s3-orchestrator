@@ -64,6 +64,11 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Store engines read whole rows, SQLite prefixes match case ([#1856](https://github.com/afreidah/s3-orchestrator/issues/1856), v0.179.2)**
+
+- On SQLite, a prefix now matches keys byte for byte, as S3 and PostgreSQL match them. A listing, count or dashboard directory under `bucket/photos/` used to include `bucket/Photos/`, and so did a delete by prefix, lifecycle expiration and multipart upload listings scoped by prefix.
+- On SQLite, a stored timestamp that does not parse is reported as an error wherever it is read. A cleanup row's claim and dead-letter times, a drain's finish time, a credential's last use and a multipart completion mark used to read back as the zero time or as unset.
+
 **Grant permissions, dashboard buckets, admin throttling and provisioning checks ([#1850](https://github.com/afreidah/s3-orchestrator/issues/1850), v0.179.1)**
 
 - `PUT /admin/api/provisioning/grants/{id}/{name}` naming no permissions answers `400`. On a bucket it used to write a grant carrying every permission. `POST /admin/api/provisioning/grants` naming none on a backend or the instance now writes `admin-all`, as the request documents; it used to be refused. A bucket grant created that way still carries every data-plane permission.

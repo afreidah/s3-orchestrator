@@ -7,8 +7,6 @@ package db
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countReplicationBacklog = `-- name: CountReplicationBacklog :one
@@ -53,7 +51,7 @@ WITH over_replicated AS (
     HAVING COUNT(*) > $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.managed, ol.last_scrubbed_at, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.compression_probe_size, ol.compression_probe_level, ol.etag, ol.content_type, ol.user_metadata, ol.storage_key, ol.form, ol.object_size
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC
@@ -64,47 +62,39 @@ type GetOverReplicatedObjectsParams struct {
 	MaxKeys int32
 }
 
-type GetOverReplicatedObjectsRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CreatedAt                pgtype.Timestamptz
-}
-
-func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverReplicatedObjectsParams) ([]GetOverReplicatedObjectsRow, error) {
+func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverReplicatedObjectsParams) ([]ObjectLocation, error) {
 	rows, err := q.db.Query(ctx, getOverReplicatedObjects, arg.Factor, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetOverReplicatedObjectsRow{}
+	items := []ObjectLocation{}
 	for rows.Next() {
-		var i GetOverReplicatedObjectsRow
+		var i ObjectLocation
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
-			&i.StorageKey,
 			&i.SizeBytes,
+			&i.CreatedAt,
 			&i.Encrypted,
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.Managed,
+			&i.LastScrubbedAt,
 			&i.CompressionAlgorithm,
 			&i.CompressionLevel,
 			&i.CompressionFormatVersion,
 			&i.LogicalSize,
-			&i.CreatedAt,
+			&i.CompressionProbeSize,
+			&i.CompressionProbeLevel,
+			&i.Etag,
+			&i.ContentType,
+			&i.UserMetadata,
+			&i.StorageKey,
+			&i.Form,
+			&i.ObjectSize,
 		); err != nil {
 			return nil, err
 		}
@@ -132,7 +122,7 @@ under_replicated AS (
     HAVING COUNT(*) + COALESCE(i.copies, 0) < $2::bigint
     LIMIT $3
 )
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.managed, ol.last_scrubbed_at, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.compression_probe_size, ol.compression_probe_level, ol.etag, ol.content_type, ol.user_metadata, ol.storage_key, ol.form, ol.object_size
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC
@@ -142,23 +132,6 @@ type GetUnderReplicatedObjectsParams struct {
 	Excluded []string
 	Factor   int64
 	MaxKeys  int32
-}
-
-type GetUnderReplicatedObjectsRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CreatedAt                pgtype.Timestamptz
 }
 
 // -----------------------------------------------------------------------------
@@ -189,30 +162,39 @@ type GetUnderReplicatedObjectsRow struct {
 // Copies on an excluded backend do not count, but an intent there still does:
 // excluding a backend says the worker will not place a copy there, not that a
 // copy already going there is absent. An empty list excludes nothing.
-func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]GetUnderReplicatedObjectsRow, error) {
+func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]ObjectLocation, error) {
 	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Excluded, arg.Factor, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetUnderReplicatedObjectsRow{}
+	items := []ObjectLocation{}
 	for rows.Next() {
-		var i GetUnderReplicatedObjectsRow
+		var i ObjectLocation
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
-			&i.StorageKey,
 			&i.SizeBytes,
+			&i.CreatedAt,
 			&i.Encrypted,
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.Managed,
+			&i.LastScrubbedAt,
 			&i.CompressionAlgorithm,
 			&i.CompressionLevel,
 			&i.CompressionFormatVersion,
 			&i.LogicalSize,
-			&i.CreatedAt,
+			&i.CompressionProbeSize,
+			&i.CompressionProbeLevel,
+			&i.Etag,
+			&i.ContentType,
+			&i.UserMetadata,
+			&i.StorageKey,
+			&i.Form,
+			&i.ObjectSize,
 		); err != nil {
 			return nil, err
 		}

@@ -42,7 +42,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
-	return toVerifiableObjectLocations(rows), nil
+	return toObjectLocations(rows), nil
 }
 
 // CountScrubCandidatesOnBackends reports how many scrubbable copies live on the
@@ -88,7 +88,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list copies by form: %w", err)
 	}
-	return toWholeObjectLocations(rows), nil
+	return toObjectLocations(rows), nil
 }
 
 // CountCopiesByForm reports how many copies carry every flag of with and none

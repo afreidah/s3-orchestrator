@@ -54,7 +54,6 @@ func Permissive(m *MockMetadataStore) {
 	r.EndMultipartCompletion(a, a).Return(nil).AnyTimes()
 	r.DeleteObject(a, a).Return(nil, nil).AnyTimes()
 	r.DeleteObjectLocation(a, a, a, a).Return(nil, nil).AnyTimes()
-	r.DeleteObjectTags(a, a).Return(nil).AnyTimes()
 	r.GetObjectTags(a, a).Return(nil, nil).AnyTimes()
 	r.ReplaceObjectTags(a, a, a).Return(nil).AnyTimes()
 	r.DeleteObjectsBatch(a, a).Return(nil, nil).AnyTimes()

@@ -28,17 +28,17 @@ import (
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(a *sqliteTxAdapter) error {
 		now := now()
 		for i := range backends {
-			if _, err := tx.ExecContext(ctx, `
+			if err := a.exec(ctx, "failed to sync quota for backend "+backends[i].Name, `
 				INSERT INTO backend_quotas (backend_name, bytes_limit, updated_at)
 				VALUES (?, ?, ?)
 				ON CONFLICT (backend_name) DO UPDATE SET
 					bytes_limit = excluded.bytes_limit,
 					updated_at = excluded.updated_at`,
 				backends[i].Name, backends[i].QuotaBytes, now); err != nil {
-				return fmt.Errorf("failed to sync quota for backend %s: %w", backends[i].Name, err)
+				return err
 			}
 		}
 		return nil
@@ -70,10 +70,8 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 // and the read and the writes share one transaction, which SQLite serializes
 // against every other write. A backend with no copies left is brought to zero.
 func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
-	var drift map[string]int64
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		a := &sqliteTxAdapter{q: tx}
-		rows, err := tx.QueryContext(ctx, `
+	return withTxVal(ctx, s, func(a *sqliteTxAdapter) (map[string]int64, error) {
+		rows, err := a.q.QueryContext(ctx, `
 			WITH ledger AS (
 				SELECT backend_name, SUM(size_bytes) AS total
 				FROM object_locations
@@ -90,22 +88,19 @@ func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 			LEFT JOIN ledger l ON l.backend_name = st.backend_name
 			WHERE COALESCE(l.total, 0) <> st.total`)
 		if err != nil {
-			return fmt.Errorf("read usage drift: %w", err)
+			return nil, fmt.Errorf("read usage drift: %w", err)
 		}
-		if drift, err = collectMap(rows, "usage drift", scanNameValue); err != nil {
-			return err
+		drift, err := collectMap(rows, "usage drift", scanNameValue)
+		if err != nil {
+			return nil, err
 		}
 		for backend, delta := range drift {
 			if err := a.AdjustQuotaStripe(ctx, backend, 0, delta); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		return nil
+		return drift, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return drift, nil
 }
 
 // LedgerStats returns every per-backend ledger figure from one pass over
@@ -161,39 +156,36 @@ func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 // than core.UsageRetention. A batch with an ID records it first, and one
 // already recorded is left alone; see core.UsageFlusher.
 func (s *Store) ApplyUsageBatch(ctx context.Context, b *core.UsageBatch) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if fresh, err := recordUsageFlush(ctx, tx, b.ID); err != nil || !fresh {
+	return s.withTx(ctx, func(a *sqliteTxAdapter) error {
+		if fresh, err := recordUsageFlush(ctx, a, b.ID); err != nil || !fresh {
 			return err
 		}
 		if err := b.Each(func(bucket time.Time, workload string, u *core.Usage) error {
-			return applyWorkloadUsage(ctx, tx, b.Backend, formatTime(bucket), workload, u)
+			return applyWorkloadUsage(ctx, a, b.Backend, formatTime(bucket), workload, u)
 		}); err != nil {
 			return err
 		}
-		return pruneUsageBuckets(ctx, tx, b.Backend)
+		return pruneUsageBuckets(ctx, a, b.Backend)
 	})
 }
 
 // pruneUsageBuckets drops one backend's buckets older than the retention
 // window, inside the flush's transaction.
-func pruneUsageBuckets(ctx context.Context, tx *sql.Tx, backend string) error {
+func pruneUsageBuckets(ctx context.Context, a *sqliteTxAdapter, backend string) error {
 	cutoff := formatTime(time.Now().Add(-core.UsageRetention))
-	for table, query := range map[string]string{
-		"backend_usage":         `DELETE FROM backend_usage WHERE backend_name = ? AND bucket_start < ?`,
-		"backend_request_usage": `DELETE FROM backend_request_usage WHERE backend_name = ? AND bucket_start < ?`,
-	} {
-		if _, err := tx.ExecContext(ctx, query, backend, cutoff); err != nil {
-			return fmt.Errorf("prune %s: %w", table, err)
-		}
+	if err := a.exec(ctx, "prune backend_usage",
+		`DELETE FROM backend_usage WHERE backend_name = ? AND bucket_start < ?`, backend, cutoff); err != nil {
+		return err
 	}
-	return nil
+	return a.exec(ctx, "prune backend_request_usage",
+		`DELETE FROM backend_request_usage WHERE backend_name = ? AND bucket_start < ?`, backend, cutoff)
 }
 
 // applyWorkloadUsage adds one workload's totals and pools to its bucket's
 // rows, inside the batch's transaction.
-func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, backend, bucket, workload string, u *core.Usage) error {
+func applyWorkloadUsage(ctx context.Context, a *sqliteTxAdapter, backend, bucket, workload string, u *core.Usage) error {
 	now := now()
-	if _, err := tx.ExecContext(ctx, `
+	if err := a.exec(ctx, "failed to flush usage deltas", `
 		INSERT INTO backend_usage (backend_name, bucket_start, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (backend_name, bucket_start, workload) DO UPDATE SET
@@ -202,48 +194,41 @@ func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, backend, bucket, worklo
 			ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
 			updated_at    = excluded.updated_at`,
 		backend, bucket, workload, u.APIRequests, u.EgressBytes, u.IngressBytes, now); err != nil {
-		return fmt.Errorf("failed to flush usage deltas: %w", err)
+		return err
 	}
 	for pool, requests := range u.Pools {
 		if requests == 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if err := a.exec(ctx, "failed to flush pool deltas", `
 			INSERT INTO backend_request_usage (backend_name, bucket_start, workload, pool, requests, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT (backend_name, bucket_start, workload, pool) DO UPDATE SET
 				requests   = backend_request_usage.requests + excluded.requests,
 				updated_at = excluded.updated_at`,
 			backend, bucket, workload, pool, requests, now); err != nil {
-			return fmt.Errorf("failed to flush pool deltas: %w", err)
+			return err
 		}
 	}
 	return nil
 }
 
-// usageFlushRetention is how long a shared batch's id is kept, past the 35
-// days its staged copy can live in Redis.
-const usageFlushRetention = 40 * 24 * time.Hour
-
 // recordUsageFlush records a shared batch's id and prunes old ones, reporting
 // whether the batch is new and should be applied. A batch with no id is
 // always new.
-func recordUsageFlush(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+func recordUsageFlush(ctx context.Context, a *sqliteTxAdapter, id string) (bool, error) {
 	if id == "" {
 		return true, nil
 	}
-	res, err := tx.ExecContext(ctx, `
+	fresh, err := a.execChanged(ctx, "record usage flush", `
 		INSERT INTO usage_flushes (flush_id, applied_at) VALUES (?, ?)
 		ON CONFLICT (flush_id) DO NOTHING`, id, now())
-	if err != nil {
-		return false, fmt.Errorf("record usage flush: %w", err)
+	if err != nil || !fresh {
+		return false, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return false, nil
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_flushes WHERE applied_at < ?`,
-		formatTime(time.Now().Add(-usageFlushRetention))); err != nil {
-		return false, fmt.Errorf("prune usage flushes: %w", err)
+	if err := a.exec(ctx, "prune usage flushes", `DELETE FROM usage_flushes WHERE applied_at < ?`,
+		formatTime(time.Now().Add(-core.UsageFlushRetention))); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -281,7 +266,7 @@ func (s *Store) GetUsageSince(ctx context.Context, starts map[string]time.Time) 
 		FROM totals t
 		LEFT JOIN pools p ON p.backend_name = t.backend_name AND p.workload = t.workload`, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query usage: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

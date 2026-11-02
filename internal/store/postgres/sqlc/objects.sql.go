@@ -93,11 +93,12 @@ func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, arg CountS
 
 const deleteObjectCopies = `-- name: DeleteObjectCopies :exec
 DELETE FROM object_locations
-WHERE object_key = $1
+WHERE object_key = ANY($1::text[])
 `
 
-func (q *Queries) DeleteObjectCopies(ctx context.Context, objectKey string) error {
-	_, err := q.db.Exec(ctx, deleteObjectCopies, objectKey)
+// The caller has already locked the rows through GetExistingCopiesForUpdate.
+func (q *Queries) DeleteObjectCopies(ctx context.Context, objectKeys []string) error {
+	_, err := q.db.Exec(ctx, deleteObjectCopies, objectKeys)
 	return err
 }
 
@@ -125,20 +126,8 @@ func (q *Queries) DeleteObjectLocationsByBackend(ctx context.Context, backendNam
 	return err
 }
 
-const deleteObjectsByKeys = `-- name: DeleteObjectsByKeys :exec
-DELETE FROM object_locations
-WHERE object_key = ANY($1::text[])
-`
-
-// Deletes every row whose object_key is in the supplied list. Caller
-// must have already locked the rows via GetCopiesForKeysForUpdate.
-func (q *Queries) DeleteObjectsByKeys(ctx context.Context, objectKeys []string) error {
-	_, err := q.db.Exec(ctx, deleteObjectsByKeys, objectKeys)
-	return err
-}
-
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at, managed,
+SELECT object_locations.object_key, object_locations.backend_name, object_locations.size_bytes, object_locations.created_at, object_locations.encrypted, object_locations.encryption_key, object_locations.key_id, object_locations.plaintext_size, object_locations.content_hash, object_locations.managed, object_locations.last_scrubbed_at, object_locations.compression_algorithm, object_locations.compression_level, object_locations.compression_format_version, object_locations.logical_size, object_locations.compression_probe_size, object_locations.compression_probe_level, object_locations.etag, object_locations.content_type, object_locations.user_metadata, object_locations.storage_key, object_locations.form, object_locations.object_size,
     (SELECT count(*) FROM object_tags WHERE object_tags.object_key = $1) AS tag_count
 FROM object_locations
 WHERE object_key = $1
@@ -146,26 +135,8 @@ ORDER BY created_at ASC
 `
 
 type GetAllObjectLocationsRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	Etag                     *string
-	ContentType              *string
-	UserMetadata             []byte
-	CreatedAt                pgtype.Timestamptz
-	LastScrubbedAt           pgtype.Timestamptz
-	Managed                  bool
-	TagCount                 int64
+	ObjectLocation ObjectLocation
+	TagCount       int64
 }
 
 // tag_count serves the read path's tagging-count header without a second
@@ -181,70 +152,30 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 	for rows.Next() {
 		var i GetAllObjectLocationsRow
 		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.StorageKey,
-			&i.SizeBytes,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.CreatedAt,
-			&i.LastScrubbedAt,
-			&i.Managed,
+			&i.ObjectLocation.ObjectKey,
+			&i.ObjectLocation.BackendName,
+			&i.ObjectLocation.SizeBytes,
+			&i.ObjectLocation.CreatedAt,
+			&i.ObjectLocation.Encrypted,
+			&i.ObjectLocation.EncryptionKey,
+			&i.ObjectLocation.KeyID,
+			&i.ObjectLocation.PlaintextSize,
+			&i.ObjectLocation.ContentHash,
+			&i.ObjectLocation.Managed,
+			&i.ObjectLocation.LastScrubbedAt,
+			&i.ObjectLocation.CompressionAlgorithm,
+			&i.ObjectLocation.CompressionLevel,
+			&i.ObjectLocation.CompressionFormatVersion,
+			&i.ObjectLocation.LogicalSize,
+			&i.ObjectLocation.CompressionProbeSize,
+			&i.ObjectLocation.CompressionProbeLevel,
+			&i.ObjectLocation.Etag,
+			&i.ObjectLocation.ContentType,
+			&i.ObjectLocation.UserMetadata,
+			&i.ObjectLocation.StorageKey,
+			&i.ObjectLocation.Form,
+			&i.ObjectLocation.ObjectSize,
 			&i.TagCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getCopiesForKeysForUpdate = `-- name: GetCopiesForKeysForUpdate :many
-SELECT object_key, backend_name, storage_key, size_bytes
-FROM object_locations
-WHERE object_key = ANY($1::text[])
-FOR UPDATE
-`
-
-type GetCopiesForKeysForUpdateRow struct {
-	ObjectKey   string
-	BackendName string
-	StorageKey  string
-	SizeBytes   int64
-}
-
-// Returns (object_key, backend_name, size_bytes) for every row matching
-// a key in the supplied list, locked FOR UPDATE so the same transaction
-// can delete the rows and decrement the corresponding backend quotas
-// atomically. Used by the batch-delete path so an N-key request is one
-// transaction instead of N.
-func (q *Queries) GetCopiesForKeysForUpdate(ctx context.Context, objectKeys []string) ([]GetCopiesForKeysForUpdateRow, error) {
-	rows, err := q.db.Query(ctx, getCopiesForKeysForUpdate, objectKeys)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetCopiesForKeysForUpdateRow{}
-	for rows.Next() {
-		var i GetCopiesForKeysForUpdateRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.StorageKey,
-			&i.SizeBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -321,13 +252,14 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 }
 
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, storage_key, size_bytes, created_at, form
+SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
 FROM object_locations
-WHERE object_key = $1
+WHERE object_key = ANY($1::text[])
 FOR UPDATE
 `
 
 type GetExistingCopiesForUpdateRow struct {
+	ObjectKey   string
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64
@@ -335,11 +267,12 @@ type GetExistingCopiesForUpdateRow struct {
 	Form        int64
 }
 
-// storage_key comes along because the caller that deletes these rows also
-// deletes their bytes, and a per-write path cannot be derived from the object
-// key.
-func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]GetExistingCopiesForUpdateRow, error) {
-	rows, err := q.db.Query(ctx, getExistingCopiesForUpdate, objectKey)
+// Every copy of the listed keys, locked so the same transaction can delete the
+// rows and move their quota. storage_key comes along because the caller that
+// deletes these rows also deletes their bytes, and a per-write path cannot be
+// derived from the object key.
+func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKeys []string) ([]GetExistingCopiesForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, getExistingCopiesForUpdate, objectKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +281,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 	for rows.Next() {
 		var i GetExistingCopiesForUpdateRow
 		if err := rows.Scan(
+			&i.ObjectKey,
 			&i.BackendName,
 			&i.StorageKey,
 			&i.SizeBytes,
@@ -365,7 +299,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 }
 
 const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObjects :many
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key, form, object_size
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY($1::text[])
@@ -378,24 +312,6 @@ type GetLeastRecentlyScrubbedObjectsParams struct {
 	BackendNames   []string
 	ScrubbedBefore pgtype.Timestamptz
 	RowLimit       int32
-}
-
-type GetLeastRecentlyScrubbedObjectsRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CreatedAt                pgtype.Timestamptz
-	LastScrubbedAt           pgtype.Timestamptz
 }
 
 // Return the copies least recently touched, by verification or by writing.
@@ -418,31 +334,39 @@ type GetLeastRecentlyScrubbedObjectsRow struct {
 // egress scales with how often the scrubber runs rather than with how stale the
 // data is. The cutoff arrives as a timestamp rather than an interval so the
 // comparison stays sargable against the ordering expression.
-func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLeastRecentlyScrubbedObjectsParams) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
+func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLeastRecentlyScrubbedObjectsParams) ([]ObjectLocation, error) {
 	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, arg.BackendNames, arg.ScrubbedBefore, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetLeastRecentlyScrubbedObjectsRow{}
+	items := []ObjectLocation{}
 	for rows.Next() {
-		var i GetLeastRecentlyScrubbedObjectsRow
+		var i ObjectLocation
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
-			&i.StorageKey,
 			&i.SizeBytes,
+			&i.CreatedAt,
 			&i.Encrypted,
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.Managed,
+			&i.LastScrubbedAt,
 			&i.CompressionAlgorithm,
 			&i.CompressionLevel,
 			&i.CompressionFormatVersion,
 			&i.LogicalSize,
-			&i.CreatedAt,
-			&i.LastScrubbedAt,
+			&i.CompressionProbeSize,
+			&i.CompressionProbeLevel,
+			&i.Etag,
+			&i.ContentType,
+			&i.UserMetadata,
+			&i.StorageKey,
+			&i.Form,
+			&i.ObjectSize,
 		); err != nil {
 			return nil, err
 		}

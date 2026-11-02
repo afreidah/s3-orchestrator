@@ -57,7 +57,11 @@ func scanCleanupItem(rows *sql.Rows) (core.CleanupItem, error) {
 		&item.Attempts, &item.SizeBytes, &claimedAt, &claimedBy, &item.Reclaimed); err != nil {
 		return core.CleanupItem{}, fmt.Errorf("failed to scan cleanup item: %w", err)
 	}
-	if at := parseNullableTime(claimedAt); at != nil {
+	at, err := parseNullableTime(claimedAt)
+	if err != nil {
+		return core.CleanupItem{}, err
+	}
+	if at != nil {
 		item.Claim = &core.CleanupClaim{At: *at, By: nullStringValue(claimedBy)}
 	}
 	return item, nil
@@ -69,32 +73,20 @@ func scanCleanupItem(rows *sql.Rows) (core.CleanupItem, error) {
 // returns each with the claim it stamped. SQLite serializes writers, so the
 // claim needs no row locking.
 func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
-	cutoff := formatTime(graceCutoff)
-
-	var items []core.CleanupItem
-	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		selected, err := selectClaimableRows(ctx, tx, now(), cutoff, limit)
+	return withTxVal(ctx, s, func(a *sqliteTxAdapter) ([]core.CleanupItem, error) {
+		selected, err := selectClaimableRows(ctx, a, now(), formatTime(graceCutoff), limit)
 		if err != nil || len(selected) == 0 {
-			items = selected
-			return err
+			return selected, err
 		}
-		if err := stampClaims(ctx, tx, selected, instanceID); err != nil {
-			return err
-		}
-		items = selected
-		return nil
+		return selected, stampClaims(ctx, a, selected, instanceID)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 // selectClaimableRows fetches the next batch of cleanup_queue rows
 // that satisfy ClaimPendingCleanups' eligibility predicates, in
 // idx_cleanup_queue_claim order so the scan stops at the limit.
-func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, limit int) ([]core.CleanupItem, error) {
-	rows, err := tx.QueryContext(ctx,
+func selectClaimableRows(ctx context.Context, a *sqliteTxAdapter, now, cutoff string, limit int) ([]core.CleanupItem, error) {
+	rows, err := a.q.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
 		        claimed_at, claimed_by, (claimed_at IS NOT NULL) AS reclaimed
 		 FROM cleanup_queue
@@ -111,21 +103,25 @@ func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, li
 	return collectRows(rows, "cleanup candidates", scanCleanupItem)
 }
 
-// stampClaims marks each row in items as claimed by instanceID and records the
-// claim on the item. The caller wraps both the SELECT and these UPDATEs in one
-// transaction so the claim is atomic against concurrent workers.
-func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, instanceID string) error {
+// stampClaims marks every row in items as claimed by instanceID in one
+// statement and records the claim on each item. The caller wraps both the
+// SELECT and this UPDATE in one transaction so the claim is atomic against
+// concurrent workers.
+func stampClaims(ctx context.Context, a *sqliteTxAdapter, items []core.CleanupItem, instanceID string) error {
 	claimedAt := time.Now()
-	stamp := formatTime(claimedAt)
+	ids := make([]int64, len(items))
 	for i := range items {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE cleanup_queue
-			 SET claimed_at = ?, claimed_by = ?
-			 WHERE id = ?`,
-			stamp, instanceID, items[i].ID,
-		); err != nil {
-			return fmt.Errorf("stamp cleanup claim: %w", err)
-		}
+		ids[i] = items[i].ID
+	}
+	if err := a.exec(ctx, "stamp cleanup claims",
+		`UPDATE cleanup_queue
+		 SET claimed_at = ?, claimed_by = ?
+		 WHERE id IN (SELECT value FROM json_each(?))`,
+		formatTime(claimedAt), instanceID, jsonList(ids),
+	); err != nil {
+		return err
+	}
+	for i := range items {
 		items[i].Claim = &core.CleanupClaim{At: claimedAt, By: instanceID}
 	}
 	return nil
@@ -158,37 +154,26 @@ func (s *Store) CompleteCleanupItems(ctx context.Context, items []core.CleanupIt
 	if len(items) == 0 {
 		return nil, nil
 	}
-	var retired []int64
-	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		a := &sqliteTxAdapter{q: tx}
+	return withTxVal(ctx, s, func(a *sqliteTxAdapter) ([]int64, error) {
+		var retired []int64
 		for i := range items {
 			done, err := a.execChanged(ctx, "complete cleanup item", deleteClaimedCleanup, claimArgs(&items[i])...)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if done {
 				retired = append(retired, items[i].ID)
 			}
 		}
-		return nil
+		return retired, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return retired, nil
 }
 
 // SweepStaleCleanupQueueRows drops the queued cleanups for a path reconcile
 // found missing from the backend, and returns how many went.
 func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?`,
-		storageKey, backend,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("sweep stale cleanup rows: %w", err)
-	}
-	return res.RowsAffected()
+	return s.direct().execRows(ctx, "sweep stale cleanup rows",
+		`DELETE FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?`, storageKey, backend)
 }
 
 // RetryCleanupItem increments the attempt counter, schedules the next retry,
@@ -237,24 +222,13 @@ func (s *Store) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, la
 // removes. Returns how many rows moved; a move that copied nothing deletes
 // nothing.
 func (s *Store) moveRows(ctx context.Context, what, insertSQL string, insertArgs []any, deleteSQL string, deleteArgs []any) (int64, error) {
-	var n int64
-	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, insertSQL, insertArgs...)
-		if err != nil {
-			return fmt.Errorf("%s: %w", what, err)
+	return withTxVal(ctx, s, func(a *sqliteTxAdapter) (int64, error) {
+		n, err := a.execRows(ctx, what, insertSQL, insertArgs...)
+		if err != nil || n == 0 {
+			return n, err
 		}
-		if n, err = res.RowsAffected(); err != nil || n == 0 {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, deleteSQL, deleteArgs...); err != nil {
-			return fmt.Errorf("%s: %w", what, err)
-		}
-		return nil
+		return n, a.exec(ctx, what, deleteSQL, deleteArgs...)
 	})
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
 }
 
 // -------------------------------------------------------------------------
@@ -298,8 +272,13 @@ func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) (
 			&it.Attempts, &firstEnq, &moved, &lastErr); err != nil {
 			return core.CleanupDLQItem{}, fmt.Errorf("scan cleanup dlq row: %w", err)
 		}
-		it.FirstEnqueued, _ = time.Parse(time.RFC3339Nano, firstEnq)
-		it.MovedAt, _ = time.Parse(time.RFC3339Nano, moved)
+		var err error
+		if it.FirstEnqueued, err = parseTime(firstEnq); err != nil {
+			return core.CleanupDLQItem{}, err
+		}
+		if it.MovedAt, err = parseTime(moved); err != nil {
+			return core.CleanupDLQItem{}, err
+		}
 		it.LastError = lastErr.String
 		return it, nil
 	})

@@ -60,7 +60,7 @@ func (s *promoteTxStub) ClaimPending(context.Context, string) (bool, error) {
 	return s.claimed, s.claimErr
 }
 
-func (s *promoteTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+func (s *promoteTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	s.ops = append(s.ops, "read_copies")
 	return s.existingCopies, s.existingErr
 }

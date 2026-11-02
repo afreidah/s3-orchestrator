@@ -36,8 +36,9 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 		return nil, core.ErrObjectNotFound
 	}
 
-	locs := toIdentifiedObjectLocations(rows)
-	for i := range locs {
+	locs := make([]core.ObjectLocation, len(rows))
+	for i := range rows {
+		locs[i] = toObjectLocation(&rows[i].ObjectLocation)
 		locs[i].TagCount = int(rows[i].TagCount)
 	}
 	return locs, nil
@@ -84,7 +85,7 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
 
-	return toFatObjectLocations(rows), nil
+	return toObjectLocations(rows), nil
 }
 
 // -------------------------------------------------------------------------
@@ -103,7 +104,7 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)
 	}
 
-	return toFatObjectLocations(rows), nil
+	return toObjectLocations(rows), nil
 }
 
 // CountReplicationBacklog counts every key under and over the target factor,

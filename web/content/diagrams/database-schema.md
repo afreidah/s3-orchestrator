@@ -164,7 +164,7 @@ window.s3oDiagram = {
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, tag_key) &bull; idx_object_tags_lookup (tag_key, tag_value)</p>' +
         '<p>No foreign key, because there is no table to point at: <code>object_locations</code> is keyed <code>(object_key, backend_name)</code> and nothing is keyed on object key alone, so <code>ON DELETE CASCADE</code> cannot express this. Core clears these rows instead, at every path that puts a new object at a key or removes the last copy of one. The PK already serves lookup and delete by object key; idx_object_tags_lookup is for the reverse direction.</p>' +
         '<p>Used by: <a href="../tagging/">tagging</a> (PutObjectTagging, GetObjectTagging, DeleteObjectTagging), inline <code>x-amz-tagging</code> on the <a href="../write-path/">write path</a>, CopyObject tagging directive, the <a href="../read-path/">read path</a> for the tagging count on GetObject and HeadObject, lifecycle expiration rules that filter on a tag, admin API and TUI object inspector.</p>' +
-        '<p class="ac-metric">Key queries: GetObjectTags, InsertObjectTag, DeleteObjectTags, DeleteObjectTagsForKeys; the count is a tag_count subquery inside GetAllObjectLocations</p>'
+        '<p class="ac-metric">Key queries: GetObjectTags, InsertObjectTag, DeleteObjectTags (one key or a batch delete&#39;s keys in one statement); the count is a tag_count subquery inside GetAllObjectLocations</p>'
     },
     multipart_uploads: {
       title: 'multipart_uploads',

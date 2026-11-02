@@ -291,72 +291,15 @@ func TestReplaceObjectTags_ExistenceCheckError(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectTags_NotFound verifies the delete refuses a key that holds
-// nothing, rather than reporting success for an object that is not there.
-func TestDeleteObjectTags_NotFound(t *testing.T) {
+// TestClearTagsForKey_Error verifies a clear failure surfaces wrapped rather
+// than being dropped, so the enclosing delete rolls back.
+func TestClearTagsForKey_Error(t *testing.T) {
 	t.Parallel()
-	stub := &quotaTxStub{}
-
-	if err := stubOps(stub).DeleteObjectTags(context.Background(), "gone"); !errors.Is(err, ErrObjectNotFound) {
-		t.Fatalf("DeleteObjectTags() error = %v, want ErrObjectNotFound", err)
-	}
-	if len(stub.tagsCleared) != 0 {
-		t.Errorf("cleared tags for a key holding nothing: %v", stub.tagsCleared)
-	}
-}
-
-// TestDeleteObjectTags_LockError verifies the delete takes the key lock and
-// surfaces a failure to get it.
-func TestDeleteObjectTags_LockError(t *testing.T) {
-	t.Parallel()
-	sentinel := errors.New("lock failed")
-	stub := &quotaTxStub{keyLockErr: sentinel, existingCopies: storedCopy()}
-
-	if err := stubOps(stub).DeleteObjectTags(context.Background(), "k"); !errors.Is(err, sentinel) {
-		t.Fatalf("DeleteObjectTags() error = %v, want the lock error", err)
-	}
-	if len(stub.tagsCleared) != 0 {
-		t.Errorf("cleared without the lock: %v", stub.tagsCleared)
-	}
-}
-
-// TestDeleteObjectTags_ClearsSet covers the success path: the set is removed
-// and the call reports no error even when there was nothing to remove.
-func TestDeleteObjectTags_ClearsSet(t *testing.T) {
-	t.Parallel()
-	stub := &quotaTxStub{existingCopies: storedCopy()}
-
-	if err := stubOps(stub).DeleteObjectTags(context.Background(), "k"); err != nil {
-		t.Fatalf("DeleteObjectTags() error = %v", err)
-	}
-	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
-		t.Errorf("expected a clear of %q, got %v", "k", stub.tagsCleared)
-	}
-}
-
-// TestClearTagsForKeys_EmptyInput verifies the batch clear short-circuits on
-// an empty list rather than issuing a statement matching nothing.
-func TestClearTagsForKeys_EmptyInput(t *testing.T) {
-	t.Parallel()
-	stub := &quotaTxStub{}
-
-	if err := clearTagsForKeys(context.Background(), stub, nil); err != nil {
-		t.Fatalf("clearTagsForKeys() error = %v", err)
-	}
-	if len(stub.tagKeysCleared) != 0 {
-		t.Errorf("expected no statement for an empty list, got %v", stub.tagKeysCleared)
-	}
-}
-
-// TestClearTagsForKeys_Error verifies a batch clear failure surfaces wrapped
-// rather than being dropped, so the enclosing delete rolls back.
-func TestClearTagsForKeys_Error(t *testing.T) {
-	t.Parallel()
-	sentinel := errors.New("batch clear failed")
+	sentinel := errors.New("clear failed")
 	stub := &quotaTxStub{tagClearErr: sentinel}
 
-	if err := clearTagsForKeys(context.Background(), stub, []string{"a"}); !errors.Is(err, sentinel) {
-		t.Fatalf("clearTagsForKeys() error = %v, want the clear error", err)
+	if err := clearTagsForKey(context.Background(), stub, "a", "b"); !errors.Is(err, sentinel) {
+		t.Fatalf("clearTagsForKey() error = %v, want the clear error", err)
 	}
 }
 

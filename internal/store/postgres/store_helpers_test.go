@@ -3,11 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Exercises the generic toFatObjectLocations and toSlimObjectLocations
-// helpers without standing up a real PostgreSQL. Each row type the queries
-// project has its own accessor methods (in internal/store/postgres/sqlc), and these
-// tests assert the conversion for every shape  -  including the nullable
-// pointer fields on the encryption-aware ("fat") rows.
+// Exercises toObjectLocation and the generic toSlimObjectLocations without
+// standing up a real PostgreSQL: every column of a whole row reaches the copy,
+// a NULL column leaves its zero value, and each slim row type converts.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -27,116 +25,71 @@ func pgtime(t time.Time) pgtype.Timestamptz {
 }
 
 // -------------------------------------------------------------------------
-// Fat-row conversions: encryption + content-hash columns
+// WHOLE ROWS
 // -------------------------------------------------------------------------
 
-// TestToFatObjectLocations_AllFieldsPopulated verifies every nullable
-// pointer column is dereferenced when set.
-func TestToFatObjectLocations_AllFieldsPopulated(t *testing.T) {
+// TestToObjectLocation_AllFieldsPopulated verifies every column of a whole row
+// reaches the copy, the nullable ones dereferenced.
+func TestToObjectLocation_AllFieldsPopulated(t *testing.T) {
 	t.Parallel()
-	keyID := "key-abc"
-	var ptSize int64 = 4096
-	hash := "sha256:deadbeef"
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	scrubbed := created.Add(time.Hour)
 
-	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
-		ObjectKey:     "obj/foo",
-		BackendName:   "b1",
-		SizeBytes:     4200,
-		Encrypted:     true,
-		EncryptionKey: []byte{0xde, 0xad, 0xbe, 0xef},
-		KeyID:         &keyID,
-		PlaintextSize: &ptSize,
-		ContentHash:   &hash,
-		CreatedAt:     pgtime(created),
-	}})
-	if len(out) != 1 {
-		t.Fatalf("expected 1 location, got %d", len(out))
-	}
-	loc := out[0]
+	loc := toObjectLocation(&db.ObjectLocation{
+		ObjectKey:             "obj/foo",
+		BackendName:           "b1",
+		StorageKey:            "sk",
+		SizeBytes:             4200,
+		Encrypted:             true,
+		EncryptionKey:         []byte{0xde, 0xad},
+		KeyID:                 new("key-abc"),
+		PlaintextSize:         new(int64(4096)),
+		ContentHash:           new("sha256:deadbeef"),
+		CompressionProbeSize:  new(int64(900)),
+		CompressionProbeLevel: new("default"),
+		Etag:                  new(`"e1"`),
+		ContentType:           new("text/plain"),
+		UserMetadata:          []byte(`{"a":"b"}`),
+		Managed:               false,
+		CreatedAt:             pgtime(created),
+		LastScrubbedAt:        pgtime(scrubbed),
+	})
 
-	if loc.ObjectKey != "obj/foo" || loc.BackendName != "b1" || loc.SizeBytes != 4200 {
+	if loc.ObjectKey != "obj/foo" || loc.BackendName != "b1" || loc.StorageKey != "sk" || loc.SizeBytes != 4200 {
 		t.Errorf("basic fields: %+v", loc)
 	}
-	if !loc.Encrypted || loc.KeyID != "key-abc" {
-		t.Errorf("encryption fields: %+v", loc)
+	if !loc.Encrypted || loc.KeyID != "key-abc" || loc.PlaintextSize != 4096 || loc.ContentHash != "sha256:deadbeef" {
+		t.Errorf("stored form: %+v", loc.StoredForm)
 	}
-	if loc.PlaintextSize != 4096 || loc.ContentHash != "sha256:deadbeef" {
-		t.Errorf("nullable fields: %+v", loc)
+	if loc.CompressionProbeSize != 900 || loc.CompressionProbeLevel != "default" {
+		t.Errorf("probe = %d/%q, want 900/default", loc.CompressionProbeSize, loc.CompressionProbeLevel)
 	}
-	if !loc.CreatedAt.Equal(created) {
-		t.Errorf("CreatedAt = %v, want %v", loc.CreatedAt, created)
+	if loc.Identity == nil || loc.Identity.ETag != `"e1"` || loc.Identity.ContentType != "text/plain" || loc.Identity.UserMetadata["a"] != "b" {
+		t.Errorf("identity = %+v", loc.Identity)
 	}
-}
-
-// TestToFatObjectLocations_NilNullableFields verifies the helper does not
-// panic when KeyID, PlaintextSize, or ContentHash are nil.
-func TestToFatObjectLocations_NilNullableFields(t *testing.T) {
-	t.Parallel()
-	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
-		ObjectKey:   "k",
-		BackendName: "b",
-		SizeBytes:   1,
-		CreatedAt:   pgtime(time.Now()),
-		// Encrypted=false, EncryptionKey nil, KeyID/PlaintextSize/ContentHash nil
-	}})
-	loc := out[0]
-	if loc.KeyID != "" || loc.PlaintextSize != 0 || loc.ContentHash != "" {
-		t.Errorf("nil pointer fields not zeroed: %+v", loc)
+	if !loc.Unmanaged {
+		t.Error("an unmanaged row converted as managed")
 	}
-	if loc.Encrypted {
-		t.Errorf("Encrypted should be false")
+	if !loc.CreatedAt.Equal(created) || loc.LastScrubbedAt == nil || !loc.LastScrubbedAt.Equal(scrubbed) {
+		t.Errorf("times = %v/%v, want %v/%v", loc.CreatedAt, loc.LastScrubbedAt, created, scrubbed)
 	}
 }
 
-// TestToFatObjectLocations_PartialNilFields covers the mid-state where some
-// nullable fields are set and others are not.
-func TestToFatObjectLocations_PartialNilFields(t *testing.T) {
+// TestToObjectLocation_NullColumns verifies a row whose nullable columns are
+// NULL converts to their zero values, with no identity and no scrub time.
+func TestToObjectLocation_NullColumns(t *testing.T) {
 	t.Parallel()
-	keyID := "k1"
-	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
-		ObjectKey:     "k",
-		BackendName:   "b",
-		SizeBytes:     1,
-		Encrypted:     true,
-		EncryptionKey: []byte{0x01},
-		KeyID:         &keyID,
-		// PlaintextSize/ContentHash nil
-		CreatedAt: pgtime(time.Now()),
-	}})
-	loc := out[0]
-	if loc.KeyID != "k1" {
-		t.Errorf("KeyID = %q, want k1", loc.KeyID)
+	loc := toObjectLocation(&db.ObjectLocation{ObjectKey: "k", BackendName: "b", Managed: true, CreatedAt: pgtime(time.Now())})
+	if loc.KeyID != "" || loc.PlaintextSize != 0 || loc.ContentHash != "" || loc.Encrypted {
+		t.Errorf("NULL columns not zeroed: %+v", loc.StoredForm)
 	}
-	if loc.PlaintextSize != 0 || loc.ContentHash != "" {
-		t.Errorf("nil pointer fields not zeroed: %+v", loc)
-	}
-}
-
-// TestToFatObjectLocations_EveryRowType walks each fat-row sqlc type to
-// confirm the accessor methods are wired and the generic helper accepts
-// each one. A zero-element entry per type is enough  -  the per-field
-// flattening is exhaustively tested for GetAllObjectLocationsRow above.
-func TestToFatObjectLocations_EveryRowType(t *testing.T) {
-	t.Parallel()
-	now := pgtime(time.Now())
-
-	if got := toFatObjectLocations([]db.GetAllObjectLocationsRow{{ObjectKey: "a", CreatedAt: now}}); got[0].ObjectKey != "a" {
-		t.Error("GetAllObjectLocationsRow not converted")
-	}
-	if got := toFatObjectLocations([]db.GetUnderReplicatedObjectsRow{{ObjectKey: "b", CreatedAt: now}}); got[0].ObjectKey != "b" {
-		t.Error("GetUnderReplicatedObjectsRow not converted")
-	}
-	if got := toFatObjectLocations([]db.GetOverReplicatedObjectsRow{{ObjectKey: "d", CreatedAt: now}}); got[0].ObjectKey != "d" {
-		t.Error("GetOverReplicatedObjectsRow not converted")
-	}
-	if got := toFatObjectLocations([]db.GetLeastRecentlyScrubbedObjectsRow{{ObjectKey: "f", CreatedAt: now}}); got[0].ObjectKey != "f" {
-		t.Error("GetRandomHashedObjectsRow not converted")
+	if loc.Identity != nil || loc.LastScrubbedAt != nil || loc.Unmanaged {
+		t.Errorf("identity %v, scrubbed %v, unmanaged %v; want nil, nil, false", loc.Identity, loc.LastScrubbedAt, loc.Unmanaged)
 	}
 }
 
 // -------------------------------------------------------------------------
-// Slim-row conversions: key/backend/size/created_at only
+// SLIM ROWS
 // -------------------------------------------------------------------------
 
 // TestToSlimObjectLocations_EveryRowType walks each slim-row sqlc type.

@@ -65,18 +65,10 @@ type PendingTxAdapter interface {
 // OBJECTS
 // -------------------------------------------------------------------------
 
-// KeyedExistingCopy is an ExistingCopy that also carries the object_key so
-// batch operations can group rows by key.
-type KeyedExistingCopy struct {
-	ObjectKey   string
-	BackendName string
-	StorageKey  string
-	SizeBytes   int64
-}
-
 // ObjectsTxAdapter exposes the transactional operations on the object_locations
-// table. The ForUpdate reads lock their rows so the same transaction can delete
-// them and move the quota. InsertObjectLocation writes every column loc carries
+// table. GetExistingCopiesForUpdate locks every copy of the keys so the same
+// transaction can delete them with DeleteObjectCopies and move the quota; both
+// take one key or a batch. InsertObjectLocation writes every column loc carries
 // and stamps the current time only when loc has no CreatedAt.
 // UpdateCopyMetadata writes a patch to the copy loc names and returns
 // ErrCopyChanged when no row has its storage key.
@@ -84,12 +76,9 @@ type KeyedExistingCopy struct {
 // copy and which a queued or dead-lettered delete names; a pending delete
 // outranks a recorded copy.
 type ObjectsTxAdapter interface {
-	GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]ExistingCopy, error)
+	GetExistingCopiesForUpdate(ctx context.Context, objectKeys ...string) ([]ExistingCopy, error)
 	InsertObjectLocation(ctx context.Context, loc *ObjectLocation) error
-	DeleteObjectCopies(ctx context.Context, objectKey string) error
-
-	GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]KeyedExistingCopy, error)
-	DeleteObjectsByKeys(ctx context.Context, keys []string) error // rows must already be locked
+	DeleteObjectCopies(ctx context.Context, objectKeys ...string) error // rows must already be locked
 
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)           // untracked paths are absent
 	LockObjectOnBackend(ctx context.Context, objectKey, backend string) (loc *ObjectLocation, ok bool, err error) // ok=false: row gone, a benign race
@@ -136,11 +125,11 @@ type MultipartTxAdapter interface {
 // TagsTxAdapter exposes the transactional writes on the object_tags table;
 // reads go through TagStore. Callers clear the set before inserting, so a
 // primary-key conflict from InsertObjectTag is a duplicate that survived
-// validation and is returned as an error.
+// validation and is returned as an error. DeleteObjectTags clears one key or a
+// batch in one statement.
 type TagsTxAdapter interface {
 	InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error
-	DeleteObjectTags(ctx context.Context, objectKey string) error
-	DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error // one statement, for batch delete
+	DeleteObjectTags(ctx context.Context, objectKeys ...string) error
 }
 
 // -------------------------------------------------------------------------

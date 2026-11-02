@@ -67,12 +67,12 @@ type ObjectStore interface {
 
 // TagStore defines object tag read and write operations. Writes come from TxOps
 // and are shared by both engines; reads are per-engine. GetObjectTags returns
-// the set ordered by key and does not error on an untagged object. The tag
-// count the read path needs comes from GetAllObjectLocations.
+// the set ordered by key and does not error on an untagged object; replacing
+// the set with an empty one removes it. The tag count the read path needs
+// comes from GetAllObjectLocations.
 type TagStore interface {
 	GetObjectTags(ctx context.Context, key string) ([]Tag, error)
 	ReplaceObjectTags(ctx context.Context, key string, tags []Tag) error
-	DeleteObjectTags(ctx context.Context, key string) error
 }
 
 // QuotaStore defines the byte-counter reads and writes. GetQuotaStats is the

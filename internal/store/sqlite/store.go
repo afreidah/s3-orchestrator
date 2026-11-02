@@ -45,11 +45,12 @@ type Store struct {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewStore opens a SQLite database at the configured path, applies pragmas
-// for WAL mode and foreign key enforcement, and runs migrations. When cb
-// is non-nil, every statement the store fires goes through PreCheck/
-// PostCheck. Pass nil to skip CB wrapping (test fixtures). instanceID claims
-// the cleanup rows this process's transactions queue.
+// NewStore opens a SQLite database at the configured path and applies pragmas
+// for WAL mode and foreign key enforcement. The caller runs RunMigrations, as
+// it does for Postgres. When cb is non-nil, every statement the store fires
+// goes through PreCheck/PostCheck. Pass nil to skip CB wrapping (test
+// fixtures). instanceID claims the cleanup rows this process's transactions
+// queue.
 func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker, instanceID string) (*Store, error) {
 	db, err := sql.Open("sqlite", dbCfg.Path)
 	if err != nil {
@@ -59,12 +60,15 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 	// SQLite is single-writer; serialize all writes through one connection.
 	db.SetMaxOpenConns(1)
 
-	// Apply performance and correctness pragmas.
+	// Apply performance and correctness pragmas. LIKE ignores ASCII case by
+	// default, and every LIKE here is a key prefix, which S3 matches byte for
+	// byte.
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
+		"PRAGMA case_sensitive_like=ON",
 	}
 	for _, p := range pragmas {
 		if _, err := db.ExecContext(ctx, p); err != nil {
@@ -80,11 +84,6 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 
 	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb, instanceID: instanceID}
 	s.TxOps = core.NewTxOps(s)
-	if err := s.RunMigrations(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("run migrations: %w", err)
-	}
-
 	return s, nil
 }
 
@@ -104,18 +103,26 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.rawDB.PingContext(ctx)
 }
 
-// withTx executes fn inside a transaction. Commits on success, rolls
-// back on error. Tx lifecycle and breaker pre/post-checks live in
-// cbWithTx; this method just hands fn through.
-func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	return cbWithTx(ctx, s.rawDB, s.cb, fn)
+// withTx executes fn inside a transaction over an adapter scoped to it, so a
+// body runs through the adapter's exec helpers. Commits on success, rolls back
+// on error. Tx lifecycle and breaker pre/post-checks live in cbWithTx.
+func (s *Store) withTx(ctx context.Context, fn func(a *sqliteTxAdapter) error) error {
+	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
+		return fn(&sqliteTxAdapter{q: tx, instanceID: s.instanceID})
+	})
 }
 
 // WithTx runs fn in a transaction, committing on a nil return and rolling back
 // otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
-	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		return fn(ctx, &sqliteTxAdapter{q: tx, instanceID: s.instanceID})
+	return s.withTx(ctx, func(a *sqliteTxAdapter) error { return fn(ctx, a) })
+}
+
+// withTxVal is core.WithTxVal for this package's own transactional bodies,
+// which run against the SQLite adapter rather than the core interface.
+func withTxVal[T any](ctx context.Context, s *Store, fn func(a *sqliteTxAdapter) (T, error)) (T, error) {
+	return core.WithTxVal(ctx, s, func(_ context.Context, tx core.TxAdapter) (T, error) {
+		return fn(tx.(*sqliteTxAdapter))
 	})
 }
 

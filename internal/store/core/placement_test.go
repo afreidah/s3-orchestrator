@@ -82,7 +82,7 @@ func (s *placeTxStub) DeletePending(_ context.Context, intentID string) error {
 }
 
 // GetExistingCopiesForUpdate serves the seeded copy set.
-func (s *placeTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+func (s *placeTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	return s.existing, s.existingErr
 }
 

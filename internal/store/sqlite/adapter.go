@@ -85,38 +85,22 @@ func (a *sqliteTxAdapter) exists(ctx context.Context, what, query string, args .
 // ClearPendingForKey removes the key's intents apart from the ones the caller
 // is committing, reporting each so its bytes can be cleaned off the backend
 // after the transaction commits.
-//
-// Read then delete rather than DELETE ... RETURNING: SQLite serializes writers
-// for the length of the transaction, so nothing can insert an intent for this
-// key between the two statements.
 func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
-	keepJSON := jsonList(keep)
 	rows, err := a.q.QueryContext(ctx,
-		`SELECT intent_id, backend_name, storage_key, size_bytes
-		   FROM pending_objects
-		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
-		objectKey, keepJSON)
-	if err != nil {
-		return nil, fmt.Errorf("read superseded intents: %w", err)
-	}
-	cleared, err := collectRows(rows, "superseded intents", func(rows *sql.Rows) (core.SupersededIntent, error) {
-		var si core.SupersededIntent
-		err := rows.Scan(&si.IntentID, &si.BackendName, &si.StorageKey, &si.SizeBytes)
-		return si, err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("scan superseded intents: %w", err)
-	}
-	if len(cleared) == 0 {
-		return nil, nil
-	}
-	if err := a.exec(ctx, "clear pending intents for key",
 		`DELETE FROM pending_objects
-		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
-		objectKey, keepJSON); err != nil {
-		return nil, err
+		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))
+		 RETURNING intent_id, backend_name, storage_key, size_bytes`,
+		objectKey, jsonList(keep))
+	if err != nil {
+		return nil, fmt.Errorf("clear pending intents for key: %w", err)
 	}
-	return cleared, nil
+	return collectRows(rows, "superseded intents", func(rows *sql.Rows) (core.SupersededIntent, error) {
+		var si core.SupersededIntent
+		if err := rows.Scan(&si.IntentID, &si.BackendName, &si.StorageKey, &si.SizeBytes); err != nil {
+			return core.SupersededIntent{}, fmt.Errorf("scan superseded intent: %w", err)
+		}
+		return si, nil
+	})
 }
 
 // DeletePending removes a pending intent.
@@ -128,13 +112,17 @@ func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) er
 // OBJECTS TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// GetExistingCopiesForUpdate returns every copy of a key. SQLite's
-// single-writer model means no row lock is needed inside a write tx.
-func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]core.ExistingCopy, error) {
-	rows, err := a.q.QueryContext(ctx,
-		`SELECT backend_name, storage_key, size_bytes, created_at, form
-		 FROM object_locations
-		 WHERE object_key = ?`, objectKey)
+// GetExistingCopiesForUpdate returns every copy of the keys, passed as one
+// JSON parameter via json_each. There is no FOR UPDATE: SQLite serializes
+// writers, so the in-tx read already gives the same exclusivity.
+func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKeys ...string) ([]core.ExistingCopy, error) {
+	if len(objectKeys) == 0 {
+		return nil, nil
+	}
+	rows, err := a.q.QueryContext(ctx, `
+		SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
+		FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
 	if err != nil {
 		return nil, fmt.Errorf("query existing copies: %w", err)
 	}
@@ -143,52 +131,15 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 			ec        core.ExistingCopy
 			createdAt string
 		)
-		if err := rows.Scan(&ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form); err != nil {
+		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form); err != nil {
 			return core.ExistingCopy{}, fmt.Errorf("scan existing copy: %w", err)
 		}
 		var err error
 		if ec.CreatedAt, err = parseTime(createdAt); err != nil {
-			return core.ExistingCopy{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.ExistingCopy{}, err
 		}
 		return ec, nil
 	})
-}
-
-// GetCopiesForKeysForUpdate returns every (key, backend, size) row matching
-// any key in the supplied list, passing the keys as one JSON parameter via
-// json_each. There is no FOR UPDATE: SQLite serializes writers, so the in-tx
-// read already gives the same exclusivity.
-func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	rows, err := a.q.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes
-		FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys))
-	if err != nil {
-		return nil, fmt.Errorf("get copies for keys: %w", err)
-	}
-	return collectRows(rows, "keyed copies", func(rows *sql.Rows) (core.KeyedExistingCopy, error) {
-		var ec core.KeyedExistingCopy
-		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.StorageKey, &ec.SizeBytes); err != nil {
-			return core.KeyedExistingCopy{}, fmt.Errorf("scan keyed copy: %w", err)
-		}
-		return ec, nil
-	})
-}
-
-// DeleteObjectsByKeys bulk-deletes object_locations rows for every
-// supplied key. Caller must have already locked the rows via
-// GetCopiesForKeysForUpdate. Uses json_each so the SQL stays static
-// and the keys array is passed as a JSON parameter.
-func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	return a.exec(ctx, "delete objects by keys", `
-		DELETE FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys))
 }
 
 // InsertObjectLocation writes a new object_locations row carrying every column
@@ -202,6 +153,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		created = formatTime(loc.CreatedAt)
 	}
 	form := loc.Recorded()
+	etag, contentType, userMetadata := identityColumns(loc.Identity)
 	return a.exec(ctx, "insert object location",
 		`INSERT INTO object_locations
 		   (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
@@ -217,15 +169,17 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		nullableString(form.CompressionAlgorithm), nullableString(form.CompressionLevel),
 		nullableInt64(int64(form.CompressionFormatVersion)), nullableInt64(form.LogicalSize),
 		nullableInt64(loc.CompressionProbeSize), nullableString(loc.CompressionProbeLevel),
-		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
+		etag, contentType, userMetadata,
 		!loc.Unmanaged,
 		created,
 	)
 }
 
-// DeleteObjectCopies removes every object_locations row for the key.
-func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey string) error {
-	return a.exec(ctx, "delete object copies", `DELETE FROM object_locations WHERE object_key = ?`, objectKey)
+// DeleteObjectCopies removes every object_locations row for the keys, which
+// GetExistingCopiesForUpdate has already read in this transaction.
+func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKeys ...string) error {
+	return a.exec(ctx, "delete object copies",
+		`DELETE FROM object_locations WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
 }
 
 // objectExistsOnBackend reports whether (key, backend) is in
@@ -236,18 +190,17 @@ func (a *sqliteTxAdapter) objectExistsOnBackend(ctx context.Context, objectKey, 
 }
 
 // LockObjectOnBackend reads the (key, backend) row whole inside the
-// writer-serialized tx, through the scanner the read path uses, so a copy
-// placed from it carries every column. The tag count is per key and a
-// placement does not read it. (nil, false, nil) means the row is gone.
+// writer-serialized tx, so a copy placed from it carries every column.
+// (nil, false, nil) means the row is gone.
 func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backend string) (*core.ObjectLocation, bool, error) {
 	rows, err := a.q.QueryContext(ctx, `
-		SELECT `+objectColumns+`, etag, content_type, user_metadata, managed, 0
+		SELECT `+objectColumns+`
 		FROM object_locations
 		WHERE object_key = ? AND backend_name = ?`, objectKey, backend)
 	if err != nil {
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
-	locs, err := collectRows(rows, "lock object on backend", scanIdentifiedObjectLocation)
+	locs, err := collectRows(rows, "lock object on backend", scanObjectLocation)
 	if err != nil || len(locs) == 0 {
 		return nil, false, err
 	}
@@ -340,22 +293,12 @@ func (a *sqliteTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey
 		`INSERT INTO object_tags (object_key, tag_key, tag_value) VALUES (?, ?, ?)`, objectKey, tagKey, tagValue)
 }
 
-// DeleteObjectTags removes every tag row for one object key.
-func (a *sqliteTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
-	return a.exec(ctx, "delete object tags", `DELETE FROM object_tags WHERE object_key = ?`, objectKey)
-}
-
-// DeleteObjectTagsForKeys removes every tag row for any of the given keys,
-// passing the list as JSON for the same reason DeleteObjectsByKeys does:
-// SQLite has no array parameter, and json_each keeps this one statement
-// rather than one per key.
-func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error {
-	if len(objectKeys) == 0 {
-		return nil
-	}
-	return a.exec(ctx, "delete object tags for keys", `
-		DELETE FROM object_tags
-		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
+// DeleteObjectTags removes every tag row for any of the keys. SQLite has no
+// array parameter, and json_each keeps this one statement rather than one per
+// key.
+func (a *sqliteTxAdapter) DeleteObjectTags(ctx context.Context, objectKeys ...string) error {
+	return a.exec(ctx, "delete object tags",
+		`DELETE FROM object_tags WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
 }
 
 // InsertObjectLocationIfNotExists inserts a row only if one does not
@@ -386,44 +329,43 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
 	claimedAt := time.Now()
 	stamp := formatTime(claimedAt)
-	res, err := a.q.ExecContext(ctx,
+	var id int64
+	if err := a.q.QueryRowContext(ctx,
 		`INSERT INTO cleanup_queue
 		   (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry, claimed_at, claimed_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 RETURNING id`,
 		c.BackendName, c.ObjectKey, c.StorageKey, c.Reason, c.SizeBytes,
 		stamp, stamp, stamp, nullableString(a.instanceID),
-	)
-	if err != nil {
-		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
+	).Scan(&id); err != nil {
 		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
 	}
 	return core.CleanupItem{
-		ID:          id,
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  c.StorageKey,
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-		Claim:       &core.CleanupClaim{At: claimedAt, By: a.instanceID},
+		CleanupRequest: *c,
+		ID:             id,
+		Claim:          &core.CleanupClaim{At: claimedAt, By: a.instanceID},
 	}, nil
 }
 
-// execChanged runs a write and reports whether it changed any row, for the
-// conditional inserts and updates whose outcome is the answer. what prefixes
+// execRows runs a write and reports how many rows it changed. what prefixes
 // either failure.
-func (a *sqliteTxAdapter) execChanged(ctx context.Context, what, query string, args ...any) (bool, error) {
+func (a *sqliteTxAdapter) execRows(ctx context.Context, what, query string, args ...any) (int64, error) {
 	res, err := a.q.ExecContext(ctx, query, args...)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", what, err)
+		return 0, fmt.Errorf("%s: %w", what, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", what, err)
+		return 0, fmt.Errorf("%s: %w", what, err)
 	}
-	return n > 0, nil
+	return n, nil
+}
+
+// execChanged runs a write and reports whether it changed any row, for the
+// conditional inserts and updates whose outcome is the answer.
+func (a *sqliteTxAdapter) execChanged(ctx context.Context, what, query string, args ...any) (bool, error) {
+	n, err := a.execRows(ctx, what, query, args...)
+	return n > 0, err
 }
 
 // exec runs a write whose row count does not matter, wrapping a failure as
@@ -480,10 +422,11 @@ func (a *sqliteTxAdapter) LockMultipartUpload(ctx context.Context, uploadID stri
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("read multipart upload: %w", err)
 	}
-	if t := parseNullableTime(heartbeat); t != nil {
-		return backendName, *t, nil
+	t, err := parseNullableTime(heartbeat)
+	if err != nil || t == nil {
+		return backendName, time.Time{}, err
 	}
-	return backendName, time.Time{}, nil
+	return backendName, *t, nil
 }
 
 // DeleteMultipartUpload removes an upload's parts and then the upload, and

@@ -25,18 +25,18 @@ import (
 // InsertNotification adds an event to the notification outbox for async
 // webhook delivery. Satisfies the notify.OutboxStore interface.
 func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error {
-	return s.queries.InsertNotification(ctx, db.InsertNotificationParams{
+	return wrapErr(s.queries.InsertNotification(ctx, db.InsertNotificationParams{
 		EventType:   eventType,
 		Payload:     []byte(payload),
 		EndpointUrl: endpointURL,
-	})
+	}), "insert notification")
 }
 
 // GetPendingNotifications returns outbox rows ready for delivery.
 func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.NotificationRow, error) {
 	rows, err := s.queries.GetPendingNotifications(ctx, rowLimit(limit))
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err, "get pending notifications")
 	}
 	return mapSlice(rows, notificationFromRow), nil
 }
@@ -57,21 +57,22 @@ func notificationFromRow(r *db.GetPendingNotificationsRow) core.NotificationRow 
 // including those waiting out a retry backoff. The notifier deletes a row once
 // its endpoint's retries are spent, so every row still counts.
 func (s *Store) NotificationQueueDepth(ctx context.Context) (int64, error) {
-	return s.queries.NotificationQueueDepth(ctx)
+	n, err := s.queries.NotificationQueueDepth(ctx)
+	return n, wrapErr(err, "failed to count pending notifications")
 }
 
 // CompleteNotification removes a delivered notification from the outbox.
 // Satisfies the notify.OutboxStore interface.
 func (s *Store) CompleteNotification(ctx context.Context, id int64) error {
-	return s.queries.CompleteNotification(ctx, id)
+	return wrapErr(s.queries.CompleteNotification(ctx, id), "complete notification")
 }
 
 // RetryNotification increments the attempt counter and schedules the next
 // retry. Satisfies the notify.OutboxStore interface.
 func (s *Store) RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
-	return s.queries.RetryNotification(ctx, db.RetryNotificationParams{
+	return wrapErr(s.queries.RetryNotification(ctx, db.RetryNotificationParams{
 		ID:        id,
 		Backoff:   durationToInterval(backoff),
 		LastError: &lastError,
-	})
+	}), "retry notification")
 }

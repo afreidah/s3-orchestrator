@@ -49,7 +49,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'sqlc.yaml'
-              - 'internal/store/sqlc/queries/**'
+              - 'internal/store/postgres/sqlc/queries/**'
               - 'Makefile'
               - '.golangci.yml'
               - '.version'

@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/exaring/otelpgx"
@@ -40,9 +39,6 @@ import (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
-
-// likeEscaper escapes SQL LIKE wildcards in prefix strings.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -173,21 +169,14 @@ const ExpectedSchemaVersion = 48
 // this binary expects. Returns an error if the schema is older (a partial
 // migration) or newer (an outdated binary) than expected.
 func (s *Store) VerifySchemaVersion(ctx context.Context) error {
-	var version int64
+	var version int
 	err := s.pool.QueryRow(ctx,
 		"SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = true",
 	).Scan(&version)
 	if err != nil {
 		return fmt.Errorf("query schema version: %w", err)
 	}
-
-	if version < ExpectedSchemaVersion {
-		return fmt.Errorf("database schema version %d is older than expected %d  -  migrations may have partially failed", version, ExpectedSchemaVersion)
-	}
-	if version > ExpectedSchemaVersion {
-		return fmt.Errorf("database schema version %d is newer than expected %d  -  binary is outdated", version, ExpectedSchemaVersion)
-	}
-	return nil
+	return core.CheckSchemaVersion("database", version, ExpectedSchemaVersion)
 }
 
 // -------------------------------------------------------------------------
@@ -233,41 +222,6 @@ type slimObjectRow interface {
 	GetCreatedAt() pgtype.Timestamptz
 }
 
-// fatObjectRow extends slimObjectRow with the representation columns the
-// encryption-aware queries return: how the stored bytes were encrypted and
-// compressed, and the sizes and hash they reduce to.
-type fatObjectRow interface {
-	slimObjectRow
-	GetEncrypted() bool
-	GetEncryptionKey() []byte
-	GetKeyID() *string
-	GetPlaintextSize() *int64
-	GetContentHash() *string
-	GetCompressionAlgorithm() *string
-	GetCompressionLevel() *string
-	GetCompressionFormatVersion() *int16
-	GetLogicalSize() *int64
-}
-
-// verifiableObjectRow extends fatObjectRow with the last-verified timestamp,
-// which only the queries that report scrub coverage select.
-type verifiableObjectRow interface {
-	fatObjectRow
-	GetLastScrubbedAt() pgtype.Timestamptz
-}
-
-// identifiedObjectRow is a verifiable row that also selects the client-facing
-// identity columns and the managed flag. Only the read path's own query needs
-// them: a replication or scrub row is about the bytes, not about what a client
-// is told they are or whether a client may see them.
-type identifiedObjectRow interface {
-	verifiableObjectRow
-	GetEtag() *string
-	GetContentType() *string
-	GetUserMetadata() []byte
-	GetManaged() bool
-}
-
 // toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
 // content-hash fields stay zero-valued.
 func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
@@ -285,65 +239,45 @@ func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
 	return out
 }
 
-// toFatObjectLocations converts a slice of encryption-aware sqlc rows, adding
-// the stored form to the slim columns. A NULL column leaves its zero value.
-func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
-	out := toSlimObjectLocations(rows)
-	for i := range rows {
-		r := rows[i]
-		out[i].StoredForm = core.StoredForm{
-			Encrypted:                r.GetEncrypted(),
-			EncryptionKey:            r.GetEncryptionKey(),
-			KeyID:                    derefStr(r.GetKeyID()),
-			PlaintextSize:            derefInt64(r.GetPlaintextSize()),
-			ContentHash:              derefStr(r.GetContentHash()),
-			CompressionAlgorithm:     derefStr(r.GetCompressionAlgorithm()),
-			CompressionLevel:         derefStr(r.GetCompressionLevel()),
-			CompressionFormatVersion: int(derefInt16(r.GetCompressionFormatVersion())),
-			LogicalSize:              derefInt64(r.GetLogicalSize()),
-		}
+// toObjectLocation converts a whole object_locations row, the table model every
+// SELECT * query returns. A NULL column leaves its zero value, and a metadata
+// decode failure leaves the identity nil, costing a backend round trip rather
+// than the read.
+func toObjectLocation(r *db.ObjectLocation) core.ObjectLocation {
+	loc := core.ObjectLocation{
+		Encrypted:                r.Encrypted,
+		EncryptionKey:            r.EncryptionKey,
+		KeyID:                    derefStr(r.KeyID),
+		PlaintextSize:            derefInt64(r.PlaintextSize),
+		ContentHash:              derefStr(r.ContentHash),
+		CompressionAlgorithm:     derefStr(r.CompressionAlgorithm),
+		CompressionLevel:         derefStr(r.CompressionLevel),
+		CompressionFormatVersion: int(derefInt16(r.CompressionFormatVersion)),
+		LogicalSize:              derefInt64(r.LogicalSize),
+		ObjectKey:                r.ObjectKey,
+		BackendName:              r.BackendName,
+		StorageKey:               r.StorageKey,
+		SizeBytes:                r.SizeBytes,
+		CreatedAt:                r.CreatedAt.Time,
+		CompressionProbeSize:     derefInt64(r.CompressionProbeSize),
+		CompressionProbeLevel:    derefStr(r.CompressionProbeLevel),
+		Unmanaged:                !r.Managed,
 	}
-	return out
+	if r.LastScrubbedAt.Valid {
+		loc.LastScrubbedAt = new(r.LastScrubbedAt.Time)
+	}
+	if id, err := core.IdentityFromColumns(derefStr(r.Etag), derefStr(r.ContentType), r.UserMetadata); err == nil {
+		loc.Identity = id
+	}
+	return loc
 }
 
-// toIdentifiedObjectLocations converts rows from the read path's query, which
-// adds the identity columns. A metadata decode failure leaves that copy's
-// identity nil, costing a backend round trip rather than failing the read.
-func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectLocation {
-	out := toVerifiableObjectLocations(rows)
+// toObjectLocations converts the whole object_locations rows a list query
+// returns, one toObjectLocation each.
+func toObjectLocations(rows []db.ObjectLocation) []core.ObjectLocation {
+	out := make([]core.ObjectLocation, len(rows))
 	for i := range rows {
-		out[i].Unmanaged = !rows[i].GetManaged()
-		id, err := core.IdentityFromColumns(derefStr(rows[i].GetEtag()), derefStr(rows[i].GetContentType()), rows[i].GetUserMetadata())
-		if err != nil {
-			continue
-		}
-		out[i].Identity = id
-	}
-	return out
-}
-
-// toWholeObjectLocations converts table-model rows from SELECT * queries. Only
-// the whole row carries the compression probe, which a copy placed from it and
-// a compression pass both read.
-func toWholeObjectLocations(rows []db.ObjectLocation) []core.ObjectLocation {
-	out := toIdentifiedObjectLocations(rows)
-	for i := range rows {
-		out[i].CompressionProbeSize = derefInt64(rows[i].CompressionProbeSize)
-		out[i].CompressionProbeLevel = derefStr(rows[i].CompressionProbeLevel)
-	}
-	return out
-}
-
-// toVerifiableObjectLocations converts rows from the queries that also select
-// last_scrubbed_at. The type constraint makes a query that selects the column
-// without its accessor fail to compile, rather than report every copy unverified.
-func toVerifiableObjectLocations[T verifiableObjectRow](rows []T) []core.ObjectLocation {
-	out := toFatObjectLocations(rows)
-	for i := range rows {
-		if ts := rows[i].GetLastScrubbedAt(); ts.Valid {
-			scrubbed := ts.Time
-			out[i].LastScrubbedAt = &scrubbed
-		}
+		out[i] = toObjectLocation(&rows[i])
 	}
 	return out
 }

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -128,10 +129,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 	}
 
 	if version > expectedSchemaVersion {
-		return fmt.Errorf(
-			"SQLite schema version %d is newer than expected %d  -  binary is outdated",
-			version, expectedSchemaVersion,
-		)
+		return core.CheckSchemaVersion("SQLite", version, expectedSchemaVersion)
 	}
 
 	applied, err := s.applyPendingMigrations(ctx, version)
@@ -183,14 +181,11 @@ func (s *Store) applyPendingMigrations(ctx context.Context, from int) (int, erro
 // applyMigration runs one migration and records its version in the same
 // transaction, so a partially applied migration cannot be recorded as done.
 func (s *Store) applyMigration(ctx context.Context, m migration) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-			return fmt.Errorf("apply migration %d (%s): %w", m.version, m.name, err)
+	return s.withTx(ctx, func(a *sqliteTxAdapter) error {
+		if err := a.exec(ctx, fmt.Sprintf("apply migration %d (%s)", m.version, m.name), m.sql); err != nil {
+			return err
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version (version) VALUES (?)", m.version); err != nil {
-			return fmt.Errorf("record migration %d: %w", m.version, err)
-		}
-		return nil
+		return a.exec(ctx, fmt.Sprintf("record migration %d", m.version), "INSERT INTO schema_version (version) VALUES (?)", m.version)
 	})
 }
 
@@ -210,20 +205,7 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	if !exists {
 		return fmt.Errorf("schema_version table does not exist  -  database not initialised")
 	}
-
-	if version < expectedSchemaVersion {
-		return fmt.Errorf(
-			"SQLite schema version %d is older than expected %d  -  migrations may have partially failed",
-			version, expectedSchemaVersion,
-		)
-	}
-	if version > expectedSchemaVersion {
-		return fmt.Errorf(
-			"SQLite schema version %d is newer than expected %d  -  binary is outdated",
-			version, expectedSchemaVersion,
-		)
-	}
-	return nil
+	return core.CheckSchemaVersion("SQLite", version, expectedSchemaVersion)
 }
 
 // currentSchemaVersion returns the version from the schema_version table.

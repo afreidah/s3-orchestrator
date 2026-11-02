@@ -44,7 +44,9 @@ func (s *Store) ListBackendStates(ctx context.Context) ([]core.BackendStateRecor
 		}
 		r.LastError = nullStringValue(lastError)
 		r.StartedAt = started
-		r.FinishedAt = parseNullableTime(finishedAt)
+		if r.FinishedAt, err = parseNullableTime(finishedAt); err != nil {
+			return core.BackendStateRecord{}, err
+		}
 		return r, nil
 	})
 }
@@ -80,7 +82,7 @@ func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error
 		    objects_moved = 0, last_error = NULL,
 		    started_at = excluded.started_at, finished_at = NULL
 		WHERE (backend_states.flags & ?4) = 0`,
-		backendName, core.FlagDraining, core.DrainFlags, core.FlagDraining|core.FlagDrained, now())
+		backendName, core.FlagDraining, core.DrainFlags, core.DrainBusy, now())
 }
 
 // AddDrainedObjects adds moved to the count of objects a drain in progress has

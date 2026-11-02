@@ -313,35 +313,14 @@ func runDeleteLocation(stub *excessTxStub, key, backend string) error {
 	return err
 }
 
-// batchTxStub drives DeleteObjectsBatch: it returns a seeded keyed copy set so
-// the batch gets past its empty-result short circuit, and inherits the tag and
-// lock hooks from the embedded quotaTxStub.
-type batchTxStub struct {
-	*quotaTxStub
-	keyed []KeyedExistingCopy
-}
-
-// GetCopiesForKeysForUpdate returns the seeded keyed copy set.
-func (s *batchTxStub) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
-	return s.keyed, nil
-}
-
-// newBatchStub builds a batch stub with the embedded quota stub initialized.
-func newBatchStub(s *batchTxStub) *batchTxStub {
-	if s.quotaTxStub == nil {
-		s.quotaTxStub = &quotaTxStub{}
-	}
-	return s
-}
-
 // TestDeleteObjectsBatch_ClearsTagsForEveryKey verifies the batch clears tags
 // in one statement rather than a loop, and covers every key it was given.
 func TestDeleteObjectsBatch_ClearsTagsForEveryKey(t *testing.T) {
 	t.Parallel()
-	stub := newBatchStub(&batchTxStub{keyed: []KeyedExistingCopy{
+	stub := &quotaTxStub{existingCopies: []ExistingCopy{
 		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10},
 		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 20},
-	}})
+	}}
 	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1"}); err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
@@ -358,7 +337,7 @@ func TestDeleteObjectsBatch_ClearsTagsForEveryKey(t *testing.T) {
 func TestDeleteObjectsBatch_LockError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock failed")
-	stub := newBatchStub(&batchTxStub{quotaTxStub: &quotaTxStub{keyLockErr: sentinel}})
+	stub := &quotaTxStub{keyLockErr: sentinel}
 	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k1"}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the lock error, got %v", err)
 	}
@@ -370,10 +349,7 @@ func TestDeleteObjectsBatch_LockError(t *testing.T) {
 func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("tag clear failed")
-	stub := newBatchStub(&batchTxStub{
-		quotaTxStub: &quotaTxStub{tagClearErr: sentinel},
-		keyed:       []KeyedExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}},
-	})
+	stub := &quotaTxStub{tagClearErr: sentinel, existingCopies: []ExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}}}
 	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k1"}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
@@ -385,7 +361,7 @@ func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 // batchIntentStub is a batch whose keys each hold one in-flight intent, so a
 // test can see the batch clear them the way a single delete does.
 type batchIntentStub struct {
-	*batchTxStub
+	*quotaTxStub
 
 	clearErr error
 	cleared  []string
@@ -406,10 +382,10 @@ func (s *batchIntentStub) ClearPendingForKey(_ context.Context, key string, _ []
 // bytes as deleted and the intents' bytes as superseded.
 func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 	t.Parallel()
-	stub := &batchIntentStub{batchTxStub: newBatchStub(&batchTxStub{keyed: []KeyedExistingCopy{
+	stub := &batchIntentStub{quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{
 		{ObjectKey: "k2", BackendName: "b1", StorageKey: "k2!a", SizeBytes: 20},
 		{ObjectKey: "k1", BackendName: "b1", StorageKey: "k1!a", SizeBytes: 10},
-	}})}
+	}}}
 	cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1", "missing"})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
@@ -436,10 +412,10 @@ func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 func TestDeleteObjectsBatch_FailuresRollBack(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("step failed")
-	keyed := []KeyedExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}}
+	keyed := []ExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}}
 	cases := map[string]TxAdapter{
-		"intent clear": &batchIntentStub{batchTxStub: newBatchStub(&batchTxStub{keyed: keyed}), clearErr: sentinel},
-		"queue":        &queueRecorder{TxAdapter: newBatchStub(&batchTxStub{keyed: keyed}), err: sentinel},
+		"intent clear": &batchIntentStub{quotaTxStub: &quotaTxStub{existingCopies: keyed}, clearErr: sentinel},
+		"queue":        &queueRecorder{TxAdapter: &quotaTxStub{existingCopies: keyed}, err: sentinel},
 	}
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -456,7 +432,7 @@ func TestDeleteObjectsBatch_FailuresRollBack(t *testing.T) {
 // that hold nothing queue nothing.
 func TestDeleteObjectsBatch_NothingToDelete(t *testing.T) {
 	t.Parallel()
-	stub := newBatchStub(&batchTxStub{})
+	stub := &quotaTxStub{}
 	for _, keys := range [][]string{nil, {"missing"}} {
 		cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), keys)
 		if err != nil || cleanup != nil || len(stub.ops) != 0 {
@@ -471,8 +447,8 @@ func TestDeleteObjectsBatch_NothingToDelete(t *testing.T) {
 func TestDeleteObject_QueuesEveryCopy(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
-		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
-		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 20},
+		{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
+		{ObjectKey: "k", BackendName: "b2", StorageKey: "k!b", SizeBytes: 20},
 	}})
 	cleanup, err := stubOps(stub).DeleteObject(context.Background(), "k")
 	if err != nil {
@@ -524,7 +500,7 @@ type copyDeleteFailStub struct {
 
 // DeleteObjectCopies fails with the seeded error, leaving the copy set
 // untouched.
-func (s *copyDeleteFailStub) DeleteObjectCopies(context.Context, string) error { return s.err }
+func (s *copyDeleteFailStub) DeleteObjectCopies(context.Context, ...string) error { return s.err }
 
 // TestRecordObject_QueuesDisplacedCopies verifies an overwrite queues every
 // prior copy's bytes as overwrite-displaced alongside the superseded intents.
