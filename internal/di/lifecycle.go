@@ -60,24 +60,17 @@ type lifecycleWorkerSet struct {
 // startup, so the runtime already knows about the backend state manager by the
 // time the lifecycle manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	ws := lifecycleWorkerSet{
-		cleanup:    r.Resolve[*worker.CleanupWorker](),
-		rebalancer: r.Resolve[*worker.Rebalancer](),
-		replicator: r.Resolve[*worker.Replicator](),
-		overRep:    r.Resolve[*worker.OverReplicationCleaner](),
-		scrubber:   r.Resolve[*worker.Scrubber](),
-		drainer:    r.Resolve[*worker.Drainer](),
+		cleanup:       r.Resolve[*worker.CleanupWorker](),
+		rebalancer:    r.Resolve[*worker.Rebalancer](),
+		replicator:    r.Resolve[*worker.Replicator](),
+		overRep:       r.Resolve[*worker.OverReplicationCleaner](),
+		scrubber:      r.Resolve[*worker.Scrubber](),
+		drainer:       r.Resolve[*worker.Drainer](),
+		pendingReaper: r.Resolve[*worker.PendingReaper](),
 	}
-	if r.err != nil {
-		return ws, r.err
-	}
-	// PendingReaper is always provided, so an error here means its
-	// constructor failed. WireManager has already logged that case via
-	// Optional[*worker.PendingReaper]; here we take the nil value and the
-	// service is not registered.
-	ws.pendingReaper, _ = do.Invoke[*worker.PendingReaper](i)
-	return ws, nil
+	return ws, r.err
 }
 
 // registerWorkerServices registers the worker-mode lifecycle services
@@ -86,9 +79,7 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *infra.BackendRuntime, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
 	sm.Register("multipart_cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup", worker.NewCleanupQueueService(ws.cleanup, locker))
-	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
-		sm.Register("pending_reaper", svc)
-	}
+	sm.Register("pending_reaper", worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick))
 	sm.Register("rebalance", worker.NewRebalancerService(rt, ws.rebalancer, locker))
 	sm.Register("replication", worker.NewReplicatorService(rt, ws.replicator, locker))
 	sm.Register("over_replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
@@ -125,7 +116,7 @@ func registerSharedStateWatchers(sm *lifecycle.Manager, i do.Injector) error {
 
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	live := r.Resolve[*config.Live]()
 	rt := r.Resolve[*infra.BackendRuntime]()
@@ -139,6 +130,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		return nil, r.err
 	}
 
+	ctx := context.Background()
 	sm := lifecycle.NewManager()
 	sm.Register("usage_flush", NewUsageFlushService(&UsageFlushDeps{
 		Flusher: usageSvc,
@@ -149,7 +141,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	}))
 	sm.Register("fleet_snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
 	sm.Register("cb_watchdog", breaker.NewWatchdog(registry))
-	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
+	if fr := Optional[*debug.FlightRecorderService](i).Get(ctx); fr != nil {
 		sm.Register("flight_recorder", fr)
 	}
 	if cfg.Redis != nil {
@@ -179,7 +171,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		}
 		sm.Register("reconcile", worker.NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
 	}
-	if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
+	if notifier := Optional[*notify.Notifier](i).Get(ctx); notifier != nil {
 		sm.Register("notifier", notifier)
 	}
 

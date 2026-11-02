@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// resolver lets a composite provider pull many dependencies from the injector
-// and check for failure once, instead of repeating the
+// Resolver lets a composite provider, or the runtime, pull many dependencies
+// from the injector and check for failure once, instead of repeating the
 // do.Invoke/if-err/return block per dependency. It records the first error and
 // short-circuits, so resolution stops at the first missing dependency.
 // -------------------------------------------------------------------------------
@@ -17,39 +17,33 @@ import (
 	"github.com/samber/do/v2"
 )
 
-// resolver batches do.Invoke calls against one injector, remembering the first
+// Resolver batches do.Invoke calls against one injector, remembering the first
 // error. Once it has failed, later resolve calls return the zero value without
-// invoking, so a provider resolves its whole dependency set then checks err
-// once before building.
-type resolver struct {
+// invoking, so a caller resolves its whole dependency set then checks the
+// error once before building.
+type Resolver struct {
 	inj do.Injector
 	err error
 }
 
-// newResolver starts a batch against inj.
-func newResolver(i do.Injector) *resolver { return &resolver{inj: i} }
+// NewResolver starts a batch against inj.
+func NewResolver(i do.Injector) *Resolver { return &Resolver{inj: i} }
 
-// Resolve pulls T, or returns the zero value if the resolver has already failed.
-// The first failure is retained on the resolver for the caller to check.
-func (r *resolver) Resolve[T any]() T {
-	return r.ResolveNamed[T]("")
-}
-
-// ResolveNamed resolves T like Resolve, but on the first failure wraps the
-// error as "resolve <name>: %w" so a missing provider points at the right
-// dependency. An empty name keeps the error unwrapped.
-func (r *resolver) ResolveNamed[T any](name string) T {
+// Resolve pulls T, or returns the zero value if the resolver has already
+// failed. The first failure is retained, wrapped as "resolve <type>: %w" so a
+// missing provider points at the dependency that failed.
+func (r *Resolver) Resolve[T any]() T {
 	if r.err != nil {
 		var zero T
 		return zero
 	}
 	v, err := do.Invoke[T](r.inj)
-	switch {
-	case err == nil:
-	case name == "":
-		r.err = err
-	default:
-		r.err = fmt.Errorf("resolve %s: %w", name, err)
+	if err != nil {
+		r.err = fmt.Errorf("resolve %s: %w", do.NameOf[T](), err)
 	}
 	return v // already the zero value when err != nil
 }
+
+// Err returns the first resolution failure, or nil when every dependency
+// resolved.
+func (r *Resolver) Err() error { return r.err }

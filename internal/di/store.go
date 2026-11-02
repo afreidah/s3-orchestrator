@@ -67,10 +67,10 @@ type metadataStore interface {
 // CB protection lives inside each driver's DBTX/DB chokepoint, so this
 // provider does no wrapping of its own.
 func provideMetadataStore(i do.Injector) (metadataStore, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
-	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	id := r.Resolve[instanceid.ID]()
 	if r.err != nil {
 		return nil, r.err
 	}

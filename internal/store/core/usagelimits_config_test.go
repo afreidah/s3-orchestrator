@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Usage Limits Wiring Tests
+// Usage Limits Compilation Tests
 //
 // Author: Alex Freidah
 //
@@ -10,30 +10,38 @@
 // those configs must keep meaning exactly what they meant.
 // -------------------------------------------------------------------------------
 
-package di
+package core
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// limitsFor compiles one backend's limits through UsageLimitsFor.
+func limitsFor(t *testing.T, b *config.BackendConfig) UsageLimits {
+	t.Helper()
+	b.Name = "b1"
+	limits, err := UsageLimitsFor([]config.BackendConfig{*b})
+	if err != nil {
+		t.Fatalf("UsageLimitsFor: %v", err)
+	}
+	return limits["b1"]
+}
 
 // TestUsageLimitsFor_BareCapDesugarsToOneWildcardPool pins backward
 // compatibility: an existing api_request_limit becomes a single pool charging
 // every operation, which is what the scalar always meant.
 func TestUsageLimitsFor_BareCapDesugarsToOneWildcardPool(t *testing.T) {
 	t.Parallel()
-	lim, err := UsageLimitsFor(&config.BackendConfig{APIRequestLimit: 5000})
-	if err != nil {
-		t.Fatalf("UsageLimitsFor: %v", err)
-	}
+	lim := limitsFor(t, &config.BackendConfig{APIRequestLimit: 5000})
 
 	pools := lim.Pools()
-	if len(pools) != 1 || pools[0].Name != core.PoolAll || pools[0].Limit != 5000 {
-		t.Fatalf("pools = %+v, want one %q pool of 5000", pools, core.PoolAll)
+	if len(pools) != 1 || pools[0].Name != PoolAll || pools[0].Limit != 5000 {
+		t.Fatalf("pools = %+v, want one %q pool of 5000", pools, PoolAll)
 	}
 	for _, op := range s3op.All() {
 		if len(lim.PoolsFor(op)) != 1 {
@@ -46,7 +54,7 @@ func TestUsageLimitsFor_BareCapDesugarsToOneWildcardPool(t *testing.T) {
 // scalar, and the declared pools reach the compiled limits in order.
 func TestUsageLimitsFor_CarriesBytesAndPools(t *testing.T) {
 	t.Parallel()
-	lim, err := UsageLimitsFor(&config.BackendConfig{
+	lim := limitsFor(t, &config.BackendConfig{
 		EgressByteLimit:  1 << 30,
 		IngressByteLimit: 2 << 30,
 		Unmetered:        []string{string(s3op.DeleteObject)},
@@ -55,9 +63,6 @@ func TestUsageLimitsFor_CarriesBytesAndPools(t *testing.T) {
 			{Name: "class_b", Operations: []string{string(s3op.GetObject)}, Limit: 50000},
 		},
 	})
-	if err != nil {
-		t.Fatalf("UsageLimitsFor: %v", err)
-	}
 
 	if lim.EgressByteLimit != 1<<30 || lim.IngressByteLimit != 2<<30 {
 		t.Errorf("byte limits = %d/%d, want 1GiB/2GiB", lim.EgressByteLimit, lim.IngressByteLimit)
@@ -78,32 +83,26 @@ func TestUsageLimitsFor_CarriesBytesAndPools(t *testing.T) {
 // calendar month in UTC.
 func TestUsageLimitsFor_CarriesThePeriod(t *testing.T) {
 	t.Parallel()
-	lim, err := UsageLimitsFor(&config.BackendConfig{UsageResetDay: 14, UsageResetTimezone: "America/Los_Angeles"})
-	if err != nil {
-		t.Fatalf("UsageLimitsFor: %v", err)
-	}
+	lim := limitsFor(t, &config.BackendConfig{UsageResetDay: 14, UsageResetTimezone: "America/Los_Angeles"})
 	if lim.Period.ResetDay != 14 || lim.Period.Location.String() != "America/Los_Angeles" {
 		t.Errorf("period = %+v, want day 14 in America/Los_Angeles", lim.Period)
 	}
 
-	lim, err = UsageLimitsFor(&config.BackendConfig{})
-	if err != nil {
-		t.Fatalf("UsageLimitsFor: %v", err)
-	}
+	lim = limitsFor(t, &config.BackendConfig{})
 	if lim.Period.ResetDay != 0 || lim.Period.Location != time.UTC {
 		t.Errorf("default period = %+v, want day 1 (unset) in UTC", lim.Period)
 	}
-}
-
-// TestUsageLimitsFor_NoBudgetsIsUnlimited covers the default deployment, which
-// configures no metering at all and must never be refused.
-func TestUsageLimitsFor_NoBudgetsIsUnlimited(t *testing.T) {
-	t.Parallel()
-	lim, err := UsageLimitsFor(&config.BackendConfig{})
-	if err != nil {
-		t.Fatalf("UsageLimitsFor: %v", err)
-	}
 	if !lim.Unlimited() {
 		t.Error("a backend with no configured budgets must be unlimited")
+	}
+}
+
+// TestUsageLimitsFor_ErrorNamesTheBackend verifies a backend whose limits do
+// not compile is named once in the error.
+func TestUsageLimitsFor_ErrorNamesTheBackend(t *testing.T) {
+	t.Parallel()
+	_, err := UsageLimitsFor([]config.BackendConfig{{Name: "b9", UsageResetTimezone: "Nowhere/Here"}})
+	if err == nil || strings.Count(err.Error(), `"b9"`) != 1 {
+		t.Errorf("err = %v, want one naming b9", err)
 	}
 }

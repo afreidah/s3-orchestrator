@@ -13,17 +13,11 @@ package s3api
 import (
 	"fmt"
 	"testing"
-
-	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // newBenchRateLimiter creates a rate limiter with high limits for benchmarking.
 func newBenchRateLimiter() *RateLimiter {
-	return NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 10000,
-		Burst:          20000,
-	})
+	return newTestLimiter(10000, 20000)
 }
 
 // BenchmarkRateLimiter_Allow_SingleIP measures the cost of Allow for a

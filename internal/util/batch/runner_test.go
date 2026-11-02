@@ -156,6 +156,18 @@ func TestRunner_Run_LogsCycle(t *testing.T) {
 	}
 }
 
+// TestRunner_Run_IdleCycleLogsNothing verifies a cycle with nothing to do
+// writes no line, so a worker polling an empty queue stays quiet.
+func TestRunner_Run_IdleCycleLogsNothing(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewTextHandler(&buf, nil)), Concurrency: 1}
+	runner.Run(context.Background(), nil, func(context.Context, int) ItemResult { return ItemResult{} })
+	if buf.Len() != 0 {
+		t.Errorf("log %q, want nothing for an idle cycle", buf.String())
+	}
+}
+
 // TestRunner_Run_ReportsItemUsage verifies the summary and the cycle line carry
 // what the items were charged, and nothing charged outside the run.
 func TestRunner_Run_ReportsItemUsage(t *testing.T) {

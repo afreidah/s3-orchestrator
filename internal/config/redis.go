@@ -34,21 +34,12 @@ type RedisConfig struct {
 
 // setDefaultsAndValidate sets defaults and validate.
 func (r *RedisConfig) setDefaultsAndValidate() []error {
-	var errs []error
-
-	if r.Address == "" {
-		errs = append(errs, ErrRedisAddressRequired)
-	}
 	r.KeyPrefix = cmp.Or(r.KeyPrefix, "s3orch")
 	r.FailureThreshold = cmp.Or(r.FailureThreshold, 3)
 	r.OpenTimeout = cmp.Or(r.OpenTimeout, 15*time.Second)
-
-	if r.FailureThreshold < 0 {
-		errs = append(errs, ErrRedisFailureThresholdNotPos)
-	}
-	if r.OpenTimeout < 0 {
-		errs = append(errs, ErrRedisOpenTimeoutNotPos)
-	}
-
-	return errs
+	return failed(
+		required("redis.address", r.Address != ""),
+		positive("redis.failure_threshold", r.FailureThreshold),
+		positive("redis.open_timeout", r.OpenTimeout),
+	)
 }

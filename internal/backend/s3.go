@@ -22,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -174,22 +173,12 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 	}
 	client := s3.New(opts)
 
-	// Unsigned payload avoids buffering objects for SigV4 hashing. Unless set
-	// explicitly, it is disabled over plain HTTP because AWS S3 rejects the
-	// UNSIGNED-PAYLOAD sentinel without TLS. An explicit true is always kept.
-	unsignedPayload := true
-	if cfg.UnsignedPayload != nil {
-		unsignedPayload = *cfg.UnsignedPayload
-	} else if !strings.HasPrefix(cfg.Endpoint, "https") {
-		unsignedPayload = false
-	}
-
 	return &S3Backend{
 		client:          client,
 		bucket:          cfg.Bucket,
 		name:            cfg.Name,
 		endpoint:        cfg.Endpoint,
-		unsignedPayload: unsignedPayload,
+		unsignedPayload: cfg.UnsignedPayloadEnabled(),
 	}, nil
 }
 

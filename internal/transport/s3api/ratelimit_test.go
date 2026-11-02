@@ -25,14 +25,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// newTestLimiter builds a limiter at rps and burst with the cleanup cadence the
+// config loader fills by default.
+func newTestLimiter(rps float64, burst int) *RateLimiter {
+	return NewRateLimiter(config.RateLimitConfig{
+		Enabled: true, RequestsPerSec: rps, Burst: burst, CleanupInterval: time.Minute, CleanupMaxAge: 5 * time.Minute,
+	})
+}
+
 // TestRateLimiter_AllowAndBlock verifies the rate limiter allow and block path by exercising rl.Close, rl.Allow.
 func TestRateLimiter_AllowAndBlock(t *testing.T) {
 	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 1,
-		Burst:          2,
-	})
+	rl := newTestLimiter(1, 2)
 	defer rl.Close()
 
 	// First 2 requests (burst) should be allowed
@@ -58,11 +62,7 @@ func TestRateLimiter_AllowAndBlock(t *testing.T) {
 // Asserts that first request: got , want 200.
 func TestRateLimiter_Middleware429(t *testing.T) {
 	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 1,
-		Burst:          1,
-	})
+	rl := newTestLimiter(1, 1)
 	defer rl.Close()
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,11 +94,7 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 // Asserts that status = , want 429.
 func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 1,
-		Burst:          1,
-	})
+	rl := newTestLimiter(1, 1)
 	defer rl.Close()
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +131,7 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 // route, so an admin client reads JSON rather than an S3 XML body. Not
 // parallel: it captures the global logger.
 func TestRateLimiter_RefusesInTheSurfacesFormat(t *testing.T) {
-	rl := NewRateLimiter(config.RateLimitConfig{Enabled: true, RequestsPerSec: 1, Burst: 1})
+	rl := newTestLimiter(1, 1)
 	defer rl.Close()
 	writeJSON := func(w http.ResponseWriter, status int, _, message string) {
 		httputil.WriteJSONError(w, status, message)
@@ -170,11 +166,7 @@ func TestRateLimiter_RefusesInTheSurfacesFormat(t *testing.T) {
 // Asserts that request should be allowed with new burst=1000.
 func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 1,
-		Burst:          1,
-	})
+	rl := newTestLimiter(1, 1)
 	defer rl.Close()
 
 	// Update to a much higher rate
@@ -192,11 +184,7 @@ func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 // Asserts that existing visitor request should be allowed with new burst=1000.
 func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 	t.Parallel()
-	rl := NewRateLimiter(config.RateLimitConfig{
-		Enabled:        true,
-		RequestsPerSec: 1,
-		Burst:          2,
-	})
+	rl := newTestLimiter(1, 2)
 	defer rl.Close()
 
 	// Exhaust burst for existing visitor

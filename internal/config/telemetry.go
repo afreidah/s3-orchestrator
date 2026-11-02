@@ -70,19 +70,16 @@ type TracingConfig struct {
 
 // setDefaultsAndValidate sets defaults and validate.
 func (t *TelemetryConfig) setDefaultsAndValidate() []error {
-	var errs []error
-
 	t.Metrics.Path = cmp.Or(t.Metrics.Path, "/metrics")
 	t.Metrics.FleetInterval = cmp.Or(t.Metrics.FleetInterval, DefaultFleetInterval)
-	if t.Metrics.FleetInterval < MinFleetInterval {
-		errs = append(errs, ErrFleetIntervalTooShort)
+	t.Metrics.RequireListener = new(t.Metrics.ListenerRequired())
+	t.Tracing.SampleRate = cmp.Or(t.Tracing.SampleRate, 1.0)
+	errs := failed(atLeast("telemetry.metrics.fleet_interval", t.Metrics.FleetInterval, MinFleetInterval))
+	if t.Tracing.Enabled {
+		errs = append(errs, failed(
+			required("telemetry.tracing.endpoint", t.Tracing.Endpoint != ""),
+			between("telemetry.tracing.sample_rate", t.Tracing.SampleRate, 0, 1),
+		)...)
 	}
-	if t.Tracing.SampleRate == 0 && t.Tracing.Enabled {
-		t.Tracing.SampleRate = 1.0
-	}
-	if t.Tracing.Enabled && t.Tracing.Endpoint == "" {
-		errs = append(errs, ErrTracingEndpointRequired)
-	}
-
 	return errs
 }

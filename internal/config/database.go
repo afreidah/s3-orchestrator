@@ -92,23 +92,20 @@ func (d *DatabaseConfig) validateSQLite() []error {
 // missing-required error into the returned slice so operators can fix
 // them all in one config-edit cycle.
 func (d *DatabaseConfig) validatePostgres() []error {
-	var errs []error
-
-	if d.Host == "" {
-		errs = append(errs, fmt.Errorf("database.host is required"))
-	}
-	if d.Database == "" {
-		errs = append(errs, fmt.Errorf("database.database is required"))
-	}
-	if d.User == "" {
-		errs = append(errs, fmt.Errorf("database.user is required"))
-	}
 	d.Port = cmp.Or(d.Port, 5432)
 	d.SSLMode = cmp.Or(d.SSLMode, "require")
 	d.MaxConns = cmp.Or(d.MaxConns, 50)
 	d.MinConns = cmp.Or(d.MinConns, 10)
 	d.MaxConnLifetime = cmp.Or(d.MaxConnLifetime, 5*time.Minute)
-
+	errs := failed(
+		required("database.host", d.Host != ""),
+		required("database.database", d.Database != ""),
+		required("database.user", d.User != ""),
+		between("database.port", d.Port, 1, 65535),
+		positive("database.max_conns", d.MaxConns),
+		positive("database.min_conns", d.MinConns),
+		positive("database.max_conn_lifetime", d.MaxConnLifetime),
+	)
 	if d.MinConns > d.MaxConns {
 		errs = append(errs, fmt.Errorf("database.min_conns (%d) cannot exceed max_conns (%d)", d.MinConns, d.MaxConns))
 	}

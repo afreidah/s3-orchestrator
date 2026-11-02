@@ -614,31 +614,6 @@ func assertServerTimeoutResult(t *testing.T, err error, wantErr string) {
 	}
 }
 
-// TestNonReloadableFieldsChanged_ServerTimeouts verifies the non reloadable fields changed server timeouts contract.
-// Asserts that expected server timeouts in changed list, got.
-func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.ReadHeaderTimeout = 20 * time.Second
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) == 0 {
-		t.Fatal("expected non-reloadable change for server timeouts")
-	}
-	found := false
-	for _, c := range changed {
-		if c == "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected server timeouts in changed list, got %v", changed)
-	}
-}
-
 // TestShutdownDelayDefault verifies the shutdown delay default contract.
 // Asserts that valid config should pass:.
 func TestShutdownDelayDefault(t *testing.T) {
@@ -667,53 +642,6 @@ func TestShutdownDelayCustomValue(t *testing.T) {
 
 	if cfg.Server.ShutdownDelay != 5*time.Second {
 		t.Errorf("shutdown_delay = %v, want 5s", cfg.Server.ShutdownDelay)
-	}
-}
-
-// TestNonReloadableFieldsChanged_ShutdownDelay verifies the non reloadable fields changed shutdown delay contract.
-// Asserts that expected server.shutdown_delay in changed list, got.
-func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.ShutdownDelay = 5 * time.Second
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) == 0 {
-		t.Fatal("expected non-reloadable change for shutdown_delay")
-	}
-	found := false
-	for _, c := range changed {
-		if c == "server.shutdown_delay" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected server.shutdown_delay in changed list, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_CircuitBreaker verifies the non reloadable fields changed circuit breaker contract.
-// Asserts that expected circuit_breaker in changed fields, got.
-func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.CircuitBreaker.ParallelBroadcast = true
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "circuit_breaker" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected circuit_breaker in changed fields, got %v", changed)
 	}
 }
 
@@ -1007,100 +935,97 @@ func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
 // NON-RELOADABLE FIELDS CHANGED TESTS
 // -------------------------------------------------------------------------
 
-// TestNonReloadableFieldsChanged_IdenticalConfigs verifies the non reloadable fields changed identical configs contract.
-// Asserts that identical configs should return empty slice, got.
-func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
+// TestNonReloadableFieldsChanged verifies that one edit to a validated config
+// reports exactly the paths a reload cannot apply: every startup-only field it
+// touched, defaults derived from them included, and none of the live ones.
+func TestNonReloadableFieldsChanged(t *testing.T) {
 	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("identical configs should return empty slice, got %v", changed)
+	redis := func(c *Config) { c.Redis = &RedisConfig{Address: "localhost:6379"} }
+	tests := []struct {
+		name string
+		base func(*Config) // applied to both configs
+		edit func(*Config) // applied to the reloaded one
+		want []string
+	}{
+		{"identical", nil, func(*Config) {}, nil},
+		{"listen addr", nil, func(c *Config) { c.Server.ListenAddr = ":8080" }, []string{"server.listen_addr"}},
+		{"request pool and the in-flight ceiling it sets", nil, func(c *Config) { c.Server.MaxConcurrentRequests = 100 },
+			[]string{"server.max_concurrent_requests", "write_path.parallel_copies.max_in_flight"}},
+		{"read pool", nil, func(c *Config) { c.Server.MaxConcurrentRequests, c.Server.MaxConcurrentReads = 1000, 50 },
+			[]string{"server.max_concurrent_reads"}},
+		{"write pool and the in-flight ceiling it sets", nil, func(c *Config) { c.Server.MaxConcurrentRequests, c.Server.MaxConcurrentWrites = 1000, 25 },
+			[]string{"server.max_concurrent_writes", "write_path.parallel_copies.max_in_flight"}},
+		{"load shed threshold", nil, func(c *Config) { c.Server.LoadShedThreshold = 0.8 }, []string{"server.load_shed_threshold"}},
+		{"header bytes", nil, func(c *Config) { c.Server.MaxHeaderBytes = 8192 }, []string{"server.max_header_bytes"}},
+		{"header value count", nil, func(c *Config) { c.Server.MaxHeaderValueCount = 64 }, []string{"server.max_header_value_count"}},
+		{"admission wait", nil, func(c *Config) { c.Server.AdmissionWait = 100 * time.Millisecond }, []string{"server.admission_wait"}},
+		{"read header timeout", nil, func(c *Config) { c.Server.ReadHeaderTimeout = 20 * time.Second }, []string{"server.read_header_timeout"}},
+		{"backend timeout", nil, func(c *Config) { c.Server.BackendTimeout = time.Minute }, []string{"server.backend_timeout"}},
+		{"shutdown delay is read live", nil, func(c *Config) { c.Server.ShutdownDelay = 5 * time.Second }, nil},
+		{"log level is reloaded", nil, func(c *Config) { c.Server.LogLevel = "debug" }, nil},
+		{"tls files", nil, func(c *Config) { c.Server.TLS.CertFile, c.Server.TLS.KeyFile = "/etc/cert.pem", "/etc/key.pem" },
+			[]string{"server.tls.cert_file", "server.tls.key_file", "server.tls.min_version"}},
+		{"database", nil, func(c *Config) { c.Database.Host = "newhost" }, []string{"database.host"}},
+		{"backend count", nil, func(c *Config) { c.Backends = append(c.Backends, c.Backends[0]); c.Backends[1].Name = "b2" },
+			[]string{"backends"}},
+		{"https endpoint, which flips the unsigned payload default", nil,
+			func(c *Config) { c.Backends[0].Endpoint = "https://new-endpoint.example.com" },
+			[]string{"backends[0].endpoint", "backends[0].unsigned_payload"}},
+		{"backend secret", nil, func(c *Config) { c.Backends[0].SecretAccessKey = "new-secret" }, []string{"backends[0].secret_access_key"}},
+		{"backend credential source", nil, func(c *Config) {
+			c.Backends[0].CredentialSource, c.Backends[0].AccessKeyID, c.Backends[0].SecretAccessKey = CredentialSourceDefaultChain, "", ""
+		}, []string{"backends[0].access_key_id", "backends[0].secret_access_key", "backends[0].credential_source"}},
+		{"backend max object size", nil, func(c *Config) { c.Backends[0].MaxObjectSize = 1 << 20 }, []string{"backends[0].max_object_size"}},
+		{"unsigned payload set true over http", nil, func(c *Config) { c.Backends[0].UnsignedPayload = new(true) },
+			[]string{"backends[0].unsigned_payload"}},
+		{"unsigned payload set to its http default", nil, func(c *Config) { c.Backends[0].UnsignedPayload = new(false) }, nil},
+		{"disable checksum", nil, func(c *Config) { c.Backends[0].DisableChecksum = true }, []string{"backends[0].disable_checksum"}},
+		{"strip sdk headers", nil, func(c *Config) { c.Backends[0].StripSDKHeaders = true }, []string{"backends[0].strip_sdk_headers"}},
+		{"reloadable fields only", func(c *Config) { c.RateLimit.Enabled = true }, func(c *Config) {
+			b := &c.Backends[0]
+			b.QuotaBytes, b.APIRequestLimit, b.EgressByteLimit, b.IngressByteLimit = 9999, 5000, 1000, 2000
+			c.RateLimit.RequestsPerSec, c.RateLimit.Burst = 50, 100
+			c.Rebalance = RebalanceConfig{Enabled: true, Strategy: RoutingSpread, BatchSize: 50, Threshold: 0.2}
+			c.Replication.BatchSize = 25
+			c.Buckets = []BucketConfig{{Name: "new-bucket", Credentials: []CredentialConfig{{AccessKeyID: "NEW", SecretAccessKey: "newsecret"}}}}
+		}, nil},
+		{"rate limiter switched on", nil, func(c *Config) { c.RateLimit.Enabled = true }, []string{"rate_limit.enabled"}},
+		{"trusted proxies", nil, func(c *Config) { c.RateLimit.TrustedProxies = []string{"10.0.0.0/8"} }, []string{"rate_limit.trusted_proxies"}},
+		{"rebalance interval", nil, func(c *Config) { c.Rebalance.Interval = time.Hour }, []string{"rebalance.interval"}},
+		{"replication worker interval", nil, func(c *Config) { c.Replication.WorkerInterval = time.Hour }, []string{"replication.worker_interval"}},
+		{"cleanup queue", nil, func(c *Config) { c.CleanupQueue.Concurrency = 3 }, []string{"cleanup_queue.concurrency"}},
+		{"circuit breaker", nil, func(c *Config) { c.CircuitBreaker.ParallelBroadcast = true }, []string{"circuit_breaker.parallel_broadcast"}},
+		{"backend circuit breaker", nil, func(c *Config) { c.BackendCircuitBreaker.Enabled = true }, []string{"backend_circuit_breaker.enabled"}},
+		{"metrics listener requirement written in both", func(c *Config) { c.Telemetry.Metrics.RequireListener = new(true) },
+			func(*Config) {}, nil},
+		{"previous keys", nil, func(c *Config) { c.Encryption.PreviousKeys = []string{"b2xk"} }, []string{"encryption.previous_keys"}},
+		{"previous key files", nil, func(c *Config) { c.Encryption.PreviousKeyFiles = []string{"/etc/old.key"} },
+			[]string{"encryption.previous_key_files"}},
+		{"compression", nil, func(c *Config) { c.Compression.Level = "best" }, []string{"compression.level"}},
+		{"redis added", nil, redis, []string{"redis"}},
+		{"redis removed", redis, func(c *Config) { c.Redis = nil }, []string{"redis"}},
+		{"redis address", redis, func(c *Config) { c.Redis.Address = "redis:6379" }, []string{"redis.address"}},
+		{"redis unchanged", redis, func(*Config) {}, nil},
+		{"routing strategy", nil, func(c *Config) { c.RoutingStrategy = RoutingSpread }, []string{"routing_strategy"}},
 	}
-}
-
-// TestNonReloadableFieldsChanged_ListenAddr verifies the non reloadable fields changed listen addr contract.
-// Asserts that expected [server.listen_addr], got.
-func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.ListenAddr = ":8080"
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.listen_addr" {
-		t.Errorf("expected [server.listen_addr], got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_MaxConcurrentRequests verifies the non reloadable fields changed max concurrent requests contract.
-// Asserts that expected [server.max_concurrent_requests], got.
-func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.MaxConcurrentRequests = 100
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.max_concurrent_requests" {
-		t.Errorf("expected [server.max_concurrent_requests], got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_MaxConcurrentReads verifies the non reloadable fields changed max concurrent reads contract.
-// Asserts that expected [server.max_concurrent_reads], got.
-func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.MaxConcurrentRequests = a.Server.MaxConcurrentRequests // preserve defaulted global
-	b.Server.MaxConcurrentReads = 50
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.max_concurrent_reads" {
-		t.Errorf("expected [server.max_concurrent_reads], got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_MaxConcurrentWrites verifies the non reloadable fields changed max concurrent writes contract.
-// Asserts that expected [server.max_concurrent_writes], got.
-func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.MaxConcurrentRequests = a.Server.MaxConcurrentRequests // preserve defaulted global
-	b.Server.MaxConcurrentWrites = 25
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.max_concurrent_writes" {
-		t.Errorf("expected [server.max_concurrent_writes], got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_LoadShedThreshold verifies the non reloadable fields changed load shed threshold contract.
-// Asserts that expected [server.load_shed_threshold], got.
-func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.LoadShedThreshold = 0.8
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.load_shed_threshold" {
-		t.Errorf("expected [server.load_shed_threshold], got %v", changed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			old, next := validBaseConfig(), validBaseConfig()
+			if tt.base != nil {
+				tt.base(&old)
+				tt.base(&next)
+			}
+			tt.edit(&next)
+			for _, c := range []*Config{&old, &next} {
+				if err := c.SetDefaultsAndValidate(); err != nil {
+					t.Fatalf("SetDefaultsAndValidate: %v", err)
+				}
+			}
+			if got := NonReloadableFieldsChanged(&old, &next); !slices.Equal(got, tt.want) {
+				t.Errorf("changed = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1118,335 +1043,6 @@ func TestHeaderLimits_DefaultToStdlib(t *testing.T) {
 	}
 	if got := cfg.Server.MaxHeaderValueCount; got != http.DefaultMaxHeaderValueCount {
 		t.Errorf("MaxHeaderValueCount = %d, want %d", got, http.DefaultMaxHeaderValueCount)
-	}
-}
-
-// TestNonReloadableFieldsChanged_HeaderLimits covers both knobs: they land
-// on http.Server at construction, so SIGHUP has to report them as needing
-// a restart rather than silently keeping the old caps.
-func TestNonReloadableFieldsChanged_HeaderLimits(t *testing.T) {
-	t.Parallel()
-	for _, tt := range []struct {
-		field  string
-		mutate func(*Config)
-	}{
-		{"server.max_header_bytes", func(c *Config) { c.Server.MaxHeaderBytes = 8192 }},
-		{"server.max_header_value_count", func(c *Config) { c.Server.MaxHeaderValueCount = 64 }},
-	} {
-		t.Run(tt.field, func(t *testing.T) {
-			t.Parallel()
-			a := validBaseConfig()
-			b := validBaseConfig()
-			_ = a.SetDefaultsAndValidate()
-			tt.mutate(&b)
-			_ = b.SetDefaultsAndValidate()
-
-			changed := NonReloadableFieldsChanged(&a, &b)
-			if len(changed) != 1 || changed[0] != tt.field {
-				t.Errorf("expected [%s], got %v", tt.field, changed)
-			}
-		})
-	}
-}
-
-// TestNonReloadableFieldsChanged_AdmissionWait verifies the non reloadable fields changed admission wait contract.
-// Asserts that expected [server.admission_wait], got.
-func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Server.AdmissionWait = 100 * time.Millisecond
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 1 || changed[0] != "server.admission_wait" {
-		t.Errorf("expected [server.admission_wait], got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_Database verifies the non reloadable fields changed database contract.
-// Asserts that expected 'database' in changed list, got.
-func TestNonReloadableFieldsChanged_Database(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Database.Host = "newhost"
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "database" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected 'database' in changed list, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_BackendStructuralFields verifies that a change
-// to a backend field fixed when the backend is built is reported as needing a
-// restart rather than silently ignored by the reload.
-func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		change func(*BackendConfig)
-	}{
-		{"endpoint", func(b *BackendConfig) { b.Endpoint = "https://new-endpoint.example.com" }},
-		{"credentials", func(b *BackendConfig) { b.SecretAccessKey = "new-secret" }},
-		{"max object size", func(b *BackendConfig) { b.MaxObjectSize = 1 << 20 }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			a := validBaseConfig()
-			b := validBaseConfig()
-			_ = a.SetDefaultsAndValidate()
-			tc.change(&b.Backends[0])
-			_ = b.SetDefaultsAndValidate()
-
-			changed := NonReloadableFieldsChanged(&a, &b)
-			if !slices.ContainsFunc(changed, func(c string) bool { return strings.Contains(c, "structural fields") }) {
-				t.Errorf("expected backend structural fields change, got %v", changed)
-			}
-		})
-	}
-}
-
-// TestNonReloadableFieldsChanged_BackendCountChanged verifies the non reloadable fields changed backend count changed contract.
-// Asserts that expected 'backends (count changed)', got.
-func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfigTwoBackends()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "count changed") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected 'backends (count changed)', got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_ReloadableOnlyChanges verifies the non reloadable fields changed reloadable only changes contract.
-// Asserts that reloadable-only changes should return empty slice, got.
-func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	// These are reloadable fields  -  should NOT appear in the result
-	b.Backends[0].QuotaBytes = 9999
-	b.Backends[0].APIRequestLimit = 5000
-	b.Backends[0].EgressByteLimit = 1000
-	b.Backends[0].IngressByteLimit = 2000
-	b.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSec: 50, Burst: 100}
-	b.Rebalance = RebalanceConfig{Enabled: true, Strategy: "spread", Interval: time.Hour, BatchSize: 50, Threshold: 0.2}
-	b.Replication = ReplicationConfig{Factor: 1, WorkerInterval: time.Minute, BatchSize: 25}
-	b.Buckets = []BucketConfig{
-		{Name: "new-bucket", Credentials: []CredentialConfig{{AccessKeyID: "NEW", SecretAccessKey: "newsecret"}}},
-	}
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("reloadable-only changes should return empty slice, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_UnsignedPayloadChanged verifies the non reloadable fields changed unsigned payload changed contract.
-// Asserts that expected backend structural fields change for unsigned_payload, got.
-func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	f := false
-	b.Backends[0].UnsignedPayload = &f
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "structural fields") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend structural fields change for unsigned_payload, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_UnsignedPayloadBothNil verifies the non reloadable fields changed unsigned payload both nil contract.
-// Asserts that both nil unsigned_payload should be identical, got.
-func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	// Both nil  -  should be treated as identical (both default to true)
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("both nil unsigned_payload should be identical, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue verifies the non reloadable fields changed unsigned payload explicit true contract.
-// Asserts that explicit true should match nil default, got.
-func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	// Explicitly true should match nil (default true)
-	tr := true
-	b.Backends[0].UnsignedPayload = &tr
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("explicit true should match nil default, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_DisableChecksumChanged verifies the non reloadable fields changed disable checksum changed contract.
-// Asserts that expected backend structural fields change for disable_checksum, got.
-func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Backends[0].DisableChecksum = true
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "structural fields") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend structural fields change for disable_checksum, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_DisableChecksumBothTrue verifies the non reloadable fields changed disable checksum both true contract.
-// Asserts that both disable_checksum=true should be identical, got.
-func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	a.Backends[0].DisableChecksum = true
-	b.Backends[0].DisableChecksum = true
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("both disable_checksum=true should be identical, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_DisableChecksumBothFalse verifies the non reloadable fields changed disable checksum both false contract.
-// Asserts that both disable_checksum=false (default) should be identical, got.
-func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("both disable_checksum=false (default) should be identical, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_StripSDKHeadersChanged verifies the non reloadable fields changed strip sdkheaders changed contract.
-// Asserts that expected backend structural fields change for strip_sdk_headers, got.
-func TestNonReloadableFieldsChanged_StripSDKHeadersChanged(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Backends[0].StripSDKHeaders = true
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "structural fields") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend structural fields change for strip_sdk_headers, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue verifies the non reloadable fields changed strip sdkheaders both true contract.
-// Asserts that both strip_sdk_headers=true should be identical, got.
-func TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	a.Backends[0].StripSDKHeaders = true
-	b.Backends[0].StripSDKHeaders = true
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("both strip_sdk_headers=true should be identical, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse verifies the non reloadable fields changed strip sdkheaders both false contract.
-// Asserts that both strip_sdk_headers=false (default) should be identical, got.
-func TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) != 0 {
-		t.Errorf("both strip_sdk_headers=false (default) should be identical, got %v", changed)
-	}
-}
-
-// TestBoolDefault verifies the bool default contract.
-// Asserts that boolDefault(nil, true) = , want true.
-func TestBoolDefault(t *testing.T) {
-	t.Parallel()
-	tr := true
-	f := false
-
-	if got := boolDefault(nil, true); got != true {
-		t.Errorf("boolDefault(nil, true) = %v, want true", got)
-	}
-	if got := boolDefault(nil, false); got != false {
-		t.Errorf("boolDefault(nil, false) = %v, want false", got)
-	}
-	if got := boolDefault(&tr, false); got != true {
-		t.Errorf("boolDefault(&true, false) = %v, want true", got)
-	}
-	if got := boolDefault(&f, true); got != false {
-		t.Errorf("boolDefault(&false, true) = %v, want false", got)
 	}
 }
 
@@ -1523,49 +1119,6 @@ func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
 	cfg := validBaseConfig()
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("no TLS config should pass: %v", err)
-	}
-}
-
-// TestNonReloadableFieldsChanged_TLS verifies the non reloadable fields changed tls contract.
-// Asserts that expected server.tls in changed fields, got.
-func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-
-	b.Server.TLS.CertFile = "/etc/cert.pem"
-	b.Server.TLS.KeyFile = "/etc/key.pem"
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "server.tls" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected server.tls in changed fields, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_MultipleChanges verifies the non reloadable fields changed multiple changes contract.
-// Asserts that expected at least 3 changed fields, got.
-func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-
-	b.Server.ListenAddr = ":8080"
-	b.Database.Host = "newhost"
-	b.RoutingStrategy = RoutingSpread
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	if len(changed) < 3 {
-		t.Errorf("expected at least 3 changed fields, got %v", changed)
 	}
 }
 
@@ -1988,8 +1541,8 @@ func TestBackendConfig_UsageResetErrors(t *testing.T) {
 	cfg.Backends[0].UsageResetDay = 31
 	cfg.Backends[0].UsageResetTimezone = "Nowhere/Here"
 	err := cfg.SetDefaultsAndValidate()
-	if !errors.Is(err, ErrUsageResetDayRange) || !errors.Is(err, ErrUsageResetTimezone) {
-		t.Fatalf("err = %v, want both %v and %v", err, ErrUsageResetDayRange, ErrUsageResetTimezone)
+	if !errors.Is(err, ErrOutOfRange) || !errors.Is(err, ErrUsageResetTimezone) {
+		t.Fatalf("err = %v, want both %v and %v", err, ErrOutOfRange, ErrUsageResetTimezone)
 	}
 	if !strings.Contains(err.Error(), "31") || !strings.Contains(err.Error(), "Nowhere/Here") {
 		t.Errorf("err = %v, want it to name the bad values", err)
@@ -2032,8 +1585,8 @@ func TestMetricsConfig_FleetInterval(t *testing.T) {
 
 	cfg = validBaseConfig()
 	cfg.Telemetry.Metrics.FleetInterval = time.Second
-	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrFleetIntervalTooShort) {
-		t.Errorf("err = %v, want %v", err, ErrFleetIntervalTooShort)
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrOutOfRange) {
+		t.Errorf("err = %v, want %v", err, ErrOutOfRange)
 	}
 }
 
@@ -2576,17 +2129,15 @@ func TestBackendCircuitBreakerDefaults(t *testing.T) {
 	}
 }
 
-// TestBackendCircuitBreakerDefaults_Disabled verifies the backend circuit breaker defaults disabled contract.
-// Asserts that unexpected error:.
-func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
+// TestBackendCircuitBreaker_RefusesNegatives verifies a negative threshold or
+// timeout is refused whether or not the breakers are enabled, rather than
+// passed through to a breaker that would never trip.
+func TestBackendCircuitBreaker_RefusesNegatives(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	// Disabled (default)  -  defaults should NOT be applied
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.BackendCircuitBreaker.FailureThreshold != 0 {
-		t.Errorf("FailureThreshold should stay 0 when disabled, got %d", cfg.BackendCircuitBreaker.FailureThreshold)
+	cfg.BackendCircuitBreaker = BackendCircuitBreakerConfig{FailureThreshold: -1, OpenTimeout: -time.Second}
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNotPositive) {
+		t.Errorf("err = %v, want ErrNotPositive", err)
 	}
 }
 
@@ -2609,28 +2160,6 @@ func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
 	}
 	if cfg.BackendCircuitBreaker.OpenTimeout != 30*time.Second {
 		t.Errorf("OpenTimeout = %v, want 30s (custom)", cfg.BackendCircuitBreaker.OpenTimeout)
-	}
-}
-
-// TestNonReloadableFieldsChanged_BackendCircuitBreaker verifies the non reloadable fields changed backend circuit breaker contract.
-// Asserts that expected backend_circuit_breaker in changed list, got.
-func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.BackendCircuitBreaker = BackendCircuitBreakerConfig{Enabled: true, FailureThreshold: 5, OpenTimeout: 5 * time.Minute}
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "backend_circuit_breaker" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend_circuit_breaker in changed list, got %v", changed)
 	}
 }
 
@@ -2699,109 +2228,6 @@ func TestRedisConfig_CustomValues(t *testing.T) {
 	}
 }
 
-// TestNonReloadableFieldsChanged_RedisAdded verifies the non reloadable fields changed redis added contract.
-// Asserts that expected redis in changed list, got.
-func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Redis = &RedisConfig{Address: "localhost:6379"}
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "redis" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected redis in changed list, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_RedisRemoved verifies the non reloadable fields changed redis removed contract.
-// Asserts that expected redis in changed list, got.
-func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	a.Redis = &RedisConfig{Address: "localhost:6379"}
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "redis" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected redis in changed list, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_RedisModified verifies the non reloadable fields changed redis modified contract.
-// Asserts that expected redis in changed list, got.
-func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	a.Redis = &RedisConfig{Address: "localhost:6379"}
-	b.Redis = &RedisConfig{Address: "redis:6379"}
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if c == "redis" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected redis in changed list, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_RedisBothNil verifies the non reloadable fields changed redis both nil contract.
-// Asserts that both nil redis should not appear in changed list.
-func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	for _, c := range changed {
-		if c == "redis" {
-			t.Errorf("both nil redis should not appear in changed list")
-		}
-	}
-}
-
-// TestNonReloadableFieldsChanged_RedisIdentical verifies the non reloadable fields changed redis identical contract.
-// Asserts that identical redis configs should not appear in changed list.
-func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	a.Redis = &RedisConfig{Address: "localhost:6379"}
-	b.Redis = &RedisConfig{Address: "localhost:6379"}
-	_ = a.SetDefaultsAndValidate()
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	for _, c := range changed {
-		if c == "redis" {
-			t.Errorf("identical redis configs should not appear in changed list")
-		}
-	}
-}
-
 // -------------------------------------------------------------------------
 // ENCRYPTION VALIDATION
 // -------------------------------------------------------------------------
@@ -2851,8 +2277,7 @@ func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
 		ChunkSize: 1024,
 	}
 
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil || !strings.Contains(err.Error(), "chunk_size must be between") {
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("chunk size below 4096 should fail, got: %v", err)
 	}
 }
@@ -2868,8 +2293,7 @@ func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
 		ChunkSize: 2097152,
 	}
 
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil || !strings.Contains(err.Error(), "chunk_size must be between") {
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("chunk size above 1MB should fail, got: %v", err)
 	}
 }
@@ -3201,7 +2625,7 @@ func TestBackendValidation_DefaultChainAcceptsEmptyKeys(t *testing.T) {
 		CredentialSource: CredentialSourceDefaultChain,
 	}})
 	for _, e := range errs {
-		if errors.Is(e, ErrAccessKeyIDReqd) || errors.Is(e, ErrSecretAccessKeyReqd) {
+		if errors.Is(e, ErrRequired) && strings.Contains(e.Error(), "access_key") {
 			t.Errorf("default_chain backend should not require static keys: %v", e)
 		}
 	}
@@ -3238,10 +2662,10 @@ func TestBackendValidation_StaticDefaultsRequireKeys(t *testing.T) {
 	}})
 	foundAK, foundSK := false, false
 	for _, e := range errs {
-		if errors.Is(e, ErrAccessKeyIDReqd) {
+		if errors.Is(e, ErrRequired) && strings.Contains(e.Error(), ".access_key_id ") {
 			foundAK = true
 		}
-		if errors.Is(e, ErrSecretAccessKeyReqd) {
+		if errors.Is(e, ErrRequired) && strings.Contains(e.Error(), ".secret_access_key ") {
 			foundSK = true
 		}
 	}
@@ -3322,9 +2746,12 @@ func TestReplicationValidation_NegativeValues(t *testing.T) {
 // Asserts that expected error mentioning.
 func TestRateLimitValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
-	cfg := RateLimitConfig{Enabled: true, RequestsPerSec: -1, Burst: -1, TrustedProxies: []string{"invalid"}}
+	cfg := RateLimitConfig{
+		Enabled: true, RequestsPerSec: -1, Burst: -1, TrustedProxies: []string{"invalid"},
+		CleanupInterval: -time.Second, CleanupMaxAge: -time.Second,
+	}
 	errs := cfg.setDefaultsAndValidate()
-	for _, want := range []string{"requests_per_sec", "burst", "CIDR"} {
+	for _, want := range []string{"requests_per_sec", "burst", "CIDR", "cleanup_interval", "cleanup_max_age"} {
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), want) {
@@ -3762,8 +3189,8 @@ func TestBackendHTTP_RejectsNegativeValues(t *testing.T) {
 			t.Parallel()
 			cfg := validBaseConfig()
 			cfg.Backends[0].HTTP = httpCfg
-			if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNegativeHTTPSetting) {
-				t.Errorf("err = %v, want ErrNegativeHTTPSetting", err)
+			if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNegative) {
+				t.Errorf("err = %v, want ErrNegative", err)
 			}
 		})
 	}
@@ -3848,8 +3275,8 @@ func TestParallelCopies_RejectsACountBelowOne(t *testing.T) {
 	cfg.Replication.Factor = 2
 	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: -1}
 
-	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesMin) {
-		t.Errorf("err = %v, want ErrParallelCopiesMin", err)
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNotPositive) {
+		t.Errorf("err = %v, want ErrNotPositive", err)
 	}
 }
 
@@ -3904,11 +3331,31 @@ func TestParallelCopies_InFlightCeilingFallsBackToTheRequestLimit(t *testing.T) 
 	}
 }
 
-// TestParallelCopies_InFlightCeilingHasAFloor verifies a deployment with no
-// write-side admission limit still gets a ceiling. Capping reads alone leaves
-// both write limits at zero, and deriving from that would refuse to boot over a
-// knob the operator never set.
-func TestParallelCopies_InFlightCeilingHasAFloor(t *testing.T) {
+// TestServerConfig_Admission verifies setting either split limit splits the
+// pools and the other takes the shared limit, or the default, so a lone value
+// never switches admission off.
+func TestServerConfig_Admission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		s    ServerConfig
+		want AdmissionPools
+	}{
+		{"shared only", ServerConfig{MaxConcurrentRequests: 300}, AdmissionPools{Shared: 300}},
+		{"writes alone", ServerConfig{MaxConcurrentWrites: 16}, AdmissionPools{Reads: DefaultMaxConcurrentRequests, Writes: 16}},
+		{"reads with a shared limit", ServerConfig{MaxConcurrentRequests: 300, MaxConcurrentReads: 50}, AdmissionPools{Reads: 50, Writes: 300}},
+		{"both split", ServerConfig{MaxConcurrentReads: 50, MaxConcurrentWrites: 20}, AdmissionPools{Reads: 50, Writes: 20}},
+	} {
+		if got := tc.s.Admission(); got != tc.want || got.Split() != (tc.want.Reads > 0) {
+			t.Errorf("%s: Admission() = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestParallelCopies_InFlightCeilingFollowsTheWritePool verifies capping reads
+// alone still gives writes a pool, the default one, and the in-flight ceiling
+// follows it rather than coming out zero.
+func TestParallelCopies_InFlightCeilingFollowsTheWritePool(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfigTwoBackends()
 	cfg.Replication.Factor = 2
@@ -3918,8 +3365,8 @@ func TestParallelCopies_InFlightCeilingHasAFloor(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("SetDefaultsAndValidate: %v", err)
 	}
-	if got := cfg.WritePath.ParallelCopies.MaxInFlight; got != DefaultDetachedUploadCeiling {
-		t.Errorf("max_in_flight = %d, want the default ceiling", got)
+	if got := cfg.WritePath.ParallelCopies.MaxInFlight; got != DefaultMaxConcurrentRequests {
+		t.Errorf("max_in_flight = %d, want the default write pool %d", got, DefaultMaxConcurrentRequests)
 	}
 }
 
@@ -3949,8 +3396,8 @@ func TestParallelCopies_RejectsAnInFlightCeilingBelowOne(t *testing.T) {
 	cfg.Replication.Factor = 2
 	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, MaxInFlight: -1}
 
-	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesInFlightMin) {
-		t.Errorf("err = %v, want ErrParallelCopiesInFlightMin", err)
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNotPositive) {
+		t.Errorf("err = %v, want ErrNotPositive", err)
 	}
 }
 

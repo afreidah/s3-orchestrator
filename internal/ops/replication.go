@@ -12,7 +12,6 @@
 package ops
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
 
@@ -26,13 +25,6 @@ import (
 // -------------------------------------------------------------------------
 // CONSTANTS
 // -------------------------------------------------------------------------
-
-// Defaults applied to a manual replication cycle for any setting the worker
-// config and the running config both leave unset.
-const (
-	defaultReplicationBatchSize   = 100
-	defaultReplicationConcurrency = 5
-)
 
 // maxCleanBatchSize caps a caller-supplied surplus-cleanup batch so one
 // request cannot schedule an unbounded pass.
@@ -150,16 +142,13 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 	return sum, nil
 }
 
-// runConfig resolves the settings for one manual cycle: the running config,
-// with the defaults filling anything it leaves unset. Reports
-// ErrReplicationDisabled when the factor leaves nothing to replicate.
+// runConfig returns the running config for one manual cycle, whose defaults
+// the config loader filled. Reports ErrReplicationDisabled when the factor
+// leaves nothing to replicate.
 func (r *Replication) runConfig() (config.ReplicationConfig, error) {
 	runCfg := r.cfg.Load().Replication
 	if runCfg.Factor <= 1 {
 		return config.ReplicationConfig{}, ErrReplicationDisabled
 	}
-
-	runCfg.BatchSize = cmp.Or(runCfg.BatchSize, defaultReplicationBatchSize)
-	runCfg.Concurrency = cmp.Or(runCfg.Concurrency, defaultReplicationConcurrency)
 	return runCfg, nil
 }

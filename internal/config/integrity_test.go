@@ -147,17 +147,27 @@ func TestIntegrityConfig_ScrubberEgressReserveValidation(t *testing.T) {
 	}
 }
 
-// TestIntegrityConfig_DisabledSkipsValidation verifies a disabled block is left
-// alone, so a half-filled section cannot fail startup or acquire defaults it
-// will never use.
+// TestIntegrityConfig_DisabledSkipsValidation verifies a disabled block is not
+// validated, so a half-filled section cannot fail startup, while its defaults
+// are still filled for a reload that enables it.
 func TestIntegrityConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	ic := IntegrityConfig{ScrubberInterval: -1}
 	if errs := ic.setDefaultsAndValidate(); len(errs) != 0 {
 		t.Fatalf("disabled block reported %d errors, want 0", len(errs))
 	}
-	if ic.ScrubberBatchSize != 0 {
-		t.Errorf("ScrubberBatchSize = %d, want 0 (untouched while disabled)", ic.ScrubberBatchSize)
+	if ic.ScrubberBatchSize != 100 {
+		t.Errorf("ScrubberBatchSize = %d, want the default 100", ic.ScrubberBatchSize)
+	}
+}
+
+// TestIntegrityConfig_ReportsEveryError verifies an enabled block with several
+// bad fields reports each of them, not only the first.
+func TestIntegrityConfig_ReportsEveryError(t *testing.T) {
+	t.Parallel()
+	ic := IntegrityConfig{Enabled: true, ScrubberInterval: -1, ScrubberMinAge: -1, ScrubberEgressReserve: new(2.0)}
+	if errs := ic.setDefaultsAndValidate(); len(errs) != 3 {
+		t.Errorf("errs = %v, want 3", errs)
 	}
 }
 

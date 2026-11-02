@@ -20,18 +20,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// Default cleanup parameters used when the config does not override them.
-const (
-	DefaultMultipartStaleTimeout = 24 * time.Hour
-	DefaultMultipartCleanupTick  = 1 * time.Hour
-)
+// DefaultMultipartCleanupTick is how often the multipart cleanup runs.
+const DefaultMultipartCleanupTick = 1 * time.Hour
 
 // NewCleanupService constructs the multipart-cleanup background
-// service backed by mgr.CleanupStaleMultipartUploads.
+// service backed by mgr.CleanupStaleMultipartUploads, abandoning uploads
+// older than staleTimeout.
 func NewCleanupService(mgr *Manager, locker tickrunner.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
-	if staleTimeout <= 0 {
-		staleTimeout = DefaultMultipartStaleTimeout
-	}
 	const slug = "multipart_cleanup"
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,

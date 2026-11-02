@@ -37,8 +37,8 @@ server:
   max_object_size: 5368709120     # 5 GB default
   # spill_dir: "/var/lib/s3-orchestrator/spill"  # where bodies over 32 MiB buffer (default: OS temp dir)
   max_concurrent_requests: 0      # max concurrent S3 requests (0 with no read/write split = 1000)
-  # max_concurrent_reads: 0       # separate limit for GET/HEAD (0 = use global limit)
-  # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE (0 = use global limit)
+  # max_concurrent_reads: 0       # separate limit for GET/HEAD; setting either splits the pools (0 = global limit)
+  # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE; setting either splits the pools (0 = global limit)
   # load_shed_threshold: 0        # active shedding threshold (0.0-1.0, 0 = disabled)
   # admission_wait: "0s"          # brief wait before rejection (0 = instant)
   # max_header_bytes: 1048576     # max total request header size (default: 1 MiB)
@@ -57,7 +57,7 @@ server:
 - `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Size it together with `database.max_conns`; see [Performance Tuning - Connection Pool Sizing](performance-tuning.md#connection-pool-sizing).
 
   **There is no unlimited mode.** Leaving all three of `max_concurrent_requests`, `max_concurrent_reads` and `max_concurrent_writes` at `0` applies a default of 1000 combined requests rather than disabling admission control. A deployment sized on the assumption that it has no cap is one that will meet `503 SlowDown` without knowing where it came from. Set the value explicitly if 1000 is not what you want.
-- `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads. **Background workers contend with HTTP writes, not reads** - cleanup, replication, rebalance, pending reaper, and over-replication acquire admission slots from the same pool sized to `max_concurrent_writes`. In merged mode (`max_concurrent_requests` only), every HTTP request and every background worker shares the single global pool. Size `max_concurrent_writes` to accommodate both peak HTTP write traffic and the worst-case overlap of background worker activity (typically the replication factor x replicator concurrency for the dominant case). See issue #835 for the design rationale.
+- `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). Setting either one replaces `max_concurrent_requests` with independent pools so write storms cannot starve reads; the one left at `0` takes `max_concurrent_requests`, or 1000 when that is unset too. **Background workers contend with HTTP writes, not reads** - cleanup, replication, rebalance, pending reaper, and over-replication acquire admission slots from the same pool sized to `max_concurrent_writes`. In merged mode (`max_concurrent_requests` only), every HTTP request and every background worker shares the single global pool. Size `max_concurrent_writes` to accommodate both peak HTTP write traffic and the worst-case overlap of background worker activity (typically the replication factor x replicator concurrency for the dominant case). See issue #835 for the design rationale.
 - `load_shed_threshold` enables active load shedding. When in-flight requests exceed this fraction of pool capacity (e.g. `0.8`), new requests are probabilistically rejected before the hard limit, providing smooth degradation instead of a cliff.
 - `admission_wait` adds a brief wait before rejecting when the semaphore is full (e.g. `50ms`). Smooths micro-bursts without adding latency during sustained overload. Default `0` means instant rejection.
 - `max_header_bytes` caps the total size of a request's headers, and `max_header_value_count` caps how many header values one request may carry. Both default to the `net/http` values (1 MiB and 500), so leaving them unset gives the same behaviour as any other Go server. They exist for deployments that want a tighter bound than the stdlib's: a request with thousands of small headers costs the server memory and parsing time before any handler sees it, and the default 500 is well above what an S3 client sends. Exceeding either limit fails the request during header parsing, before routing or authentication. Both are non-reloadable - they are set on the listener at startup, so changing them needs a restart.
@@ -506,7 +506,7 @@ The tradeoff is shape rather than total. Total work goes down, but the extra cop
 
 Partial success is not failure, exactly as it is today with one copy: a backend that declines the claim means fewer copies, an upload that fails leaves its intent for the reaper, and the write fails only when no copy lands. Whatever the write does not place is a shortfall the replicator fills on its next pass.
 
-**The ceiling, and what happens at it.** The copies still uploading when the client is answered belong to no request, so they are tracked in a registry `max_in_flight` bounds. It is a ceiling for a backend that has gone slow rather than a queue: a write that finds it full places one copy and leaves the rest to the replicator, which costs exactly the read-back this feature exists to avoid. The default follows `server.max_concurrent_writes`, else `max_concurrent_requests` (1000 when no limit is set; 512 applies only when just `max_concurrent_reads` is set), which a fleet keeping up never approaches - the steady state is roughly your write rate times how long one copy takes, so a handful.
+**The ceiling, and what happens at it.** The copies still uploading when the client is answered belong to no request, so they are tracked in a registry `max_in_flight` bounds. It is a ceiling for a backend that has gone slow rather than a queue: a write that finds it full places one copy and leaves the rest to the replicator, which costs exactly the read-back this feature exists to avoid. The default follows the write pool admission sets up: `server.max_concurrent_writes`, else `max_concurrent_requests`, else 1000, which a fleet keeping up never approaches - the steady state is roughly your write rate times how long one copy takes, so a handful.
 
 Two metrics make it visible. `s3o_detached_uploads_depth` is the copies still uploading right now, and a rising floor there is a backend falling behind without failing. `s3o_replication_write_fanout_skipped_total` counts the writes that hit the ceiling and fell back, so a non-zero rate means either the ceiling is too low for your write rate or one backend needs attention.
 
@@ -995,6 +995,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backends[].request_limits`, `backends[].unmetered` | Yes | |
 | `backends[].usage_reset_day`, `backends[].usage_reset_timezone` | Yes | |
 | `server.log_level` | Yes | |
+| `server.shutdown_delay` | Yes | Read when shutdown begins |
 | `backends[].http` (pool sizes, `force_http2`) | No | The transport is built when the backend client is constructed; a reload reports the change and keeps the running one |
 | `rebalance` | Yes | Strategy, threshold, concurrency, enabled/disabled; `interval` needs a restart |
 | `replication` | Yes | Factor, batch size; `worker_interval` needs a restart |
@@ -1009,11 +1010,11 @@ kill -HUP $(pidof s3-orchestrator)
 | `server.admission_wait` | No | Requires restart |
 | `server.max_header_bytes` | No | Requires restart |
 | `server.max_header_value_count` | No | Requires restart |
-| `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
+| `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `backend_timeout` |
 | `server.tls` | No | The certificate and key files are re-read on SIGHUP; changing the paths or other `tls` fields requires a restart |
-| `server.max_object_size`, `spill_dir`, `backend_timeout` | No | Requires restart; no warning is logged |
-| `backends[].credential_source` | No | Requires restart; no warning is logged |
-| `cleanup_queue`, `write_path`, `notifications`, `debug` | No | Requires restart; no warning is logged |
+| `server.max_object_size`, `spill_dir` | No | Requires restart |
+| `backends[].credential_source` | No | Requires restart |
+| `cleanup_queue`, `write_path`, `notifications`, `debug` | No | Requires restart |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
 | `circuit_breaker` | No | Requires restart |
@@ -1026,6 +1027,8 @@ kill -HUP $(pidof s3-orchestrator)
 | `routing_strategy` | No | Requires restart |
 | `reconcile` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, `max_object_size`, count) | No | Requires restart |
+
+Every setting not marked reloadable is compared against the one the process started with, and a change is reported by its path, such as `server.read_header_timeout` or `backends[0].endpoint`, in the reload log and in `s3-orchestrator admin reload-status` until the next restart. A default derived from a changed setting is reported too: lowering `max_concurrent_writes` also reports `write_path.parallel_copies.max_in_flight`, which defaults to it. Values are never shown, so secrets stay out of both.
 
 A reload logs its start and its outcome:
 

@@ -15,11 +15,14 @@
 package di
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -52,6 +55,19 @@ type OptionalResult[T any] struct {
 // Failed reports whether the provider was registered but failed to
 // construct (or one of its transitive dependencies failed).
 func (r OptionalResult[T]) Failed() bool { return r.Resolution == ResolutionFailed }
+
+// Get returns the resolved value, or the zero value when T is disabled or
+// failed to build. A failure is logged with the dependency's type, so a broken
+// feature is not mistaken for one switched off.
+func (r OptionalResult[T]) Get(ctx context.Context) T {
+	if r.Failed() {
+		slog.WarnContext(ctx, "optional dependency failed to initialize; running without it",
+			logfmt.Component("di"),
+			"dependency", do.NameOf[T](),
+			"error", r.Err)
+	}
+	return r.Value
+}
 
 // Optional resolves T as an optional dependency. Disabled means no provider
 // is registered in this run mode; Failed means a provider is registered but

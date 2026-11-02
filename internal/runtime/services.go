@@ -28,8 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -42,10 +42,13 @@ import (
 // in order during shutdown. Everything else the injector owns and disposes of
 // itself.
 type bootstrapped struct {
+	store     core.LifecycleAdmin
+	breaker   *breaker.CircuitBreaker
 	objects   *object.Manager
 	multipart *multipart.Manager
 	usage     *usage.Service
 	runtime   *infra.BackendRuntime
+	detached  *writepath.DetachedUploads
 	lifecyc   *lifecycle.Manager
 }
 
@@ -53,64 +56,36 @@ type bootstrapped struct {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// resolveBootstrapped builds the backend stack and returns the pieces startup
-// and shutdown hold onto. Resolving them here rather than at each use keeps a
-// missing provider a startup error instead of a nil dereference at shutdown,
-// when there is nothing left to report it to.
-func resolveBootstrapped(inj do.Injector) (bootstrapped, error) {
-	var b bootstrapped
-	var err error
-	if b.runtime, err = do.Invoke[*infra.BackendRuntime](inj); err != nil {
-		return b, fmt.Errorf("initialize backend runtime: %w", err)
-	}
-	if b.objects, err = do.Invoke[*object.Manager](inj); err != nil {
-		return b, fmt.Errorf("initialize object manager: %w", err)
-	}
-	if b.multipart, err = do.Invoke[*multipart.Manager](inj); err != nil {
-		return b, fmt.Errorf("initialize multipart manager: %w", err)
-	}
-	if b.usage, err = do.Invoke[*usage.Service](inj); err != nil {
-		return b, fmt.Errorf("initialize usage service: %w", err)
-	}
-	return b, nil
-}
-
 // resolveRequiredServices triggers eager construction of every dependency
-// that must exist before the HTTP server starts. Optional services
-// (rate limiter, UI throttle) only resolve when their feature flag is
-// set. Each step returns a wrapped error so the failure source is clear.
+// that must exist before the HTTP server starts, and returns the pieces
+// startup and shutdown hold onto. Resolving them here rather than at each use
+// keeps a missing provider a startup error instead of a nil dereference at
+// shutdown, when there is nothing left to report it to. The rate limiter
+// resolves only when its feature flag is set.
 func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped, error) {
-	var b bootstrapped
-	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
-		return b, fmt.Errorf("initialize database: %w", err)
+	r := di.NewResolver(inj)
+	b := bootstrapped{
+		store:     r.Resolve[core.LifecycleAdmin](),
+		breaker:   r.Resolve[*breaker.CircuitBreaker](),
+		runtime:   r.Resolve[*infra.BackendRuntime](),
+		objects:   r.Resolve[*object.Manager](),
+		multipart: r.Resolve[*multipart.Manager](),
+		usage:     r.Resolve[*usage.Service](),
+		detached:  r.Resolve[*writepath.DetachedUploads](),
 	}
-	if _, err := do.Invoke[*breaker.CircuitBreaker](inj); err != nil {
-		return b, fmt.Errorf("initialize database circuit breaker: %w", err)
-	}
-	b, err := resolveBootstrapped(inj)
-	if err != nil {
+	if err := r.Err(); err != nil {
 		return b, err
 	}
 	if err := di.WireManager(inj); err != nil {
 		return b, fmt.Errorf("wire backend stack: %w", err)
 	}
-	if _, err := do.Invoke[*s3api.Server](inj); err != nil {
-		return b, fmt.Errorf("initialize S3 server: %w", err)
-	}
-
-	if b.lifecyc, err = do.Invoke[*lifecycle.Manager](inj); err != nil {
-		return b, fmt.Errorf("initialize lifecycle manager: %w", err)
-	}
-
+	r.Resolve[*s3api.Server]()
+	b.lifecyc = r.Resolve[*lifecycle.Manager]()
 	if cfg.RateLimit.Enabled {
-		if _, err := do.Invoke[*s3api.RateLimiter](inj); err != nil {
-			return b, fmt.Errorf("initialize rate limiter: %w", err)
-		}
+		r.Resolve[*s3api.RateLimiter]()
 	}
-	if cfg.UI.Enabled {
-		if _, err := do.Invoke[*httputil.LoginThrottle](inj); err != nil {
-			return b, fmt.Errorf("initialize login throttle: %w", err)
-		}
+	if err := r.Err(); err != nil {
+		return b, err
 	}
 
 	ctx := context.Background()

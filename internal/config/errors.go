@@ -7,9 +7,11 @@
 // a joined string. A string forces tests to match on substrings, which makes
 // the message a de-facto API: a harmless reword silently breaks assertions.
 //
-// Each validator wraps its sentinel as fmt.Errorf("%w: <detail>", ErrX), and
-// tests check with errors.Is(err, ErrX). Rewording the detail suffix is free;
-// only the sentinel value is the contract.
+// Most field checks take one of four shapes, a missing value, a value that
+// must be positive, one that must not be negative, and one outside a range,
+// and wrap a shared sentinel with the field's path through the helpers below.
+// The rest wrap a sentinel of their own. Tests check with errors.Is; only the
+// sentinel value is the contract.
 // -------------------------------------------------------------------------------
 
 package config
@@ -18,6 +20,70 @@ import (
 	"errors"
 	"fmt"
 )
+
+// -------------------------------------------------------------------------
+// FIELD CHECKS
+// -------------------------------------------------------------------------
+
+// number is every field type the value checks compare: counts, sizes, ratios
+// and durations.
+type number interface {
+	~int | ~int32 | ~int64 | ~float64
+}
+
+// required reports path as missing unless set holds.
+func required(path string, set bool) error {
+	if set {
+		return nil
+	}
+	return fmt.Errorf("%s %w", path, ErrRequired)
+}
+
+// positive reports path unless v is above zero, for a count, size or interval
+// that zero or less would disable.
+func positive[T number](path string, v T) error {
+	if v > 0 {
+		return nil
+	}
+	return fmt.Errorf("%s %w (got %v)", path, ErrNotPositive, v)
+}
+
+// nonNegative reports path when v is below zero, for a field whose zero means
+// unset, unlimited or off.
+func nonNegative[T number](path string, v T) error {
+	if v >= 0 {
+		return nil
+	}
+	return fmt.Errorf("%s %w (got %v)", path, ErrNegative, v)
+}
+
+// between reports path unless v lies within lo and hi, both included.
+func between[T number](path string, v, lo, hi T) error {
+	if v >= lo && v <= hi {
+		return nil
+	}
+	return fmt.Errorf("%s %w: want %v to %v (got %v)", path, ErrOutOfRange, lo, hi, v)
+}
+
+// atLeast reports path when v is below lo.
+func atLeast[T number](path string, v, lo T) error {
+	if v >= lo {
+		return nil
+	}
+	return fmt.Errorf("%s %w: want at least %v (got %v)", path, ErrOutOfRange, lo, v)
+}
+
+// failed keeps the checks that failed, so a section lists its field checks in
+// one call and adds only the real errors to what it reports.
+func failed(checks ...error) []error {
+	var errs []error
+	for _, err := range checks {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
 
 // -------------------------------------------------------------------------
 // INTERNALS
@@ -46,6 +112,15 @@ func wrappedPath(sentinel error, path string, cause error) error {
 // -------------------------------------------------------------------------
 // CONSTANTS
 // -------------------------------------------------------------------------
+
+// The field checks' sentinels. Each is wrapped with the offending field's path,
+// as in "backends[0].endpoint is required".
+var (
+	ErrRequired    = errors.New("is required")
+	ErrNotPositive = errors.New("must be positive")
+	ErrNegative    = errors.New("must not be negative")
+	ErrOutOfRange  = errors.New("is out of range")
+)
 
 // Loader-level wrapping errors (LoadConfig).
 var (
@@ -87,25 +162,10 @@ var (
 // both is ambiguous rather than additive. credential_source accepts "static"
 // or "default_chain", and the chain form refuses static keys alongside it.
 var (
-	ErrNoBackends            = errors.New("at least one backend is required")
 	ErrDuplicateBackend      = errors.New("duplicate backend name")
-	ErrEndpointRequired      = errors.New("endpoint is required")
-	ErrBackendBucketReqd     = errors.New("bucket is required")
-	ErrAccessKeyIDReqd       = errors.New("access_key_id is required")
-	ErrSecretAccessKeyReqd   = errors.New("secret_access_key is required")
-	ErrNegativeQuota         = errors.New("quota_bytes must not be negative")
-	ErrNegativeMaxObject     = errors.New("max_object_size must not be negative")
-	ErrNegativeAPILimit      = errors.New("api_request_limit must not be negative")
-	ErrNegativeEgress        = errors.New("egress_byte_limit must not be negative")
-	ErrNegativeIngress       = errors.New("ingress_byte_limit must not be negative")
-	ErrUsageResetDayRange    = errors.New("usage_reset_day must be between 1 and 28")
 	ErrUsageResetTimezone    = errors.New("usage_reset_timezone is not a known time zone")
 	ErrUsageResetPartialHour = errors.New("usage_reset_timezone must be a whole number of hours from UTC")
-	ErrNegativeHTTPSetting   = errors.New("HTTP transport setting must not be negative")
-	ErrPoolNameRequired      = errors.New("request_limits entry requires a name")
 	ErrDuplicatePoolName     = errors.New("duplicate request_limits pool name")
-	ErrPoolOperationsReqd    = errors.New("request_limits entry requires at least one operation")
-	ErrNegativePoolLimit     = errors.New("request_limits limit must not be negative")
 	ErrUnknownOperation      = errors.New("unknown operation name")
 	ErrUnmeteredWildcard     = errors.New(`unmetered does not accept "*"`)
 	ErrPoolChargesUnmetered  = errors.New("request_limits pool charges an operation listed as unmetered")
@@ -125,8 +185,6 @@ var (
 
 // UI / auth errors.
 var (
-	ErrSessionSecretReqd = errors.New("session_secret is required when UI is enabled")
-
 	ErrRootCredentialIncomplete = errors.New(
 		"auth.root.access_key_id and auth.root.secret_access_key must both be set (or both empty)")
 
@@ -149,15 +207,10 @@ var (
 )
 
 // Rate limit errors.
-var (
-	ErrInvalidCIDR               = errors.New("invalid CIDR in trusted_proxies")
-	ErrRateLimitRPSNotPositive   = errors.New("rate_limit.requests_per_sec must be positive")
-	ErrRateLimitBurstNotPositive = errors.New("rate_limit.burst must be positive")
-)
+var ErrInvalidCIDR = errors.New("invalid CIDR in trusted_proxies")
 
 // Encryption errors.
 var (
-	ErrInvalidChunkSize     = errors.New("encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
 	ErrChunkSizeNotPowerOf2 = errors.New("encryption.chunk_size must be a power of 2")
 	ErrKeySourceRequired    = errors.New("encryption: exactly one of master_key, master_key_file, or vault is required")
 	ErrMultipleKeySources   = errors.New("encryption: only one of master_key, master_key_file, or vault may be set")
@@ -165,75 +218,40 @@ var (
 	ErrInvalidKeyLength     = errors.New("key must be 256 bits (32 bytes)")
 	ErrInvalidKeyFile       = errors.New("unreadable key file")
 	ErrPreviousKeyInvalid   = errors.New("previous key invalid")
-	ErrVaultAddressRequired = errors.New("encryption.vault.address is required")
 	ErrVaultTokenRequired   = errors.New("encryption.vault: one of token or token_file is required")
 	ErrVaultTokenAmbiguous  = errors.New("encryption.vault: only one of token or token_file may be set")
-	ErrVaultKeyNameRequired = errors.New("encryption.vault.key_name is required")
 )
 
-// Compression errors.
+// Compression errors. The ratio's lower bound is excluded, which the shared
+// range check does not express.
 var (
-	ErrInvalidCompressionLevel     = errors.New(`compression.level must be one of "fastest", "default", "better", "best"`)
-	ErrInvalidCompressionChunkSize = errors.New("compression.chunk_size must be between 16384 (16KB) and 67108864 (64MB)")
-	ErrInvalidCompressionMinSize   = errors.New("compression.min_size must be >= 0")
-	ErrInvalidCompressionMinRatio  = errors.New("compression.min_ratio must be > 0 and <= 1")
-)
-
-// Redis / counter errors.
-var (
-	ErrRedisAddressRequired        = errors.New("redis.address is required when redis section is present")
-	ErrRedisFailureThresholdNotPos = errors.New("redis.failure_threshold must be positive")
-	ErrRedisOpenTimeoutNotPos      = errors.New("redis.open_timeout must be positive")
-)
-
-// Notifications errors.
-var (
-	ErrNotificationURLRequired    = errors.New("notifications endpoint url is required")
-	ErrNotificationEventsRequired = errors.New("notifications endpoint requires at least one event pattern")
+	ErrInvalidCompressionLevel    = errors.New(`compression.level must be one of "fastest", "default", "better", "best"`)
+	ErrInvalidCompressionMinRatio = errors.New("compression.min_ratio must be > 0 and <= 1")
 )
 
 // Lifecycle errors.
 var (
 	ErrLifecycleFilterRequired = errors.New("lifecycle.rules: at least one of prefix or tags must be set (an unfiltered rule would match all objects)")
-	ErrInvalidExpiration       = errors.New("lifecycle.rules: expiration_days must be positive")
 	ErrLifecycleEmptyTagKey    = errors.New("lifecycle.rules: tag key must not be empty")
 	ErrDuplicateFilter         = errors.New("duplicate filter")
 )
 
-// Rebalance / replication errors.
+// Routing, rebalance and replication errors. Both strategy fields take a
+// RoutingStrategy, so they share one sentinel.
 var (
-	ErrInvalidRebalanceStrategy   = errors.New("rebalance.strategy must be 'pack' or 'spread'")
-	ErrRebalanceIntervalNotPos    = errors.New("rebalance.interval must be positive")
-	ErrRebalanceBatchNotPos       = errors.New("rebalance.batch_size must be positive")
-	ErrRebalanceThresholdRange    = errors.New("rebalance.threshold must be between 0 and 1")
-	ErrRebalanceConcurrencyNotPos = errors.New("rebalance.concurrency must be positive")
-	ErrReplicationFactorMin       = errors.New("replication.factor must be at least 1")
-	ErrReplicationFactorTooLarge  = errors.New("replication.factor exceeds number of backends")
-	ErrReplicationIntervalNotPos  = errors.New("replication.worker_interval must be positive")
-	ErrReplicationBatchNotPos     = errors.New("replication.batch_size must be positive")
-	ErrInvalidRoutingStrategy     = errors.New("routing_strategy must be 'pack' or 'spread'")
-	ErrQuotaMixNotAllowed         = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
-	ErrUnlimitedNeedsReplication  = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
-	ErrParallelCopiesMin          = errors.New("write_path.parallel_copies.count must be at least 1")
-	ErrParallelCopiesInFlightMin  = errors.New("write_path.parallel_copies.max_in_flight must be at least 1")
-	ErrParallelCopiesOverFactor   = errors.New("write_path.parallel_copies.count exceeds replication.factor")
+	ErrInvalidRoutingStrategy    = errors.New("strategy must be 'pack' or 'spread'")
+	ErrReplicationFactorTooLarge = errors.New("replication.factor exceeds number of backends")
+	ErrQuotaMixNotAllowed        = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
+	ErrUnlimitedNeedsReplication = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
+	ErrParallelCopiesOverFactor  = errors.New("write_path.parallel_copies.count exceeds replication.factor")
 )
 
-// Usage flush / adaptive errors.
+// Usage flush errors. The threshold excludes both ends, which the shared range
+// check does not express.
 var (
 	ErrUsageFlushFastInterval   = errors.New("usage_flush.fast_interval must be less than interval")
 	ErrUsageFlushThresholdRange = errors.New("usage_flush.adaptive_threshold must be between 0 and 1")
 )
 
-// Cache / storage misc.
-var (
-	ErrCacheMaxSizeNotPositive      = errors.New("cache.max_size must be positive")
-	ErrCacheMaxObjectNotPositive    = errors.New("cache.max_object_size must be positive")
-	ErrCacheMaxObjectExceedsMaxSize = errors.New("cache.max_object_size cannot exceed cache.max_size")
-)
-
-// Telemetry errors.
-var (
-	ErrTracingEndpointRequired = errors.New("telemetry.tracing.endpoint is required when tracing is enabled")
-	ErrFleetIntervalTooShort   = errors.New("telemetry.metrics.fleet_interval must be at least 10s")
-)
+// Cache errors.
+var ErrCacheMaxObjectExceedsMaxSize = errors.New("cache.max_object_size cannot exceed cache.max_size")

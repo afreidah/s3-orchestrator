@@ -5,9 +5,9 @@
 //
 // Surfaces the structured contract every reloadable subsystem implements
 // (Hook), the per-hook outcome record (HookOutcome), and the aggregate
-// reload result (Result) operators consume through the admin API.
-// Status enums are stable strings so reload status can be exported to
-// metrics, logged, and JSON-rendered without further translation.
+// reload result (Result), which the runtime converts to the admin API's
+// reload status. Status enums are stable strings so reload status can be
+// logged and published without further translation.
 // -------------------------------------------------------------------------------
 
 package reload
@@ -35,14 +35,12 @@ const (
 	HookFailed  HookStatus = "failed"
 )
 
-// HookOutcome captures one hook's contribution to a reload result.
-//
-// Error is rendered rather than error-typed so the result stays
-// JSON-serialisable for the admin reload-status endpoint.
+// HookOutcome captures one hook's contribution to a reload result. Error is
+// the rendered failure, set only when Status is Failed.
 type HookOutcome struct {
-	Name   string     `json:"name"`
-	Status HookStatus `json:"status"`
-	Error  string     `json:"error,omitempty"` // set only when Status is Failed
+	Name   string
+	Status HookStatus
+	Error  string
 }
 
 // -------------------------------------------------------------------------
@@ -67,31 +65,36 @@ const (
 	ReloadLoadFailed       Status = "load_failed"
 )
 
-// Result is the aggregate report from a single reload pass, exposed by the
-// admin API. Generation advances only on FullSuccess or PartialApplied.
-// Outcomes lists every hook considered, in apply order, skipped ones included.
-// RequiresRestart is reported whatever the status.
+// Result is the aggregate report from a single reload pass. Generation
+// advances only on FullSuccess or PartialApplied. Outcomes lists every hook
+// considered, in apply order, skipped ones included. RequiresRestart, the
+// non-reloadable fields changed since startup, is reported whatever the
+// status; LoadError is set only when Status is LoadFailed.
 type Result struct {
-	Generation      int64         `json:"generation"`
-	Status          Status        `json:"status"`
-	Outcomes        []HookOutcome `json:"outcomes"`
-	RequiresRestart []string      `json:"requires_restart,omitempty"` // non-reloadable fields changed since startup
-	LoadError       string        `json:"load_error,omitempty"`       // set only when Status is LoadFailed
-	StartedAt       time.Time     `json:"started_at"`
-	EndedAt         time.Time     `json:"ended_at"`
+	Generation      int64
+	Status          Status
+	Outcomes        []HookOutcome
+	RequiresRestart []string
+	LoadError       string
+	StartedAt       time.Time
+	EndedAt         time.Time
 }
 
 // -------------------------------------------------------------------------
 // HOOK CONTRACT
 // -------------------------------------------------------------------------
 
-// Hook is the contract every reloadable subsystem implements. The coordinator
-// runs Check on every hook first, and any error aborts the pass before
-// mutation; Check must not mutate state. Apply then runs every hook; a non-nil
-// error marks that hook Failed whatever status it returned, without aborting
-// the rest.
+// Hook is the contract every reloadable subsystem implements. Apply runs on
+// every hook with the new config; a non-nil error marks that hook Failed
+// whatever status it returned, without aborting the rest.
 type Hook interface {
 	Name() string
-	Check(oldCfg, newCfg *config.Config) error
-	Apply(ctx context.Context, oldCfg, newCfg *config.Config) (HookStatus, error)
+	Apply(ctx context.Context, cfg *config.Config) (HookStatus, error)
+}
+
+// checker is a Hook that can refuse a config before anything changes. The
+// coordinator runs Check on every hook implementing it first, and any error
+// aborts the pass before mutation; Check must not mutate state.
+type checker interface {
+	Check(cfg *config.Config) error
 }

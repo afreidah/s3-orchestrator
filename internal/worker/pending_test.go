@@ -64,21 +64,18 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 // NewPendingReaper defaults
 // -------------------------------------------------------------------------
 
-// TestNewPendingReaper_AppliesZeroDefaults verifies that zero/negative
-// constructor inputs fall back to safe defaults so callers can wire a
-// reaper without thinking about every knob.
-func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
+// TestNewPendingReaper_DefaultsConcurrency verifies an unset concurrency falls
+// back to 4, while the min age and batch size the config loader filled are
+// taken as given.
+func TestNewPendingReaper_DefaultsConcurrency(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewPendingReaper(PendingReaperDeps{Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
-	if r.concurrency != 4 {
-		t.Errorf("concurrency = %d, want 4", r.concurrency)
-	}
-	if r.minAge != 5*time.Minute {
-		t.Errorf("minAge = %v, want 5m", r.minAge)
-	}
-	if r.batchSize != 50 {
-		t.Errorf("batchSize = %d, want 50", r.batchSize)
+	r := NewPendingReaper(PendingReaperDeps{
+		Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{},
+		MinAge: 5 * time.Minute, BatchSize: 50,
+	})
+	if r.concurrency != 4 || r.minAge != 5*time.Minute || r.batchSize != 50 {
+		t.Errorf("concurrency, minAge, batchSize = %d, %v, %d; want 4, 5m, 50", r.concurrency, r.minAge, r.batchSize)
 	}
 }
 

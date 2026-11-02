@@ -78,47 +78,50 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 		}
 	}
 
-	if !r.Enabled {
-		return errs
-	}
-
 	r.RequestsPerSec = cmp.Or(r.RequestsPerSec, 100)
 	r.Burst = cmp.Or(r.Burst, 200)
 	r.CleanupInterval = cmp.Or(r.CleanupInterval, 1*time.Minute)
 	r.CleanupMaxAge = cmp.Or(r.CleanupMaxAge, 5*time.Minute)
-
-	if r.RequestsPerSec <= 0 {
-		errs = append(errs, ErrRateLimitRPSNotPositive)
+	if !r.Enabled {
+		return errs
 	}
-	if r.Burst <= 0 {
-		errs = append(errs, ErrRateLimitBurstNotPositive)
-	}
-
-	return errs
+	return append(errs, failed(
+		positive("rate_limit.requests_per_sec", r.RequestsPerSec),
+		positive("rate_limit.burst", r.Burst),
+		positive("rate_limit.cleanup_interval", r.CleanupInterval),
+		positive("rate_limit.cleanup_max_age", r.CleanupMaxAge),
+	)...)
 }
 
-// setDefaults sets defaults.
-func (cb *CircuitBreakerConfig) setDefaults() {
+// setDefaultsAndValidate fills the database circuit breaker's defaults and
+// refuses negatives. Zero parallelism fans degraded reads out to every
+// backend, so only a negative one is refused.
+func (cb *CircuitBreakerConfig) setDefaultsAndValidate() []error {
 	cb.FailureThreshold = cmp.Or(cb.FailureThreshold, 3)
 	cb.OpenTimeout = cmp.Or(cb.OpenTimeout, 15*time.Second)
 	cb.CacheTTL = cmp.Or(cb.CacheTTL, 60*time.Second)
-	// Zero means fan out to every backend; a negative value is normalised to
-	// zero so a typo cannot disable the broadcast.
-	if cb.DegradedBroadcastParallelism < 0 {
-		cb.DegradedBroadcastParallelism = 0
-	}
-	// *bool so unset (nil) is distinguishable from explicit false.
-	if cb.DegradedReadsEnabled == nil {
-		t := true
-		cb.DegradedReadsEnabled = &t
-	}
+	cb.DegradedReadsEnabled = new(cb.DegradedReads())
+	return failed(
+		positive("circuit_breaker.failure_threshold", cb.FailureThreshold),
+		positive("circuit_breaker.open_timeout", cb.OpenTimeout),
+		positive("circuit_breaker.cache_ttl", cb.CacheTTL),
+		nonNegative("circuit_breaker.degraded_broadcast_parallelism", cb.DegradedBroadcastParallelism),
+	)
 }
 
-// setDefaults sets defaults.
-func (bcb *BackendCircuitBreakerConfig) setDefaults() {
-	if !bcb.Enabled {
-		return
-	}
+// DegradedReads reports whether reads fall back to broadcasting during a
+// database outage, which they do unless the operator turned it off.
+func (cb *CircuitBreakerConfig) DegradedReads() bool {
+	return cb.DegradedReadsEnabled == nil || *cb.DegradedReadsEnabled
+}
+
+// setDefaultsAndValidate fills the per-backend circuit breaker's defaults and
+// refuses negatives, whether or not the breakers are enabled.
+func (bcb *BackendCircuitBreakerConfig) setDefaultsAndValidate() []error {
 	bcb.FailureThreshold = cmp.Or(bcb.FailureThreshold, 5)
 	bcb.OpenTimeout = cmp.Or(bcb.OpenTimeout, 5*time.Minute)
+	return failed(
+		positive("backend_circuit_breaker.failure_threshold", bcb.FailureThreshold),
+		positive("backend_circuit_breaker.open_timeout", bcb.OpenTimeout),
+	)
 }

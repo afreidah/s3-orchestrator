@@ -21,10 +21,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// DefaultPendingReaperTick is the pending reaper's per-tick cadence
-// when the config does not specify one.
-const DefaultPendingReaperTick = 1 * time.Minute
-
 // NewPendingReaperService constructs the pending-objects reaper
 // background service. The reaper resolves abandoned PUT intents by
 // HEADing the destination backend and either promoting the intent into
@@ -33,9 +29,6 @@ const DefaultPendingReaperTick = 1 * time.Minute
 func NewPendingReaperService(reaper *PendingReaper, locker tickrunner.AdvisoryLocker, tick time.Duration) lifecycle.Runner {
 	if reaper == nil {
 		return nil
-	}
-	if tick <= 0 {
-		tick = DefaultPendingReaperTick
 	}
 	log := workerLogger(audit.WorkloadPendingReaper)
 	return tickrunner.New(tickrunner.Config{

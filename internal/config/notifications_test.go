@@ -13,6 +13,7 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -68,7 +69,7 @@ func TestNotificationConfig_MissingEvents(t *testing.T) {
 		},
 	}
 	errs := cfg.setDefaultsAndValidate()
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "event pattern") {
+	if len(errs) != 1 || !errors.Is(errs[0], ErrRequired) || !strings.Contains(errs[0].Error(), ".events") {
 		t.Errorf("expected events error, got: %v", errs)
 	}
 }

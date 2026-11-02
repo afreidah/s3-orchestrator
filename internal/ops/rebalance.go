@@ -13,7 +13,6 @@
 package ops
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
 
@@ -22,19 +21,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
-)
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// Defaults applied to a manual rebalance cycle for any setting the worker
-// config and the running config both leave unset.
-const (
-	defaultRebalanceStrategy    = "spread"
-	defaultRebalanceBatchSize   = 100
-	defaultRebalanceThreshold   = 0.1
-	defaultRebalanceConcurrency = 5
 )
 
 // -------------------------------------------------------------------------
@@ -79,7 +65,7 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.
 		return batch.Summary{}, ErrRebalancerUnavailable
 	}
 
-	sum, err := r.rebalancer.Rebalance(ctx, r.runConfig(), observer)
+	sum, err := r.rebalancer.Rebalance(ctx, r.cfg.Load().Rebalance, observer)
 	if err != nil {
 		return batch.Summary{}, err
 	}
@@ -93,15 +79,4 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.
 
 	r.log.InfoContext(ctx, "rebalance completed", "moved", sum.Succeeded)
 	return sum.Summary, nil
-}
-
-// runConfig resolves the settings for one manual cycle: the running config,
-// with the defaults filling anything it leaves unset.
-func (r *Rebalance) runConfig() config.RebalanceConfig {
-	runCfg := r.cfg.Load().Rebalance
-	runCfg.Strategy = cmp.Or(runCfg.Strategy, defaultRebalanceStrategy)
-	runCfg.BatchSize = cmp.Or(runCfg.BatchSize, defaultRebalanceBatchSize)
-	runCfg.Threshold = cmp.Or(runCfg.Threshold, defaultRebalanceThreshold)
-	runCfg.Concurrency = cmp.Or(runCfg.Concurrency, defaultRebalanceConcurrency)
-	return runCfg
 }

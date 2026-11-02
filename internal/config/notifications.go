@@ -12,6 +12,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 )
@@ -37,18 +38,15 @@ func (c *NotificationConfig) setDefaultsAndValidate() []error {
 	var errs []error
 	for i := range c.Endpoints {
 		ep := &c.Endpoints[i]
-		if ep.URL == "" {
-			errs = append(errs, fmt.Errorf("notifications.endpoints[%d]: %w", i, ErrNotificationURLRequired))
-		}
-		if len(ep.Events) == 0 {
-			errs = append(errs, fmt.Errorf("notifications.endpoints[%d]: %w", i, ErrNotificationEventsRequired))
-		}
-		if ep.Timeout <= 0 {
-			ep.Timeout = 5 * time.Second
-		}
-		if ep.MaxRetries <= 0 {
-			ep.MaxRetries = 3
-		}
+		path := fmt.Sprintf("notifications.endpoints[%d]", i)
+		ep.Timeout = cmp.Or(ep.Timeout, 5*time.Second)
+		ep.MaxRetries = cmp.Or(ep.MaxRetries, 3)
+		errs = append(errs, failed(
+			required(path+".url", ep.URL != ""),
+			required(path+".events", len(ep.Events) > 0),
+			positive(path+".timeout", ep.Timeout),
+			positive(path+".max_retries", ep.MaxRetries),
+		)...)
 	}
 	return errs
 }

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -307,10 +308,11 @@ func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
 	t.Parallel()
 	cfg := &config.EncryptionConfig{
 		Vault: &config.VaultTransitConfig{
-			Address:   "https://vault.example.com:8200",
-			Token:     "test-token",
-			KeyName:   "my-key",
-			MountPath: "transit",
+			Address:       "https://vault.example.com:8200",
+			Token:         "test-token",
+			KeyName:       "my-key",
+			MountPath:     "transit",
+			RenewInterval: time.Minute,
 		},
 	}
 	p, err := NewKeyProviderFromConfig(cfg)

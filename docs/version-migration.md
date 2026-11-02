@@ -64,6 +64,31 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Config validation, defaults, restart reporting and admission pools ([#1859](https://github.com/afreidah/s3-orchestrator/issues/1859), v0.179.3)**
+
+A config that loaded before may now be refused at startup: check it with `s3-orchestrator validate` before upgrading.
+
+- A negative count, size, interval or timeout is refused at load wherever one used to be silently rewritten to its default or passed through. This covers:
+  - `rate_limit.cleanup_interval`, where a negative value used to panic at startup, and `rate_limit.cleanup_max_age`
+  - the database and backend circuit breakers
+  - the server's timeouts, `max_object_size` and `shutdown_delay`
+  - `database` pool settings
+  - `replication`, `cleanup_queue`, `reconcile` and `lifecycle.batch_size`
+  - `cache.ttl` and notification endpoint timeouts and retries
+  - `debug.flight_recorder.min_age`, `encryption.vault.renew_interval` and `write_path.pending_pattern`
+- Validation messages name the field's path, such as `backends[0].endpoint is required` or `rebalance.interval must be positive (got -1h0m0s)`. The provisioning API's bucket validation messages are unchanged.
+- Setting only `server.max_concurrent_writes` or only `max_concurrent_reads` splits the admission pools, and the other pool takes `max_concurrent_requests`, or 1000 when that is unset too. Setting one used to install no admission control at all, so the bounded-upload example in the performance guide did not bound anything.
+- A manual rebalance or replication run with these settings unset uses the config defaults the scheduled workers use: the `pack` strategy and a replication batch of 50. A manual run used to default to `spread` and 100.
+- Restart reporting lists each changed setting by its path and covers every setting a reload cannot apply:
+  - Settings that were never reported now are, among them `cleanup_queue`, `reconcile`, `write_path`, `cache`, `notifications`, `rate_limit.trusted_proxies`, `backends[].credential_source`, `server.backend_timeout` and `encryption.vault`.
+  - `telemetry` is no longer reported after every reload once `require_listener` is in the file.
+  - `server.shutdown_delay`, which is read live, is no longer reported.
+  - A change to `unsigned_payload` on an `http` backend is now reported.
+- A reload whose usage limits do not compile is refused as `validation_failed` before anything changes. It used to swap the config in and report `partial_applied`.
+- A worker instance's admin API authenticates against the credential registry a provisioning change or reload rebuilds, as an API instance does. It used to keep the registry it started with, so a revoked credential kept working there until a restart.
+- A pending reaper that fails to build fails startup, like every other worker. An optional feature that fails to build, such as the object cache, the flight recorder or the notifier, is logged as a warning instead of being skipped silently.
+- A worker cycle with nothing to do no longer logs `cycle complete`. The notifier used to log every 2 seconds while idle.
+
 **Store engines read whole rows, SQLite prefixes match case ([#1856](https://github.com/afreidah/s3-orchestrator/issues/1856), v0.179.2)**
 
 - On SQLite, a prefix now matches keys byte for byte, as S3 and PostgreSQL match them. A listing, count or dashboard directory under `bucket/photos/` used to include `bucket/Photos/`, and so did a delete by prefix, lifecycle expiration and multipart upload listings scoped by prefix.

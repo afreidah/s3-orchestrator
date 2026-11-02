@@ -62,24 +62,16 @@ type visitorLimiter struct {
 // CONSTRUCTOR AND CONFIG
 // -------------------------------------------------------------------------
 
-// NewRateLimiter creates a rate limiter with the given configuration.
+// NewRateLimiter creates a rate limiter with the given configuration, whose
+// defaults the config loader filled.
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
-	cleanupInterval := cfg.CleanupInterval
-	if cleanupInterval == 0 {
-		cleanupInterval = 1 * time.Minute
-	}
-	cleanupMaxAge := cfg.CleanupMaxAge
-	if cleanupMaxAge == 0 {
-		cleanupMaxAge = 5 * time.Minute
-	}
-
 	rl := &RateLimiter{
 		limiters:        make(map[string]*visitorLimiter),
 		rate:            rate.Limit(cfg.RequestsPerSec),
 		burst:           cfg.Burst,
 		trustedProxies:  httputil.ParseTrustedProxies(cfg.TrustedProxies),
-		cleanupInterval: cleanupInterval,
-		cleanupMaxAge:   cleanupMaxAge,
+		cleanupInterval: cfg.CleanupInterval,
+		cleanupMaxAge:   cfg.CleanupMaxAge,
 		stop:            make(chan struct{}),
 	}
 
