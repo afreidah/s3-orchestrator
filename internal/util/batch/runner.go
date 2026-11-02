@@ -73,7 +73,11 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 	sum := Tally(results, start)
 	sum.Planned = len(items)
 	sum.Usage = usage.Usage()
-	LogCycle(ctx, r.Log, cmp.Or(r.Name, string(audit.WorkloadOf(ctx))), sum)
+	// An idle tick has nothing to report, and a worker polling an empty queue
+	// would otherwise log every interval.
+	if sum.Planned > 0 {
+		LogCycle(ctx, r.Log, cmp.Or(r.Name, string(audit.WorkloadOf(ctx))), sum)
+	}
 	return sum
 }
 

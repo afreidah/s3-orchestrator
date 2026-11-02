@@ -13,8 +13,8 @@
 package config
 
 import (
+	"cmp"
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"time"
 )
@@ -93,35 +93,21 @@ func (ic *IntegrityConfig) Hasher() hash.Hash {
 	return sha256.New()
 }
 
-// setDefaultsAndValidate is a no-op when integrity is disabled.
+// setDefaultsAndValidate fills the scrubber's defaults and, when integrity is
+// enabled, reports every field out of bounds.
 func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
-	if !ic.Enabled {
-		return nil
-	}
-
-	if ic.ScrubberBatchSize <= 0 {
-		ic.ScrubberBatchSize = 100
-	}
-
-	if ic.ScrubberMinAge == 0 {
-		ic.ScrubberMinAge = DefaultScrubberMinAge
-	}
-
+	ic.ScrubberBatchSize = cmp.Or(ic.ScrubberBatchSize, 100)
+	ic.ScrubberMinAge = cmp.Or(ic.ScrubberMinAge, DefaultScrubberMinAge)
 	if ic.ScrubberEgressReserve == nil {
 		ic.ScrubberEgressReserve = new(DefaultScrubberEgressReserve)
 	}
-
-	if ic.ScrubberInterval < 0 {
-		return []error{fmt.Errorf("integrity.scrubber_interval must be >= 0")}
+	if !ic.Enabled {
+		return nil
 	}
-
-	if ic.ScrubberMinAge < 0 {
-		return []error{fmt.Errorf("integrity.scrubber_min_age must be >= 0")}
-	}
-
-	if r := *ic.ScrubberEgressReserve; r < 0 || r > 1 {
-		return []error{fmt.Errorf("integrity.scrubber_egress_reserve must be between 0 and 1")}
-	}
-
-	return nil
+	return failed(
+		nonNegative("integrity.scrubber_interval", ic.ScrubberInterval),
+		positive("integrity.scrubber_batch_size", ic.ScrubberBatchSize),
+		positive("integrity.scrubber_min_age", ic.ScrubberMinAge),
+		between("integrity.scrubber_egress_reserve", *ic.ScrubberEgressReserve, 0, 1),
+	)
 }

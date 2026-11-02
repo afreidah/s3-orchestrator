@@ -74,27 +74,21 @@ func LoadProvisioning(ctx context.Context, i do.Injector, cfg *config.Config) (*
 	return p, nil
 }
 
-// Install publishes p on this instance: the declared bucket set first, then,
-// in a mode that serves the S3 API, the CORS rules and the credential registry.
-// The order means no bucket is reachable over S3 while the admin endpoints,
-// the CORS policy and the reconciler still believe it does not exist.
+// Install publishes p on this instance: the declared bucket set first, then the
+// CORS rules and the credential registry, which the S3 API and, in every mode,
+// the admin API authenticate against. The order means no bucket is reachable
+// over S3 while the admin endpoints, the CORS policy and the reconciler still
+// believe it does not exist.
 func (p *Provisioned) Install(ctx context.Context, i do.Injector) error {
-	r := newResolver(i)
+	r := NewResolver(i)
 	declared := r.Resolve[*provisioning.Declared]()
-	mode := r.Resolve[config.Mode]()
+	policy := r.Resolve[*cors.Policy]()
+	srv := r.Resolve[*s3api.Server]()
 	if r.err != nil {
 		return r.err
 	}
 	declared.Set(p.buckets)
 	logAssemblyNotices(ctx, p.registry.Notices())
-	if !mode.IsAPI() {
-		return nil
-	}
-	srv := r.Resolve[*s3api.Server]()
-	policy := r.Resolve[*cors.Policy]()
-	if r.err != nil {
-		return r.err
-	}
 	policy.SetRules(p.cors)
 	srv.SetBucketAuth(p.registry)
 	return nil

@@ -78,11 +78,6 @@ func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, err
 		client.SetToken(cfg.Token)
 	}
 
-	renewInterval := cfg.RenewInterval
-	if renewInterval <= 0 {
-		renewInterval = 5 * time.Minute
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &VaultKeyProvider{
 		client:        client,
@@ -90,7 +85,7 @@ func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, err
 		mountPath:     cfg.MountPath,
 		keyID:         fmt.Sprintf("vault:%s/%s", cfg.MountPath, cfg.KeyName),
 		tokenFile:     cfg.TokenFile,
-		renewInterval: renewInterval,
+		renewInterval: cfg.RenewInterval,
 		cancel:        cancel,
 		log:           slog.Default().With(logfmt.Component("vault_kms")),
 	}

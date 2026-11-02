@@ -302,7 +302,9 @@ func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features Work
 			Ops: rt, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,
 		}),
-		PendingReaper: worker.NewPendingReaper(worker.PendingReaperDeps{Ops: rt, Placement: coord, Store: m}),
+		PendingReaper: worker.NewPendingReaper(worker.PendingReaperDeps{
+			Ops: rt, Placement: coord, Store: m, MinAge: 5 * time.Minute, BatchSize: 50,
+		}),
 		Scrubber: worker.NewScrubber(&worker.ScrubberDeps{
 			Ops:       rt,
 			Placement: coord,

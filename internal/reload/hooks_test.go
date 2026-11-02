@@ -88,7 +88,7 @@ func TestResolutionError_WrapsCause(t *testing.T) {
 // path where the coordinator was constructed without a CertReloader.
 func TestTlsCertHook_NilReloaderSkipped(t *testing.T) {
 	h := &tlsCertHook{}
-	status, err := h.Apply(context.Background(), nil, nil)
+	status, err := h.Apply(context.Background(), nil)
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -155,7 +155,7 @@ func TestTlsCertHook_AppliedOnSuccessfulReload(t *testing.T) {
 	writeSelfSignedCert(t, certPath, keyPath)
 
 	h := &tlsCertHook{reloader: cr}
-	status, err := h.Apply(context.Background(), nil, nil)
+	status, err := h.Apply(context.Background(), nil)
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
@@ -180,7 +180,7 @@ func TestTlsCertHook_FailedOnReloadError(t *testing.T) {
 	}
 
 	h := &tlsCertHook{reloader: cr}
-	status, err := h.Apply(context.Background(), nil, nil)
+	status, err := h.Apply(context.Background(), nil)
 	if status != HookFailed {
 		t.Fatalf("status = %s, want failed", status)
 	}
@@ -198,7 +198,7 @@ func TestQuotaSyncHook_AppliedOnSuccess(t *testing.T) {
 	inj := do.New()
 	do.ProvideValue[core.LifecycleAdmin](inj, fake)
 	h := &quotaSyncHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
@@ -214,7 +214,7 @@ func TestQuotaSyncHook_FailedOnSyncError(t *testing.T) {
 	failing.EXPECT().SyncQuotaLimits(gomock.Any(), gomock.Any()).Return(syncBoom).AnyTimes()
 	do.ProvideValue[core.LifecycleAdmin](inj, failing)
 	h := &quotaSyncHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookFailed {
 		t.Fatalf("status = %s, want failed", status)
 	}
@@ -230,7 +230,7 @@ func TestProvisioningHook_ApplyInstalls(t *testing.T) {
 	inj, declared, srv := provisioningInjector(t)
 	h := &provisioningHook{inj: inj}
 
-	status, err := h.Apply(context.Background(), nil, corsBucketConfig("https://app.example.com"))
+	status, err := h.Apply(context.Background(), corsBucketConfig("https://app.example.com"))
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
@@ -252,7 +252,7 @@ func TestProvisioningHook_ApplyFailsOnBrokenServer(t *testing.T) {
 	failingProvider[*s3api.Server](inj)
 	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
-	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), nil, &config.Config{})
+	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
@@ -273,7 +273,7 @@ func TestRateLimitHook_FeatureDisabled(t *testing.T) {
 	h := &rateLimitHook{inj: do.New()}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = false
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), cfg)
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -287,7 +287,7 @@ func TestRateLimitHook_FailedResolution(t *testing.T) {
 	h := &rateLimitHook{inj: inj}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = true
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), cfg)
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
@@ -300,7 +300,7 @@ func TestRateLimitHook_SkippedWhenDisabledProvider(t *testing.T) {
 	h := &rateLimitHook{inj: do.New()}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = true
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), cfg)
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -311,7 +311,7 @@ func TestQuotaSyncHook_FailedResolution(t *testing.T) {
 	inj := do.New()
 	failingProvider[core.LifecycleAdmin](inj)
 	h := &quotaSyncHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
@@ -320,7 +320,7 @@ func TestQuotaSyncHook_FailedResolution(t *testing.T) {
 // TestQuotaSyncHook_SkippedWhenDisabled covers the no-provider path.
 func TestQuotaSyncHook_SkippedWhenDisabled(t *testing.T) {
 	h := &quotaSyncHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -331,7 +331,7 @@ func TestUsageLimitsHook_FailedResolution(t *testing.T) {
 	inj := do.New()
 	failingProvider[*infra.BackendRuntime](inj)
 	h := &usageLimitsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
@@ -340,7 +340,7 @@ func TestUsageLimitsHook_FailedResolution(t *testing.T) {
 // TestUsageLimitsHook_SkippedWhenDisabled covers the no-provider path.
 func TestUsageLimitsHook_SkippedWhenDisabled(t *testing.T) {
 	h := &usageLimitsHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -349,7 +349,7 @@ func TestUsageLimitsHook_SkippedWhenDisabled(t *testing.T) {
 // TestLogLevelHook_NilLevelSkipped covers the no-level-pointer path.
 func TestLogLevelHook_NilLevelSkipped(t *testing.T) {
 	h := &logLevelHook{}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
@@ -363,7 +363,7 @@ func TestLogLevelHook_Applied(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.LogLevel = "debug"
 	h := &logLevelHook{level: &lv}
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), cfg)
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
@@ -377,7 +377,7 @@ func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
 	inj := do.New()
 	failingProvider[*infra.BackendRuntime](inj)
 	h := &quotaMetricsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
@@ -389,8 +389,7 @@ func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
 func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 	inj := do.New()
 	rl := s3api.NewRateLimiter(config.RateLimitConfig{
-		RequestsPerSec: 1,
-		Burst:          1,
+		RequestsPerSec: 1, Burst: 1, CleanupInterval: time.Minute, CleanupMaxAge: 5 * time.Minute,
 	})
 	t.Cleanup(rl.Close)
 	do.Provide(inj, func(do.Injector) (*s3api.RateLimiter, error) { return rl, nil })
@@ -399,7 +398,7 @@ func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 	cfg.RateLimit.Enabled = true
 	cfg.RateLimit.RequestsPerSec = 10
 	cfg.RateLimit.Burst = 20
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), cfg)
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
@@ -422,9 +421,19 @@ func TestHookNamesStable(t *testing.T) {
 		if got := h.Name(); got != want {
 			t.Errorf("Name = %q, want %q", got, want)
 		}
-		if err := h.Check(nil, nil); err != nil {
-			t.Errorf("%s Check returned %v, want nil", want, err)
-		}
+	}
+}
+
+// TestUsageLimitsHook_CheckRefusesUncompilableLimits verifies a pool that does
+// not compile refuses the reload in Check, before the config is swapped in.
+func TestUsageLimitsHook_CheckRefusesUncompilableLimits(t *testing.T) {
+	cfg := &config.Config{Backends: []config.BackendConfig{{
+		Name:          "b1",
+		Unmetered:     []string{"GetObject"},
+		RequestLimits: []config.RequestPoolConfig{{Name: "reads", Operations: []string{"GetObject"}, Limit: 10}},
+	}}}
+	if err := (&usageLimitsHook{}).Check(cfg); err == nil {
+		t.Error("Check accepted a pool charging an unmetered operation")
 	}
 }
 
@@ -489,7 +498,7 @@ func TestProvisioningHook_CheckChangesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			inj, declared, srv := provisioningInjector(t)
-			err := (&provisioningHook{inj: inj}).Check(&config.Config{}, tc.cfg)
+			err := (&provisioningHook{inj: inj}).Check(tc.cfg)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Check = %v, want error %v", err, tc.wantErr)
 			}
@@ -505,7 +514,7 @@ func TestProvisioningHook_CheckChangesNothing(t *testing.T) {
 // built from an ambiguous credential.
 func TestProvisioningHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
 	inj, _, srv := provisioningInjector(t)
-	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), nil, duplicateKeyConfig())
+	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), duplicateKeyConfig())
 	if status != HookFailed || err == nil || srv.GetBucketAuth() != nil {
 		t.Fatalf("Apply = (%s, %v), registry %v; want failed and nothing installed", status, err, srv.GetBucketAuth())
 	}

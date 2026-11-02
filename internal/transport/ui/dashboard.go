@@ -133,7 +133,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			RoutingStrategy:           string(cfg.RoutingStrategy),
 			ReplicationFactor:         cfg.Replication.Factor,
 			RebalanceEnabled:          cfg.Rebalance.Enabled,
-			RebalanceStrategy:         cfg.Rebalance.Strategy,
+			RebalanceStrategy:         string(cfg.Rebalance.Strategy),
 			RateLimitEnabled:          cfg.RateLimit.Enabled,
 			EncryptionEnabled:         cfg.Encryption.Enabled,
 			CompressionEnabled:        cfg.Compression.Enabled,

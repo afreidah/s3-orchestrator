@@ -46,8 +46,8 @@ max_conns = max_concurrent_requests + (active_workers x 2) + 10
 ```yaml
 server:
   max_concurrent_requests: 1000  # default: 1000 (applied when split pools are not configured)
-  # max_concurrent_reads: 0     # separate limit for GET/HEAD (0 = use global)
-  # max_concurrent_writes: 0    # separate limit for PUT/POST/DELETE (0 = use global)
+  # max_concurrent_reads: 0     # separate limit for GET/HEAD (0 = global limit)
+  # max_concurrent_writes: 0    # separate limit for PUT/POST/DELETE (0 = global limit)
   # load_shed_threshold: 0      # 0.0-1.0, start shedding at this capacity ratio (0 = disabled)
   # admission_wait: "0s"        # brief wait before rejection (0 = instant)
 ```
@@ -56,7 +56,7 @@ Limits the number of S3 requests being processed concurrently. When the limit is
 
 ### Global vs split pools
 
-By default, `max_concurrent_requests` applies a single limit to all operations. For workloads where write storms should not starve reads, set `max_concurrent_reads` and `max_concurrent_writes` instead. When both are set, reads (GET, HEAD) and writes (PUT, POST, DELETE) get independent semaphores and cannot block each other.
+By default, `max_concurrent_requests` applies a single limit to all operations. For workloads where write storms should not starve reads, set `max_concurrent_reads` and `max_concurrent_writes` instead. Setting either one gives reads (GET, HEAD) and writes (PUT, POST, DELETE) independent semaphores that cannot block each other; the one left at `0` takes `max_concurrent_requests`, or 1000 when that is unset too.
 
 ### Active load shedding
 

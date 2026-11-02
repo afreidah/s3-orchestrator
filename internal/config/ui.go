@@ -27,12 +27,9 @@ type UIConfig struct {
 
 // setDefaultsAndValidate sets defaults and validate.
 func (u *UIConfig) setDefaultsAndValidate() []error {
-	var errs []error
-
 	u.Path = cmp.Or(u.Path, "/ui")
-	if u.Enabled && u.SessionSecret == "" {
-		errs = append(errs, ErrSessionSecretReqd)
+	if !u.Enabled {
+		return nil
 	}
-
-	return errs
+	return failed(required("ui.session_secret", u.SessionSecret != ""))
 }

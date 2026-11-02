@@ -16,7 +16,6 @@ package di
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -42,7 +41,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -66,34 +64,6 @@ type BackendsResult struct {
 	Breakers    []*backend.CircuitBreakerBackend // empty when per-backend breakers are disabled
 }
 
-// UsageLimitsFor compiles one backend's configured budgets and usage cycle into
-// the form admission reads, for both startup and the reload hook.
-// api_request_limit desugars into one wildcard pool; config validation rejects
-// setting it alongside request_limits.
-func UsageLimitsFor(b *config.BackendConfig) (core.UsageLimits, error) {
-	specs := make([]core.PoolSpec, 0, len(b.RequestLimits)+1)
-	for i := range b.RequestLimits {
-		p := &b.RequestLimits[i]
-		specs = append(specs, core.PoolSpec{Name: p.Name, Operations: p.Operations, Limit: p.Limit})
-	}
-	specs = append(specs, core.SingleRequestPool(b.APIRequestLimit)...)
-
-	unmetered := make([]s3op.Operation, 0, len(b.Unmetered))
-	for _, name := range b.Unmetered {
-		unmetered = append(unmetered, s3op.Operation(name))
-	}
-	lim, err := core.NewUsageLimits(b.EgressByteLimit, b.IngressByteLimit, specs, unmetered)
-	if err != nil {
-		return core.UsageLimits{}, err
-	}
-	loc, err := b.UsageResetLocation()
-	if err != nil {
-		return core.UsageLimits{}, fmt.Errorf("backend %q usage_reset_timezone: %w", b.Name, err)
-	}
-	lim.Period = core.UsagePeriod{ResetDay: b.UsageResetDay, Location: loc}
-	return lim, nil
-}
-
 // ProvideBackends initializes all configured storage backends, wrapping
 // each with a per-backend circuit breaker when enabled.
 func ProvideBackends(i do.Injector) (*BackendsResult, error) {
@@ -102,9 +72,12 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		return nil, err
 	}
 
+	limits, err := core.UsageLimitsFor(cfg.Backends)
+	if err != nil {
+		return nil, err
+	}
 	backends := make(map[string]backend.ObjectBackend, len(cfg.Backends))
 	order := make([]string, 0, len(cfg.Backends))
-	limits := make(map[string]core.UsageLimits, len(cfg.Backends))
 	profiles := make(map[string]core.BackendProfile, len(cfg.Backends))
 	breakers := make([]*backend.CircuitBreakerBackend, 0, len(cfg.Backends))
 
@@ -126,11 +99,6 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		backends[bcfg.Name] = be
 		order = append(order, bcfg.Name)
-		lim, err := UsageLimitsFor(bcfg)
-		if err != nil {
-			return nil, err
-		}
-		limits[bcfg.Name] = lim
 		profiles[bcfg.Name] = core.BackendProfile{
 			Endpoint:      bcfg.Endpoint,
 			Region:        bcfg.Region,
@@ -162,7 +130,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 // configured. The database ping costs nothing, so its checks do not back off;
 // the backend probers charge their checks through the usage tracker.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
 	stores := r.Resolve[metadataStore]()
 	br := r.Resolve[*BackendsResult]()
@@ -226,7 +194,7 @@ func ProvideCodec(i do.Injector) (*compression.Codec, error) {
 
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	br := r.Resolve[*BackendsResult]()
 	if r.err != nil {
@@ -255,9 +223,9 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 // share. With Redis configured it rides the Redis counter backend, whatever
 // state Redis is in; without Redis the instance runs alone.
 func ProvideSharedState(i do.Injector) (*sharedstate.Shared, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
-	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	id := r.Resolve[instanceid.ID]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -303,7 +271,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 // delete/move/orphan-cleanup primitive the manager, multipart manager,
 // object manager, and drain manager all route writes through.
 func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
@@ -341,7 +309,7 @@ type writePathDeps struct {
 // has its own error path and needs the already-resolved config to decide
 // whether to build at all.
 func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	d := &writePathDeps{
 		cfg:          r.Resolve[*config.Config](),
 		rt:           r.Resolve[*infra.BackendRuntime](),
@@ -395,7 +363,7 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 // through it, whatever state Redis is in: an unreachable Redis puts the
 // counter backend in fallback, not out of the wiring.
 func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	br := r.Resolve[*BackendsResult]()
 	if r.err != nil {
@@ -417,7 +385,7 @@ func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
 // independently-resolvable dependency that workers, drain and every proxy
 // collaborator share.
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	live := r.Resolve[*config.Live]()
 	br := r.Resolve[*BackendsResult]()
@@ -439,9 +407,6 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Shared:            shared,
 		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,
 	})
-	// Register the collector so the admin handler can serve its replication
-	// snapshot from a cheap /admin/api/replication read.
-	do.ProvideValue(i, collector)
 	return infra.New(&infra.Config{
 		Backends:         br.Backends,
 		Order:            br.Order,
@@ -465,7 +430,7 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := newResolver(i)
+	r := NewResolver(i)
 	dbBreaker := r.Resolve[*breaker.CircuitBreaker]()
 	detached := r.Resolve[*writepath.DetachedUploads]()
 	if r.err != nil {
@@ -480,12 +445,12 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		Codec:                        d.codec,
 		Compression:                  d.cfg.Compression,
 		LocationCache:                object.NewLocationCache(cb.CacheTTL),
-		ObjectCache:                  Optional[objcache.ObjectCache](i).Value,
+		ObjectCache:                  Optional[objcache.ObjectCache](i).Get(context.Background()),
 		ParallelBroadcast:            cb.ParallelBroadcast,
 		CopiesPerWrite:               d.cfg.CopiesPerWrite(),
 		Detached:                     detached,
 		DegradedBroadcastParallelism: cb.DegradedBroadcastParallelism,
-		DisableDegradedReads:         cb.DegradedReadsEnabled != nil && !*cb.DegradedReadsEnabled,
+		DisableDegradedReads:         !cb.DegradedReads(),
 		IntegrityCfg:                 d.integrityCfg,
 		BackendTimeout:               d.cfg.Server.BackendTimeout,
 	})
@@ -505,28 +470,22 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 // ProvideDashboardAggregator builds the web-UI data aggregator, so the admin
 // and UI transports read dashboard data from a dependency of their own.
 func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	br := r.Resolve[*BackendsResult]()
 	stores := r.Resolve[metadataStore]()
 	scrubber := r.Resolve[*worker.Scrubber]()
+	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
-
-	// A nil *backendstate.Manager must stay a nil interface, not a non-nil
-	// interface holding a nil pointer.
-	var drainReader dashboard.DrainProgressReader
-	if dm, err := do.Invoke[*backendstate.Manager](i); err == nil && dm != nil {
-		drainReader = dm
-	}
-	return dashboard.New(stores, rt.Usage(), scrubber, br.Order, rt, drainReader), nil
+	return dashboard.New(stores, rt.Usage(), scrubber, br.Order, rt, states), nil
 }
 
 // ProvideExpiryManager builds the lifecycle-expiration manager over the
 // lifecycle section of the running configuration.
 func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	live := r.Resolve[*config.Live]()
 	objects := r.Resolve[*object.Manager]()
 	stores := r.Resolve[metadataStore]()
@@ -540,7 +499,7 @@ func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
 // view is four methods wide, which is why it is not carved out of the backend
 // manager's union.
 func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
 	codec := r.Resolve[*compression.Codec]()
@@ -560,7 +519,7 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 // counters into the store, and the reconcile that corrects the drift the
 // incremental counter accumulates.
 func ProvideUsageService(i do.Injector) (*usage.Service, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
@@ -570,16 +529,12 @@ func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 }
 
 // admissionSemFor returns the shared admission semaphore, or nil when uncapped.
-// In split mode it is sized to MaxConcurrentWrites and shared by HTTP writes
-// and the background workers, since they do write-like work; otherwise it is
-// sized to MaxConcurrentRequests and shared by everything.
+// In split mode it is the write pool, shared by HTTP writes and the background
+// workers, since they do write-like work; otherwise it is the one pool shared
+// by everything.
 func admissionSemFor(s *config.ServerConfig) chan struct{} {
-	switch {
-	case s.MaxConcurrentReads > 0 && s.MaxConcurrentWrites > 0:
-		return make(chan struct{}, s.MaxConcurrentWrites)
-	case s.MaxConcurrentRequests > 0:
-		return make(chan struct{}, s.MaxConcurrentRequests)
-	default:
-		return nil
+	if n := s.Admission().WriteCapacity(); n > 0 {
+		return make(chan struct{}, n)
 	}
+	return nil
 }

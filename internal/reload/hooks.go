@@ -35,6 +35,13 @@ func resolutionError(label string, err error) error {
 	return fmt.Errorf("%s resolution failed: %w", label, err)
 }
 
+// The hooks that can refuse a config. A Check with the wrong signature would
+// otherwise stop being called without any error.
+var (
+	_ checker = (*provisioningHook)(nil)
+	_ checker = (*usageLimitsHook)(nil)
+)
+
 // defaultHooks returns the standard set of reload hooks the runtime wires in,
 // in the order they must run. The cert reloader is passed directly because it
 // is not registered in the injector.
@@ -77,9 +84,8 @@ type tlsCertHook struct {
 	reloader *httputil.CertReloader
 }
 
-func (*tlsCertHook) Name() string                    { return "tls_certificate" }
-func (*tlsCertHook) Check(_, _ *config.Config) error { return nil }
-func (h *tlsCertHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
+func (*tlsCertHook) Name() string { return "tls_certificate" }
+func (h *tlsCertHook) Apply(_ context.Context, _ *config.Config) (HookStatus, error) {
 	if h.reloader == nil {
 		return HookSkipped, nil
 	}
@@ -106,17 +112,17 @@ func (*provisioningHook) Name() string { return "provisioning" }
 // Check loads the replacement and throws it away. Loading publishes nothing,
 // so an ambiguous credential, an unreadable CORS rule or an unreadable store
 // aborts the reload with every running view untouched.
-func (h *provisioningHook) Check(_, newCfg *config.Config) error {
-	if newCfg == nil {
+func (h *provisioningHook) Check(cfg *config.Config) error {
+	if cfg == nil {
 		return nil
 	}
-	_, err := di.LoadProvisioning(context.Background(), h.inj, newCfg)
+	_, err := di.LoadProvisioning(context.Background(), h.inj, cfg)
 	return err
 }
 
 // Apply loads and installs the replacement.
-func (h *provisioningHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	if err := di.ApplyProvisioning(ctx, h.inj, newCfg); err != nil {
+func (h *provisioningHook) Apply(ctx context.Context, cfg *config.Config) (HookStatus, error) {
+	if err := di.ApplyProvisioning(ctx, h.inj, cfg); err != nil {
 		return HookFailed, err
 	}
 	return HookApplied, nil
@@ -133,14 +139,13 @@ type rateLimitHook struct {
 	inj do.Injector
 }
 
-func (*rateLimitHook) Name() string                    { return "rate_limit" }
-func (*rateLimitHook) Check(_, _ *config.Config) error { return nil }
-func (h *rateLimitHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	if !newCfg.RateLimit.Enabled {
+func (*rateLimitHook) Name() string { return "rate_limit" }
+func (h *rateLimitHook) Apply(_ context.Context, cfg *config.Config) (HookStatus, error) {
+	if !cfg.RateLimit.Enabled {
 		return HookSkipped, nil
 	}
 	return applyResolved(h.inj, "rate limiter", func(rl *s3api.RateLimiter) error {
-		rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
+		rl.UpdateLimits(cfg.RateLimit.RequestsPerSec, cfg.RateLimit.Burst)
 		return nil
 	})
 }
@@ -154,11 +159,10 @@ type quotaSyncHook struct {
 	inj do.Injector
 }
 
-func (*quotaSyncHook) Name() string                    { return "quota_sync" }
-func (*quotaSyncHook) Check(_, _ *config.Config) error { return nil }
-func (h *quotaSyncHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
+func (*quotaSyncHook) Name() string { return "quota_sync" }
+func (h *quotaSyncHook) Apply(ctx context.Context, cfg *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "lifecycle admin", func(admin core.LifecycleAdmin) error {
-		return admin.SyncQuotaLimits(ctx, newCfg.Backends)
+		return admin.SyncQuotaLimits(ctx, cfg.Backends)
 	})
 }
 
@@ -172,18 +176,21 @@ type usageLimitsHook struct {
 	inj do.Injector
 }
 
-func (*usageLimitsHook) Name() string                    { return "usage_limits" }
-func (*usageLimitsHook) Check(_, _ *config.Config) error { return nil }
-func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+func (*usageLimitsHook) Name() string { return "usage_limits" }
+
+// Check compiles the limits so one that does not compile refuses the reload
+// before the config is swapped in, rather than failing after it.
+func (*usageLimitsHook) Check(cfg *config.Config) error {
+	_, err := core.UsageLimitsFor(cfg.Backends)
+	return err
+}
+
+// Apply compiles the limits and installs them on the usage tracker.
+func (h *usageLimitsHook) Apply(_ context.Context, cfg *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
-		limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
-		for i := range newCfg.Backends {
-			bcfg := &newCfg.Backends[i]
-			lim, err := di.UsageLimitsFor(bcfg)
-			if err != nil {
-				return fmt.Errorf("backend %s: %w", bcfg.Name, err)
-			}
-			limits[bcfg.Name] = lim
+		limits, err := core.UsageLimitsFor(cfg.Backends)
+		if err != nil {
+			return err
 		}
 		var applier usageLimitsApplier = rt.Usage()
 		applier.UpdateLimits(limits)
@@ -200,13 +207,12 @@ type logLevelHook struct {
 	level *slog.LevelVar
 }
 
-func (*logLevelHook) Name() string                    { return "log_level" }
-func (*logLevelHook) Check(_, _ *config.Config) error { return nil }
-func (h *logLevelHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+func (*logLevelHook) Name() string { return "log_level" }
+func (h *logLevelHook) Apply(_ context.Context, cfg *config.Config) (HookStatus, error) {
 	if h.level == nil {
 		return HookSkipped, nil
 	}
-	level, _ := config.ParseLogLevel(newCfg.Server.LogLevel)
+	level, _ := config.ParseLogLevel(cfg.Server.LogLevel)
 	h.level.Set(level)
 	return HookApplied, nil
 }
@@ -221,9 +227,8 @@ type quotaMetricsHook struct {
 	inj do.Injector
 }
 
-func (*quotaMetricsHook) Name() string                    { return "quota_metrics" }
-func (*quotaMetricsHook) Check(_, _ *config.Config) error { return nil }
-func (h *quotaMetricsHook) Apply(ctx context.Context, _, _ *config.Config) (HookStatus, error) {
+func (*quotaMetricsHook) Name() string { return "quota_metrics" }
+func (h *quotaMetricsHook) Apply(ctx context.Context, _ *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
 		return rt.UpdateQuotaMetrics(ctx)
 	})

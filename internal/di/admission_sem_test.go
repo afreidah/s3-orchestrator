@@ -66,54 +66,27 @@ func TestAdmissionSemFor_NoLimits_ReturnsNil(t *testing.T) {
 	}
 }
 
-// TestAdmissionSemFor_PartialSplit_FallsToMerged pins the fallthrough
-// branch: when only one of reads/writes is set but the other is zero,
-// the split-mode case does not match. The function falls through to
-// MaxConcurrentRequests, or to nil if that is also unset. This is the
-// non-obvious shape future readers most likely to misinterpret.
-func TestAdmissionSemFor_PartialSplit_FallsToMerged(t *testing.T) {
+// TestAdmissionSemFor_LoneSplitLimit pins that setting only one split limit
+// still splits the pools: the shared semaphore is the write pool, which takes
+// the write limit when set and the shared limit, or the default, otherwise.
+// Setting one limit used to install no admission at all.
+func TestAdmissionSemFor_LoneSplitLimit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		cfg  config.ServerConfig
-		want int // -1 means expect nil
+		want int
 	}{
-		{
-			name: "reads_only_with_requests",
-			cfg:  config.ServerConfig{MaxConcurrentReads: 100, MaxConcurrentRequests: 300},
-			want: 300,
-		},
-		{
-			name: "writes_only_with_requests",
-			cfg:  config.ServerConfig{MaxConcurrentWrites: 100, MaxConcurrentRequests: 300},
-			want: 300,
-		},
-		{
-			name: "reads_only_no_requests",
-			cfg:  config.ServerConfig{MaxConcurrentReads: 100},
-			want: -1,
-		},
-		{
-			name: "writes_only_no_requests",
-			cfg:  config.ServerConfig{MaxConcurrentWrites: 100},
-			want: -1,
-		},
+		{"reads_only_with_requests", config.ServerConfig{MaxConcurrentReads: 100, MaxConcurrentRequests: 300}, 300},
+		{"writes_only_with_requests", config.ServerConfig{MaxConcurrentWrites: 100, MaxConcurrentRequests: 300}, 100},
+		{"reads_only_no_requests", config.ServerConfig{MaxConcurrentReads: 100}, config.DefaultMaxConcurrentRequests},
+		{"writes_only_no_requests", config.ServerConfig{MaxConcurrentWrites: 100}, 100},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := admissionSemFor(&tc.cfg)
-			if tc.want == -1 {
-				if got != nil {
-					t.Errorf("expected nil, got cap=%d", cap(got))
-				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("expected non-nil sem with cap=%d", tc.want)
-			}
-			if cap(got) != tc.want {
-				t.Errorf("cap(sem) = %d, want %d", cap(got), tc.want)
+			if got := admissionSemFor(&tc.cfg); got == nil || cap(got) != tc.want {
+				t.Errorf("sem = %v (cap %d), want cap %d", got != nil, cap(got), tc.want)
 			}
 		})
 	}

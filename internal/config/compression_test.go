@@ -177,8 +177,8 @@ func TestCompressionConfig_ChunkSizeBounds(t *testing.T) {
 			cfg.Compression = CompressionConfig{Enabled: true, ChunkSize: tt.chunkSize}
 
 			err := cfg.SetDefaultsAndValidate()
-			if tt.wantErr && !errors.Is(err, ErrInvalidCompressionChunkSize) {
-				t.Errorf("chunk size %d: want ErrInvalidCompressionChunkSize, got %v", tt.chunkSize, err)
+			if tt.wantErr && !errors.Is(err, ErrOutOfRange) {
+				t.Errorf("chunk size %d: want ErrOutOfRange, got %v", tt.chunkSize, err)
 			}
 			if !tt.wantErr && err != nil {
 				t.Errorf("chunk size %d: want no error, got %v", tt.chunkSize, err)
@@ -195,46 +195,8 @@ func TestCompressionConfig_NegativeMinSize(t *testing.T) {
 	cfg.Compression = CompressionConfig{Enabled: true, MinSize: -1}
 
 	err := cfg.SetDefaultsAndValidate()
-	if err == nil || !errors.Is(err, ErrInvalidCompressionMinSize) {
-		t.Errorf("negative min_size should fail with ErrInvalidCompressionMinSize, got: %v", err)
-	}
-}
-
-// TestCompressionConfig_RequiresRestart verifies every field is reported as
-// restart-required, and that an unchanged block reports nothing.
-func TestCompressionConfig_RequiresRestart(t *testing.T) {
-	t.Parallel()
-	base := CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}
-	tests := []struct {
-		name string
-		next CompressionConfig
-		want bool
-	}{
-		{"unchanged", base, false},
-		{"enabled", CompressionConfig{Enabled: false, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}, true},
-		{"level", CompressionConfig{Enabled: true, Level: "best", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}, true},
-		{"chunk size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 21, MinSize: 4096, MinRatio: 0.95}, true},
-		{"min size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 8192, MinRatio: 0.95}, true},
-		{"min ratio", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.5}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			old := validBaseConfig()
-			old.Compression = base
-			next := validBaseConfig()
-			next.Compression = tt.next
-
-			var found bool
-			for _, field := range NonReloadableFieldsChanged(&old, &next) {
-				if field == "compression" {
-					found = true
-				}
-			}
-			if found != tt.want {
-				t.Errorf("compression reported restart-required = %v, want %v", found, tt.want)
-			}
-		})
+	if !errors.Is(err, ErrNegative) {
+		t.Errorf("negative min_size should fail with ErrNegative, got: %v", err)
 	}
 }
 

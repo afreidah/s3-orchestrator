@@ -91,16 +91,17 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 // registerS3Handler mounts the S3 proxy on / with optional rate limiting
 // and admission control.
 //
-// Admission model (see internal/di/backend.go admissionSemFor):
+// Admission model (config.ServerConfig.Admission decides the pools):
 //
-//   - Split mode (MaxConcurrentReads and MaxConcurrentWrites): reads get a
+//   - Split mode (MaxConcurrentReads or MaxConcurrentWrites): reads get a
 //     fresh semaphore created here, local to the HTTP read path. Writes reuse
 //     the runtime's AdmissionSem(), which is also the budget every background
 //     worker acquires from, so HTTP writes share their ceiling with worker
 //     activity and operators should size it for both.
 //   - Merged mode (MaxConcurrentRequests): AdmissionSem() is one global pool
 //     that HTTP reads, HTTP writes and workers all contend for.
-//   - Neither set: no admission middleware is installed.
+//   - No pool, which only a config built in code has: no admission middleware
+//     is installed.
 //
 // Either form respects LoadShedThreshold and AdmissionWait when set.
 //
@@ -128,14 +129,14 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	}
 
 	var ac *s3api.AdmissionController
-	switch {
-	case cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0:
+	switch pools := cfg.Server.Admission(); {
+	case pools.Split():
 		// Split-pool: dedicate a fresh read sem (HTTP-only) and reuse
 		// the runtime's sem as the write+workers pool. See the func
 		// doc above for the full model.
-		readSem := make(chan struct{}, cfg.Server.MaxConcurrentReads)
+		readSem := make(chan struct{}, pools.Reads)
 		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, rt.AdmissionSem(), limits)
-	case cfg.Server.MaxConcurrentRequests > 0:
+	case pools.Shared > 0:
 		// Merged-pool: every request and every worker shares the
 		// runtime's sem.
 		ac = s3api.NewAdmissionControllerFromSem(rt.AdmissionSem(), limits)

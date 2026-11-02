@@ -11,7 +11,10 @@
 
 package config
 
-import "time"
+import (
+	"cmp"
+	"time"
+)
 
 // DebugConfig groups opt-in diagnostic features. All sub-blocks default to
 // disabled; production deployments enable only what an incident requires.
@@ -28,10 +31,9 @@ type FlightRecorderConfig struct {
 	MinAge  time.Duration `yaml:"min_age"` // soft lower bound on the trace window age
 }
 
-// setDefaults gives an enabled recorder its default window age. A disabled
-// recorder is left as written, since nothing reads it.
-func (fr *FlightRecorderConfig) setDefaults() {
-	if fr.Enabled && fr.MinAge <= 0 {
-		fr.MinAge = 30 * time.Second
-	}
+// setDefaultsAndValidate gives the recorder its default window age and refuses
+// a negative one.
+func (fr *FlightRecorderConfig) setDefaultsAndValidate() []error {
+	fr.MinAge = cmp.Or(fr.MinAge, 30*time.Second)
+	return failed(positive("debug.flight_recorder.min_age", fr.MinAge))
 }

@@ -78,8 +78,8 @@ func TestWireManager_NoRebalancer(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing Rebalancer")
 	}
-	if !strings.Contains(err.Error(), "resolve Rebalancer") {
-		t.Errorf("error = %q, want to contain \"resolve Rebalancer\"", err.Error())
+	if !strings.Contains(err.Error(), "resolve *github.com/afreidah/s3-orchestrator/internal/worker.Rebalancer") {
+		t.Errorf("error = %q, want it to name the Rebalancer it failed to resolve", err.Error())
 	}
 }
 
@@ -130,6 +130,7 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 	provideOverRep := func(inj do.Injector) { do.ProvideValue(inj, &worker.OverReplicationCleaner{}) }
 	provideCleanup := func(inj do.Injector) { do.ProvideValue(inj, &worker.CleanupWorker{}) }
 	provideScrubber := func(inj do.Injector) { do.ProvideValue(inj, &worker.Scrubber{}) }
+	provideReaper := func(inj do.Injector) { do.ProvideValue(inj, &worker.PendingReaper{}) }
 
 	tests := []struct {
 		name      string
@@ -139,32 +140,37 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 		{
 			name:      "missing Replicator",
 			steps:     []func(do.Injector){provideRebalancer},
-			errSubstr: "resolve Replicator",
+			errSubstr: "worker.Replicator",
 		},
 		{
 			name:      "missing OverReplicationCleaner",
 			steps:     []func(do.Injector){provideRebalancer, provideReplicator},
-			errSubstr: "resolve OverReplicationCleaner",
+			errSubstr: "worker.OverReplicationCleaner",
 		},
 		{
 			name:      "missing CleanupWorker",
 			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep},
-			errSubstr: "resolve CleanupWorker",
+			errSubstr: "worker.CleanupWorker",
 		},
 		{
 			name:      "missing Scrubber",
 			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup},
-			errSubstr: "resolve Scrubber",
+			errSubstr: "worker.Scrubber",
+		},
+		{
+			name:      "missing PendingReaper",
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber},
+			errSubstr: "worker.PendingReaper",
 		},
 		{
 			name:      "missing BackendRuntime",
-			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber},
-			errSubstr: "resolve BackendRuntime",
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber, provideReaper},
+			errSubstr: "infra.BackendRuntime",
 		},
 		{
 			name:      "missing BackendStateManager",
-			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber, provideRuntime},
-			errSubstr: "resolve BackendStateManager",
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber, provideReaper, provideRuntime},
+			errSubstr: "backendstate.Manager",
 		},
 	}
 
@@ -187,12 +193,11 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 	_ = (*backendstate.Manager)(nil)
 }
 
-// TestWireManager_PendingReaperFailedLogsAndContinues drives the Failed
-// branch the Optional[T] migration added: an override registers a
-// PendingReaper provider that errors, and WireManager must still
-// succeed (logging the failure and continuing) so a broken optional
-// dependency does not abort startup.
-func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
+// TestWireManager_PendingReaperFailureFailsStartup verifies a pending reaper
+// that fails to build fails startup like every other worker. It is always
+// registered, and a deployment without it would accumulate intents that hold
+// a backend's headroom against writes that never come.
+func TestWireManager_PendingReaperFailureFailsStartup(t *testing.T) {
 	t.Parallel()
 	cfg := happyPathConfig(t.TempDir())
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -206,7 +211,7 @@ func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
 		return nil, boom
 	})
 
-	if err := WireManager(inj); err != nil {
-		t.Fatalf("WireManager: %v (expected to swallow Failed optional)", err)
+	if err := WireManager(inj); !errors.Is(err, boom) {
+		t.Fatalf("WireManager = %v, want the reaper's construction error", err)
 	}
 }

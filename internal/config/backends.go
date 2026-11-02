@@ -15,7 +15,7 @@ package config
 import (
 	"cmp"
 	"fmt"
-	"strconv"
+	"strings"
 	"time"
 
 	// Embeds the zone database, so usage_reset_timezone loads in an image
@@ -45,7 +45,7 @@ type BackendConfig struct {
 	SecretAccessKey  string `yaml:"secret_access_key"`  // AWS secret access key (required when credential_source is "static")
 	CredentialSource string `yaml:"credential_source"`  // "static" (default) or "default_chain": env, IMDS, SSO, STS
 	ForcePathStyle   bool   `yaml:"force_path_style"`   // Use path-style URLs
-	UnsignedPayload  *bool  `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
+	UnsignedPayload  *bool  `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true over https)
 	DisableChecksum  bool   `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
 	StripSDKHeaders  bool   `yaml:"strip_sdk_headers"`  // Remove SDK v2 headers (amz-sdk-*, accept-encoding, x-id) before signing for GCS compatibility (default: false)
 	QuotaBytes       int64  `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
@@ -94,6 +94,17 @@ func (h BackendHTTPConfig) HTTP2Enabled() bool {
 	return h.ForceHTTP2 == nil || *h.ForceHTTP2
 }
 
+// UnsignedPayloadEnabled reports whether uploads skip the SigV4 payload hash
+// and stream without buffering. Unset, it is on for an https endpoint and off
+// for plain http, since AWS S3 rejects the UNSIGNED-PAYLOAD sentinel without
+// TLS. An explicit value is always kept.
+func (b *BackendConfig) UnsignedPayloadEnabled() bool {
+	if b.UnsignedPayload != nil {
+		return *b.UnsignedPayload
+	}
+	return strings.HasPrefix(b.Endpoint, "https")
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
@@ -107,29 +118,19 @@ func (h *BackendHTTPConfig) setDefaults() {
 	h.MaxIdleConnsPerHost = cmp.Or(h.MaxIdleConnsPerHost, DefaultMaxIdleConnsPerHost)
 	h.MaxConnsPerHost = cmp.Or(h.MaxConnsPerHost, DefaultMaxConnsPerHost)
 	h.ResponseHeaderTimeout = cmp.Or(h.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+	h.ForceHTTP2 = new(h.HTTP2Enabled())
 }
 
 // validate rejects negative values, which no transport field accepts. Fields
 // are checked in a fixed order so an operator with several typos sees them
 // listed the same way every run.
 func (h BackendHTTPConfig) validate(prefix string) []error {
-	fields := []struct {
-		name  string
-		value int64
-	}{
-		{"http.max_idle_conns", int64(h.MaxIdleConns)},
-		{"http.max_idle_conns_per_host", int64(h.MaxIdleConnsPerHost)},
-		{"http.max_conns_per_host", int64(h.MaxConnsPerHost)},
-		{"http.response_header_timeout", int64(h.ResponseHeaderTimeout)},
-	}
-
-	var errs []error
-	for _, f := range fields {
-		if f.value < 0 {
-			errs = append(errs, prefixedDetail(prefix, ErrNegativeHTTPSetting, f.name))
-		}
-	}
-	return errs
+	return failed(
+		nonNegative(prefix+".http.max_idle_conns", h.MaxIdleConns),
+		nonNegative(prefix+".http.max_idle_conns_per_host", h.MaxIdleConnsPerHost),
+		nonNegative(prefix+".http.max_conns_per_host", h.MaxConnsPerHost),
+		nonNegative(prefix+".http.response_header_timeout", h.ResponseHeaderTimeout),
+	)
 }
 
 // validateBackends checks every BackendConfig in the configured list,
@@ -137,12 +138,7 @@ func (h BackendHTTPConfig) validate(prefix string) []error {
 // per-entry problem in one pass so operators see all the typos at
 // once rather than fixing one and rerunning.
 func validateBackends(backends []BackendConfig) []error {
-	var errs []error
-
-	if len(backends) == 0 {
-		errs = append(errs, ErrNoBackends)
-	}
-
+	errs := failed(required("backends", len(backends) > 0))
 	seenNames := make(map[string]bool)
 	for i := range backends {
 		errs = append(errs, validateBackend(i, &backends[i], seenNames)...)
@@ -161,6 +157,7 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 		b.Name = fmt.Sprintf("backend-%d", idx)
 	}
 	b.CredentialSource = cmp.Or(b.CredentialSource, CredentialSourceStatic)
+	b.UnsignedPayload = new(b.UnsignedPayloadEnabled())
 
 	var errs []error
 	if seenNames[b.Name] {
@@ -168,23 +165,28 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 	}
 	seenNames[b.Name] = true
 
-	errs = append(errs, requiredBackendStringErrs(prefix, b)...)
+	errs = append(errs, failed(
+		required(prefix+".endpoint", b.Endpoint != ""),
+		required(prefix+".bucket", b.Bucket != ""),
+		nonNegative(prefix+".quota_bytes", b.QuotaBytes),
+		nonNegative(prefix+".max_object_size", b.MaxObjectSize),
+		nonNegative(prefix+".api_request_limit", b.APIRequestLimit),
+		nonNegative(prefix+".egress_byte_limit", b.EgressByteLimit),
+		nonNegative(prefix+".ingress_byte_limit", b.IngressByteLimit),
+		between(prefix+".usage_reset_day", b.UsageResetDay, 0, MaxUsageResetDay),
+	)...)
 	errs = append(errs, credentialSourceErrs(prefix, b)...)
 	errs = append(errs, b.HTTP.validate(prefix)...)
 	b.HTTP.setDefaults()
-	errs = append(errs, nonNegativeBackendFieldErrs(prefix, b)...)
 	errs = append(errs, requestLimitErrs(prefix, b)...)
 	errs = append(errs, usageResetErrs(prefix, b)...)
 	return errs
 }
 
-// usageResetErrs checks the usage cycle settings: a reset day every month has,
-// and a zone name that loads.
+// usageResetErrs checks the usage cycle zone: a name that loads, and an offset
+// a whole number of hours from UTC.
 func usageResetErrs(prefix string, b *BackendConfig) []error {
 	var errs []error
-	if b.UsageResetDay < 0 || b.UsageResetDay > MaxUsageResetDay {
-		errs = append(errs, prefixedDetail(prefix, ErrUsageResetDayRange, strconv.Itoa(b.UsageResetDay)))
-	}
 	loc, err := b.UsageResetLocation()
 	switch {
 	case err != nil:
@@ -219,21 +221,6 @@ func (b *BackendConfig) UsageResetLocation() (*time.Location, error) {
 	return time.LoadLocation(b.UsageResetTimezone)
 }
 
-// requiredBackendStringErrs returns errors for the universally-required
-// string fields (endpoint, bucket). Credential-related fields are
-// handled by credentialSourceErrs since the requirement depends on the
-// source.
-func requiredBackendStringErrs(prefix string, b *BackendConfig) []error {
-	var errs []error
-	if b.Endpoint == "" {
-		errs = append(errs, prefixed(prefix, ErrEndpointRequired))
-	}
-	if b.Bucket == "" {
-		errs = append(errs, prefixed(prefix, ErrBackendBucketReqd))
-	}
-	return errs
-}
-
 // credentialSourceErrs enforces the per-source key requirements: static
 // needs both keys; default_chain rejects them so a stale entry cannot
 // silently shadow the SDK-resolved credentials.
@@ -241,12 +228,10 @@ func credentialSourceErrs(prefix string, b *BackendConfig) []error {
 	var errs []error
 	switch b.CredentialSource {
 	case CredentialSourceStatic:
-		if b.AccessKeyID == "" {
-			errs = append(errs, prefixed(prefix, ErrAccessKeyIDReqd))
-		}
-		if b.SecretAccessKey == "" {
-			errs = append(errs, prefixed(prefix, ErrSecretAccessKeyReqd))
-		}
+		errs = failed(
+			required(prefix+".access_key_id", b.AccessKeyID != ""),
+			required(prefix+".secret_access_key", b.SecretAccessKey != ""),
+		)
 	case CredentialSourceDefaultChain:
 		if b.AccessKeyID != "" || b.SecretAccessKey != "" {
 			errs = append(errs, prefixed(prefix, ErrCredentialsWithDefaultChain))
@@ -302,21 +287,15 @@ func requestLimitErrs(prefix string, b *BackendConfig) []error {
 // poolErrs validates one pool entry against the backend's unmetered set and
 // the pool names already seen.
 func poolErrs(prefix string, p *RequestPoolConfig, seen, unmetered map[string]bool) []error {
-	var errs []error
-	switch {
-	case p.Name == "":
-		errs = append(errs, prefixed(prefix, ErrPoolNameRequired))
-	case seen[p.Name]:
+	errs := failed(
+		required(prefix+".name", p.Name != ""),
+		required(prefix+".operations", len(p.Operations) > 0),
+		nonNegative(prefix+".limit", p.Limit),
+	)
+	if p.Name != "" && seen[p.Name] {
 		errs = append(errs, prefixedDetail(prefix, ErrDuplicatePoolName, fmt.Sprintf("%q", p.Name)))
-	default:
-		seen[p.Name] = true
 	}
-	if len(p.Operations) == 0 {
-		errs = append(errs, prefixed(prefix, ErrPoolOperationsReqd))
-	}
-	if p.Limit < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativePoolLimit))
-	}
+	seen[p.Name] = true
 	for _, name := range p.Operations {
 		switch {
 		case name == s3op.Wildcard:
@@ -325,28 +304,6 @@ func poolErrs(prefix string, p *RequestPoolConfig, seen, unmetered map[string]bo
 		case unmetered[name]:
 			errs = append(errs, prefixedDetail(prefix, ErrPoolChargesUnmetered, fmt.Sprintf("%q", name)))
 		}
-	}
-	return errs
-}
-
-// nonNegativeBackendFieldErrs returns one error per quota/limit field that
-// has gone negative.
-func nonNegativeBackendFieldErrs(prefix string, b *BackendConfig) []error {
-	var errs []error
-	if b.QuotaBytes < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeQuota))
-	}
-	if b.MaxObjectSize < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeMaxObject))
-	}
-	if b.APIRequestLimit < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeAPILimit))
-	}
-	if b.EgressByteLimit < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeEgress))
-	}
-	if b.IngressByteLimit < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeIngress))
 	}
 	return errs
 }

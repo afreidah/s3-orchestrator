@@ -117,8 +117,8 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 func (e *EncryptionConfig) validateChunkSize() []error {
 	e.ChunkSize = cmp.Or(e.ChunkSize, DefaultEncryptionChunkSize)
 	cs := e.ChunkSize
-	if cs < MinEncryptionChunkSize || cs > MaxEncryptionChunkSize {
-		return []error{ErrInvalidChunkSize}
+	if err := between("encryption.chunk_size", cs, MinEncryptionChunkSize, MaxEncryptionChunkSize); err != nil {
+		return []error{err}
 	}
 	if cs&(cs-1) != 0 {
 		return []error{ErrChunkSizeNotPowerOf2}
@@ -174,22 +174,18 @@ func validatePreviousKeys(field string, sources []string, load func(string) ([]b
 
 // setDefaultsAndValidate sets defaults and validate.
 func (v *VaultTransitConfig) setDefaultsAndValidate() []error {
-	var errs []error
-
-	if v.Address == "" {
-		errs = append(errs, ErrVaultAddressRequired)
-	}
+	v.MountPath = cmp.Or(v.MountPath, "transit")
+	v.RenewInterval = cmp.Or(v.RenewInterval, 5*time.Minute)
+	errs := failed(
+		required("encryption.vault.address", v.Address != ""),
+		required("encryption.vault.key_name", v.KeyName != ""),
+		positive("encryption.vault.renew_interval", v.RenewInterval),
+	)
 	if v.Token == "" && v.TokenFile == "" {
 		errs = append(errs, ErrVaultTokenRequired)
 	}
 	if v.Token != "" && v.TokenFile != "" {
 		errs = append(errs, ErrVaultTokenAmbiguous)
 	}
-	if v.KeyName == "" {
-		errs = append(errs, ErrVaultKeyNameRequired)
-	}
-	v.MountPath = cmp.Or(v.MountPath, "transit")
-	v.RenewInterval = cmp.Or(v.RenewInterval, 5*time.Minute)
-
 	return errs
 }

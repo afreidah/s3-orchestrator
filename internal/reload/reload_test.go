@@ -132,11 +132,11 @@ type fakeHook struct {
 }
 
 func (h *fakeHook) Name() string { return h.name }
-func (h *fakeHook) Check(_, _ *config.Config) error {
+func (h *fakeHook) Check(_ *config.Config) error {
 	h.checkCalls++
 	return h.checkErr
 }
-func (h *fakeHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
+func (h *fakeHook) Apply(_ context.Context, _ *config.Config) (HookStatus, error) {
 	h.applyCalls++
 	return h.applyStat, h.applyErr
 }
@@ -380,8 +380,8 @@ func TestReload_RequiresRestart_SinceStartup(t *testing.T) {
 	listen := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`, `listen_addr: ":9999"`, 1)
 	reloadWith(listen)
 	both := strings.Replace(listen, `path: ":memory:"`, `path: "other.db"`, 1)
-	if got := reloadWith(both); !slices.Contains(got, "server.listen_addr") || !slices.Contains(got, "database") {
-		t.Errorf("after two reloads RequiresRestart = %v, want server.listen_addr and database", got)
+	if got := reloadWith(both); !slices.Equal(got, []string{"server.listen_addr", "database.path"}) {
+		t.Errorf("after two reloads RequiresRestart = %v, want server.listen_addr and database.path", got)
 	}
 	if got := reloadWith(validTestConfigYAML); len(got) != 0 {
 		t.Errorf("after reverting the file RequiresRestart = %v, want none", got)

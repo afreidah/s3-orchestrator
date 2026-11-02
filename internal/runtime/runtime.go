@@ -33,7 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httpserver"
@@ -143,23 +142,25 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// Wire the reload-status and config providers into the admin handler after
 	// the coordinator exists. Routing through post-construction setters avoids
 	// the admin -> reload -> ui -> admin import cycle.
-	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil {
-		adminHandler.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
-			return toAdminReloadStatus(r.reload.LastResult())
-		})
-		adminHandler.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
-			doc, err := r.live.Load().MarshalRedacted()
-			if err != nil {
-				return nil, err
-			}
-			return &adminapi.ConfigResponse{Config: string(doc), PendingRestart: r.reload.PendingRestart()}, nil
-		})
-		// Registered here rather than with the other services because the
-		// admin handler that builds the report resolves the lifecycle manager
-		// itself.
-		if cfg.Redis != nil {
-			r.svc.lifecyc.Register("instance_report", adminHandler.InstanceReporter())
+	adminHandler, err := do.Invoke[*admin.Handler](r.inj)
+	if err != nil {
+		return nil, fmt.Errorf("resolve admin handler: %w", err)
+	}
+	adminHandler.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
+		return toAdminReloadStatus(r.reload.LastResult())
+	})
+	adminHandler.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
+		doc, err := r.live.Load().MarshalRedacted()
+		if err != nil {
+			return nil, err
 		}
+		return &adminapi.ConfigResponse{Config: string(doc), PendingRestart: r.reload.PendingRestart()}, nil
+	})
+	// Registered here rather than with the other services because the
+	// admin handler that builds the report resolves the lifecycle manager
+	// itself.
+	if cfg.Redis != nil {
+		r.svc.lifecyc.Register("instance_report", adminHandler.InstanceReporter())
 	}
 
 	return r, nil
@@ -238,11 +239,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// dbBreaker resolves the database circuit breaker for /health, or nil when it
-// is not registered.
+// dbBreaker returns the database circuit breaker /health reports on.
 func (r *Runtime) dbBreaker() *breaker.CircuitBreaker {
-	v, _ := do.Invoke[*breaker.CircuitBreaker](r.inj)
-	return v
+	return r.svc.breaker
 }
 
 // startBackgroundServices launches the lifecycle manager goroutine. The
@@ -315,9 +314,7 @@ func (r *Runtime) shutdown() {
 
 	closeRedisBackend(shutdownCtx, r.inj, r.log)
 
-	if adminStore, _ := do.Invoke[core.LifecycleAdmin](r.inj); adminStore != nil {
-		adminStore.Close()
-	}
+	r.svc.store.Close()
 
 	if err := r.obs.ShutdownTracer(shutdownCtx); err != nil {
 		r.log.ErrorContext(ctx, "tracer shutdown error", "error", err)
@@ -329,10 +326,7 @@ func (r *Runtime) shutdown() {
 // before the final usage flush, which carries their accounting. Copies still
 // running at the deadline leave their intents for the reaper.
 func (r *Runtime) drainDetachedUploads(ctx context.Context) {
-	detached, err := do.Invoke[*writepath.DetachedUploads](r.inj)
-	if err != nil || detached == nil {
-		return
-	}
+	detached := r.svc.detached
 	depth := detached.Depth()
 	if depth == 0 {
 		return

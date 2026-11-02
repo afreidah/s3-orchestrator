@@ -30,12 +30,12 @@ import (
 // RebalanceConfig holds settings for the periodic backend rebalancer.
 // Disabled by default to avoid unexpected API calls and egress charges.
 type RebalanceConfig struct {
-	Enabled     bool          `yaml:"enabled"`
-	Strategy    string        `yaml:"strategy"` // "pack" or "spread"
-	Interval    time.Duration `yaml:"interval"`
-	BatchSize   int           `yaml:"batch_size"`
-	Threshold   float64       `yaml:"threshold"`   // min utilization spread to trigger
-	Concurrency int           `yaml:"concurrency"` // parallel moves (default: 5)
+	Enabled     bool            `yaml:"enabled"`
+	Strategy    RoutingStrategy `yaml:"strategy"` // "pack" (default) or "spread"
+	Interval    time.Duration   `yaml:"interval"`
+	BatchSize   int             `yaml:"batch_size"`
+	Threshold   float64         `yaml:"threshold"`   // min utilization spread to trigger
+	Concurrency int             `yaml:"concurrency"` // parallel moves (default: 5)
 }
 
 // ReplicationConfig holds settings for the background replication worker.
@@ -79,18 +79,12 @@ type WritePathConfig struct {
 // Count defaults to replication.factor and may not exceed it. MaxInFlight caps
 // the writes whose extra copies are still uploading after the client was
 // answered; a write that finds it full places one copy and leaves the rest to
-// the replicator. It defaults to server.max_concurrent_writes.
+// the replicator. It defaults to how many writes admission lets in at once.
 type ParallelCopiesConfig struct {
 	Enabled     bool `yaml:"enabled"`
 	Count       int  `yaml:"count"`
 	MaxInFlight int  `yaml:"max_in_flight"`
 }
-
-// DefaultDetachedUploadCeiling is the in-flight ceiling for a deployment that
-// caps neither concurrent writes nor concurrent requests, so there is no
-// admission capacity to derive one from. High enough that a fleet keeping up
-// never reaches it, low enough to bound what one slow backend can accumulate.
-const DefaultDetachedUploadCeiling = 512
 
 // MultipartConfig gates the S3 protocol invariants enforced at multipart
 // completion. Part-number range, ordering, duplicate and ETag checks are
@@ -170,107 +164,106 @@ func (r *LifecycleRule) filterID() string {
 // VALIDATION
 // -------------------------------------------------------------------------
 
-// setDefaults gives a configuration with rules its default batch size. The
-// rules themselves are checked by validateLifecycleRules.
-func (c *LifecycleConfig) setDefaults() {
-	if len(c.Rules) > 0 && c.BatchSize <= 0 {
-		c.BatchSize = 100
-	}
+// Valid reports whether s names a supported strategy.
+func (s RoutingStrategy) Valid() bool {
+	return s == RoutingPack || s == RoutingSpread
 }
 
-// setDefaultsAndValidate sets defaults and validate.
+// setDefaultsAndValidate fills the rebalancer's defaults whether or not it is
+// enabled, since an operator-requested run reads them too, and checks them
+// only when the scheduled rebalancer runs.
 func (r *RebalanceConfig) setDefaultsAndValidate() []error {
-	if !r.Enabled {
-		return nil
-	}
-
-	var errs []error
-
-	r.Strategy = cmp.Or(r.Strategy, "pack")
+	r.Strategy = cmp.Or(r.Strategy, RoutingPack)
 	r.Interval = cmp.Or(r.Interval, 6*time.Hour)
 	r.BatchSize = cmp.Or(r.BatchSize, 100)
 	r.Threshold = cmp.Or(r.Threshold, 0.1)
 	r.Concurrency = cmp.Or(r.Concurrency, 5)
-
-	if r.Strategy != "pack" && r.Strategy != "spread" {
-		errs = append(errs, ErrInvalidRebalanceStrategy)
+	if !r.Enabled {
+		return nil
 	}
-	if r.Interval <= 0 {
-		errs = append(errs, ErrRebalanceIntervalNotPos)
+	errs := failed(
+		positive("rebalance.interval", r.Interval),
+		positive("rebalance.batch_size", r.BatchSize),
+		between("rebalance.threshold", r.Threshold, 0, 1),
+		positive("rebalance.concurrency", r.Concurrency),
+	)
+	if !r.Strategy.Valid() {
+		errs = append(errs, fmt.Errorf("rebalance.%w", ErrInvalidRoutingStrategy))
 	}
-	if r.BatchSize <= 0 {
-		errs = append(errs, ErrRebalanceBatchNotPos)
-	}
-	if r.Threshold < 0 || r.Threshold > 1 {
-		errs = append(errs, ErrRebalanceThresholdRange)
-	}
-	if r.Concurrency <= 0 {
-		errs = append(errs, ErrRebalanceConcurrencyNotPos)
-	}
-
 	return errs
 }
 
-// setDefaultsAndValidate sets defaults and validate.
+// setDefaultsAndValidate fills the replicator's defaults and checks them.
+// The worker's limits are checked only above factor 1, where it runs.
 func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
-	var errs []error
 	r.Factor = cmp.Or(r.Factor, 1)
-	if r.Factor < 1 {
-		errs = append(errs, ErrReplicationFactorMin)
-	}
-	if r.Factor > 1 {
-		r.applyReplicationDefaults()
-		errs = append(errs, r.validateReplicationLimits(backendCount)...)
-	}
-	return errs
-}
-
-// applyReplicationDefaults fills zero-valued replication knobs with
-// production defaults. Only runs when replication is actually enabled
-// (Factor > 1); leaves everything at zero otherwise so operators don't
-// see "configured" values when they never turned replication on.
-func (r *ReplicationConfig) applyReplicationDefaults() {
 	r.WorkerInterval = cmp.Or(r.WorkerInterval, 5*time.Minute)
 	r.BatchSize = cmp.Or(r.BatchSize, 50)
+	r.Concurrency = cmp.Or(r.Concurrency, 5)
 	r.UnhealthyThreshold = cmp.Or(r.UnhealthyThreshold, 10*time.Minute)
-	if r.Concurrency <= 0 {
-		r.Concurrency = 5
+	errs := failed(positive("replication.factor", r.Factor))
+	if r.Factor <= 1 {
+		return errs
 	}
-}
-
-// validateReplicationLimits enforces the non-negative + backend-count
-// invariants that only apply when Factor > 1.
-func (r *ReplicationConfig) validateReplicationLimits(backendCount int) []error {
-	var errs []error
 	if r.Factor > backendCount {
 		errs = append(errs, fmt.Errorf("%w: factor=%d backends=%d",
 			ErrReplicationFactorTooLarge, r.Factor, backendCount))
 	}
-	if r.WorkerInterval <= 0 {
-		errs = append(errs, ErrReplicationIntervalNotPos)
-	}
-	if r.BatchSize <= 0 {
-		errs = append(errs, ErrReplicationBatchNotPos)
-	}
-	return errs
+	return append(errs, failed(
+		positive("replication.worker_interval", r.WorkerInterval),
+		positive("replication.batch_size", r.BatchSize),
+		positive("replication.concurrency", r.Concurrency),
+		positive("replication.unhealthy_threshold", r.UnhealthyThreshold),
+	)...)
 }
 
-// validateLifecycleRules enforces that every configured rule has a filter and
-// a positive expiration_days. Duplicates are judged on the whole filter, since
-// two rules sharing a prefix but differing by tag select different objects.
-func validateLifecycleRules(rules []LifecycleRule) []error {
-	var errs []error
+// setDefaultsAndValidate fills the cleanup worker's defaults and refuses
+// negatives.
+func (c *CleanupQueueConfig) setDefaultsAndValidate() []error {
+	c.Concurrency = cmp.Or(c.Concurrency, 10)
+	c.MultipartStaleTimeout = cmp.Or(c.MultipartStaleTimeout, 24*time.Hour)
+	c.ClaimGracePeriod = cmp.Or(c.ClaimGracePeriod, 5*time.Minute)
+	return failed(
+		positive("cleanup_queue.concurrency", c.Concurrency),
+		positive("cleanup_queue.multipart_stale_timeout", c.MultipartStaleTimeout),
+		positive("cleanup_queue.claim_grace_period", c.ClaimGracePeriod),
+	)
+}
 
+// setDefaultsAndValidate fills the pending reaper's defaults and refuses
+// negatives.
+func (p *PendingPatternConfig) setDefaultsAndValidate() []error {
+	p.ReaperTick = cmp.Or(p.ReaperTick, time.Minute)
+	p.MinAge = cmp.Or(p.MinAge, 5*time.Minute)
+	p.BatchSize = cmp.Or(p.BatchSize, 50)
+	return failed(
+		positive("write_path.pending_pattern.reaper_tick", p.ReaperTick),
+		positive("write_path.pending_pattern.min_age", p.MinAge),
+		positive("write_path.pending_pattern.batch_size", p.BatchSize),
+	)
+}
+
+// setDefaultsAndValidate fills the reconciler's interval and refuses a
+// negative one.
+func (r *ReconcileConfig) setDefaultsAndValidate() []error {
+	r.Interval = cmp.Or(r.Interval, 24*time.Hour)
+	return failed(positive("reconcile.interval", r.Interval))
+}
+
+// setDefaultsAndValidate fills the lifecycle batch size and checks each rule.
+// Duplicates are judged on the whole filter, since two rules sharing a prefix
+// but differing by tag select different objects.
+func (c *LifecycleConfig) setDefaultsAndValidate() []error {
+	c.BatchSize = cmp.Or(c.BatchSize, 100)
+	errs := failed(positive("lifecycle.batch_size", c.BatchSize))
 	seen := make(map[string]bool)
-	for i := range rules {
-		r := &rules[i]
+	for i := range c.Rules {
+		r := &c.Rules[i]
 		label := fmt.Sprintf("lifecycle.rules[%d]", i)
 
+		errs = append(errs, failed(positive(label+".expiration_days", r.ExpirationDays))...)
 		if r.Prefix == "" && len(r.Tags) == 0 {
 			errs = append(errs, fmt.Errorf("%s: %w", label, ErrLifecycleFilterRequired))
-		}
-		if r.ExpirationDays <= 0 {
-			errs = append(errs, fmt.Errorf("%s: %w", label, ErrInvalidExpiration))
 		}
 		if _, empty := r.Tags[""]; empty {
 			errs = append(errs, fmt.Errorf("%s: %w", label, ErrLifecycleEmptyTagKey))

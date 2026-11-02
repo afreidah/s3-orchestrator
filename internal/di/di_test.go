@@ -152,9 +152,7 @@ func TestProvideRateLimiter(t *testing.T) {
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{
 		RateLimit: config.RateLimitConfig{
-			Enabled:        true,
-			RequestsPerSec: 100,
-			Burst:          200,
+			Enabled: true, RequestsPerSec: 100, Burst: 200, CleanupInterval: time.Minute, CleanupMaxAge: 5 * time.Minute,
 		},
 	})
 	rl, err := ProvideRateLimiter(inj)
@@ -515,9 +513,7 @@ func happyPathConfig(tmpDir string) *config.Config {
 			MaxSizeBytes: 64 << 20,
 		},
 		RateLimit: config.RateLimitConfig{
-			Enabled:        true,
-			RequestsPerSec: 10,
-			Burst:          10,
+			Enabled: true, RequestsPerSec: 10, Burst: 10, CleanupInterval: time.Minute, CleanupMaxAge: 5 * time.Minute,
 		},
 		Auth: config.AuthConfig{
 			Root: config.RootCredential{ //nolint:gosec // G101: test credential

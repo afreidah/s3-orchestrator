@@ -87,10 +87,11 @@ func newFakeVault(t *testing.T) *httptest.Server {
 func newTestVaultProvider(t *testing.T, ts *httptest.Server) *VaultKeyProvider {
 	t.Helper()
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   ts.URL,
-		Token:     "test-token",
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       ts.URL,
+		Token:         "test-token",
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("NewVaultKeyProvider: %v", err)
@@ -140,10 +141,11 @@ func TestVaultKeyProvider_WrapDEK_ErrorResponse(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   ts.URL,
-		Token:     "bad-token",
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       ts.URL,
+		Token:         "bad-token",
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("NewVaultKeyProvider: %v", err)
@@ -168,10 +170,11 @@ func TestVaultKeyProvider_UnwrapDEK_ErrorResponse(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   ts.URL,
-		Token:     "bad-token",
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       ts.URL,
+		Token:         "bad-token",
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("NewVaultKeyProvider: %v", err)
@@ -334,10 +337,11 @@ func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
 	}
 
 	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   "https://vault.example.com",
-		TokenFile: tokenFile,
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       "https://vault.example.com",
+		TokenFile:     tokenFile,
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err == nil {
 		t.Fatal("expected error for empty token file")
@@ -348,10 +352,11 @@ func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
 func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 	t.Parallel()
 	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   "https://vault.example.com",
-		TokenFile: "/nonexistent/path/token",
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       "https://vault.example.com",
+		TokenFile:     "/nonexistent/path/token",
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err == nil {
 		t.Fatal("expected error for missing token file")
@@ -370,10 +375,11 @@ func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 	}
 
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   "https://vault.example.com",
-		TokenFile: tokenFile,
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       "https://vault.example.com",
+		TokenFile:     tokenFile,
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -391,10 +397,11 @@ func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 	}
 
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   "https://vault.example.com",
-		TokenFile: tokenFile,
-		KeyName:   "test-key",
-		MountPath: "transit",
+		Address:       "https://vault.example.com",
+		TokenFile:     tokenFile,
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -411,26 +418,4 @@ func TestVaultKeyProvider_Close(t *testing.T) {
 	// Close should not panic and should be idempotent
 	p.Close()
 	p.Close()
-}
-
-// TestVaultKeyProvider_DefaultRenewInterval verifies the vault key provider default renew interval contract.
-// Asserts that NewVaultKeyProvider:.
-func TestVaultKeyProvider_DefaultRenewInterval(t *testing.T) {
-	t.Parallel()
-	ts := newFakeVault(t)
-	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
-		Address:   ts.URL,
-		Token:     "test-token",
-		KeyName:   "test-key",
-		MountPath: "transit",
-		// RenewInterval not set  -  should default to 5m
-	})
-	if err != nil {
-		t.Fatalf("NewVaultKeyProvider: %v", err)
-	}
-	t.Cleanup(p.Close)
-
-	if p.renewInterval != 5*time.Minute {
-		t.Errorf("renewInterval = %v, want 5m", p.renewInterval)
-	}
 }

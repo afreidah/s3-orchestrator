@@ -47,8 +47,8 @@ type PendingReaper struct {
 }
 
 // PendingReaperDeps groups the pending reaper's constructor parameters.
-// Concurrency, MinAge, and BatchSize fall back to safe defaults when zero
-// or negative.
+// MinAge and BatchSize come from config, which fills their defaults;
+// Concurrency falls back to 4 when zero or negative.
 type PendingReaperDeps struct {
 	Ops         Ops
 	Placement   Placement
@@ -63,15 +63,9 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
-	concurrency, minAge, batchSize := deps.Concurrency, deps.MinAge, deps.BatchSize
+	concurrency := deps.Concurrency
 	if concurrency <= 0 {
 		concurrency = 4
-	}
-	if minAge <= 0 {
-		minAge = 5 * time.Minute
-	}
-	if batchSize <= 0 {
-		batchSize = 50
 	}
 	return &PendingReaper{
 		deps:        deps.Ops,
@@ -79,8 +73,8 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 		store:       deps.Store,
 		log:         workerLogger(audit.WorkloadPendingReaper),
 		concurrency: concurrency,
-		minAge:      minAge,
-		batchSize:   batchSize,
+		minAge:      deps.MinAge,
+		batchSize:   deps.BatchSize,
 	}
 }
 

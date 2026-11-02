@@ -166,10 +166,12 @@ func (c *Coordinator) Reload() *Result {
 		RequiresRestart: config.NonReloadableFieldsChanged(c.startup, newCfg),
 	}
 
-	currentCfg := c.deps.Live.Load()
-
 	for _, h := range c.hooks {
-		if err := h.Check(currentCfg, newCfg); err != nil {
+		ch, ok := h.(checker)
+		if !ok {
+			continue
+		}
+		if err := ch.Check(newCfg); err != nil {
 			result.Status = ReloadValidationFailed
 			result.Outcomes = append(result.Outcomes, HookOutcome{
 				Name:   h.Name(),
@@ -193,7 +195,7 @@ func (c *Coordinator) Reload() *Result {
 
 	failed := 0
 	for _, h := range c.hooks {
-		status, err := h.Apply(applyCtx, currentCfg, newCfg)
+		status, err := h.Apply(applyCtx, newCfg)
 		outcome := HookOutcome{Name: h.Name(), Status: status}
 		if err != nil {
 			outcome.Status = HookFailed

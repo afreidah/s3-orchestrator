@@ -295,25 +295,10 @@ func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.
 	})
 }
 
-// TestRebalance_AppliesDefaults asserts an operator who asks for a cycle gets
-// one even when rebalancing was never configured.
-func TestRebalance_AppliesDefaults(t *testing.T) {
-	t.Parallel()
-	var ran config.RebalanceConfig
-	svc := rebalanceOver(t, config.RebalanceConfig{}, &ran)
-
-	if _, err := svc.Run(context.Background(), nil); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if ran.Strategy != defaultRebalanceStrategy || ran.BatchSize != defaultRebalanceBatchSize ||
-		ran.Threshold != defaultRebalanceThreshold || ran.Concurrency != defaultRebalanceConcurrency {
-		t.Errorf("ran with %+v, want the spread defaults", ran)
-	}
-}
-
-// TestRebalance_PreservesConfiguredValues asserts only the unset fields are
-// defaulted, so a configured strategy is honoured verbatim.
-func TestRebalance_PreservesConfiguredValues(t *testing.T) {
+// TestRebalance_RunsTheRunningConfig asserts a manual cycle runs with the
+// running config as loaded, defaults included, so it and the scheduled
+// rebalancer agree.
+func TestRebalance_RunsTheRunningConfig(t *testing.T) {
 	t.Parallel()
 	var ran config.RebalanceConfig
 	svc := rebalanceOver(t, config.RebalanceConfig{

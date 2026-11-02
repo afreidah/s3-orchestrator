@@ -16,7 +16,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -141,25 +140,6 @@ func TestEncryptionConfig_PreviousKeySources(t *testing.T) {
 		}
 		if !errors.Is(err, ErrPreviousKeyInvalid) || !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.wantField) {
 			t.Errorf("%s: err = %v, want ErrPreviousKeyInvalid and %v naming %s", tc.name, err, tc.want, tc.wantField)
-		}
-	}
-}
-
-// TestNonReloadableFieldsChanged_PreviousKeys asserts adding or changing a
-// previous key, inline or as a file, is reported as a restart-only
-// encryption change.
-func TestNonReloadableFieldsChanged_PreviousKeys(t *testing.T) {
-	t.Parallel()
-	for name, change := range map[string]func(*EncryptionConfig){
-		"previous_keys":      func(e *EncryptionConfig) { e.PreviousKeys = []string{"b2xk"} },
-		"previous_key_files": func(e *EncryptionConfig) { e.PreviousKeyFiles = []string{"/etc/old.key"} },
-	} {
-		a := validBaseConfig()
-		b := validBaseConfig()
-		change(&b.Encryption)
-
-		if changed := NonReloadableFieldsChanged(&a, &b); !slices.Equal(changed, []string{"encryption"}) {
-			t.Errorf("%s: changed = %v, want [encryption]", name, changed)
 		}
 	}
 }

@@ -25,29 +25,20 @@ import (
 )
 
 // WireManager resolves every required worker as a smoke check and points the
-// runtime's eligibility filters at the backend state manager. It returns the first
-// required resolution error; a Failed PendingReaper is only logged.
+// runtime's eligibility filters at the backend state manager. It returns the
+// first resolution error.
 func WireManager(inj do.Injector) error {
-	r := newResolver(inj)
-	r.ResolveNamed[*worker.Rebalancer]("Rebalancer")
-	r.ResolveNamed[*worker.Replicator]("Replicator")
-	r.ResolveNamed[*worker.OverReplicationCleaner]("OverReplicationCleaner")
-	r.ResolveNamed[*worker.CleanupWorker]("CleanupWorker")
-	r.ResolveNamed[*worker.Scrubber]("Scrubber")
-	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
-	states := r.ResolveNamed[*backendstate.Manager]("BackendStateManager")
+	r := NewResolver(inj)
+	r.Resolve[*worker.Rebalancer]()
+	r.Resolve[*worker.Replicator]()
+	r.Resolve[*worker.OverReplicationCleaner]()
+	r.Resolve[*worker.CleanupWorker]()
+	r.Resolve[*worker.Scrubber]()
+	r.Resolve[*worker.PendingReaper]()
+	rt := r.Resolve[*infra.BackendRuntime]()
+	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return r.err
-	}
-
-	// PendingReaper is optional. A Failed outcome means the provider is
-	// registered but its construction errored; log it so a broken-but-
-	// configured reaper does not silently turn into "feature off".
-	if prRes := Optional[*worker.PendingReaper](inj); prRes.Failed() {
-		//nolint:sloglint // bootstrap warn; no request/span ctx exists during wiring
-		slog.Warn("pending reaper resolution failed; manager will run without it",
-			logfmt.Component("di"),
-			"error", prRes.Err)
 	}
 
 	rt.SetStateChecker(states)

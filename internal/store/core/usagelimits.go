@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
@@ -133,6 +134,48 @@ func expand(spec PoolSpec, free map[s3op.Operation]bool) ([]s3op.Operation, erro
 		}
 	}
 	return out, nil
+}
+
+// UsageLimitsFor compiles every backend's configured budgets and usage cycle
+// into the form admission reads, keyed by backend, for startup and for a
+// reload alike. An error names the backend it came from.
+func UsageLimitsFor(backends []config.BackendConfig) (map[string]UsageLimits, error) {
+	out := make(map[string]UsageLimits, len(backends))
+	for i := range backends {
+		lim, err := backendUsageLimits(&backends[i])
+		if err != nil {
+			return nil, fmt.Errorf("backend %q: %w", backends[i].Name, err)
+		}
+		out[backends[i].Name] = lim
+	}
+	return out, nil
+}
+
+// backendUsageLimits compiles one backend's limits. api_request_limit
+// desugars into one wildcard pool; config validation rejects setting it
+// alongside request_limits.
+func backendUsageLimits(b *config.BackendConfig) (UsageLimits, error) {
+	specs := make([]PoolSpec, 0, len(b.RequestLimits)+1)
+	for i := range b.RequestLimits {
+		p := &b.RequestLimits[i]
+		specs = append(specs, PoolSpec{Name: p.Name, Operations: p.Operations, Limit: p.Limit})
+	}
+	specs = append(specs, SingleRequestPool(b.APIRequestLimit)...)
+
+	unmetered := make([]s3op.Operation, 0, len(b.Unmetered))
+	for _, name := range b.Unmetered {
+		unmetered = append(unmetered, s3op.Operation(name))
+	}
+	lim, err := NewUsageLimits(b.EgressByteLimit, b.IngressByteLimit, specs, unmetered)
+	if err != nil {
+		return UsageLimits{}, err
+	}
+	loc, err := b.UsageResetLocation()
+	if err != nil {
+		return UsageLimits{}, fmt.Errorf("usage_reset_timezone: %w", err)
+	}
+	lim.Period = UsagePeriod{ResetDay: b.UsageResetDay, Location: loc}
+	return lim, nil
 }
 
 // -------------------------------------------------------------------------

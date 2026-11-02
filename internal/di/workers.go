@@ -51,20 +51,19 @@ type workerCore struct {
 
 // workerCoreFrom pulls the runtime, coordinator, store and running config
 // through an in-flight resolver, so a caller that needs more than the core
-// resolves everything in one batch. Errors are wrapped with the dependency name
-// so a missing provider points at the right registration site.
-func workerCoreFrom(r *resolver) workerCore {
+// resolves everything in one batch.
+func workerCoreFrom(r *Resolver) workerCore {
 	return workerCore{
-		Runtime: r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime"),
-		Coord:   r.ResolveNamed[*writepath.Coordinator]("WriteCoordinator"),
-		Stores:  r.ResolveNamed[metadataStore]("MetadataStore"),
-		Live:    r.ResolveNamed[*config.Live]("Live"),
+		Runtime: r.Resolve[*infra.BackendRuntime](),
+		Coord:   r.Resolve[*writepath.Coordinator](),
+		Stores:  r.Resolve[metadataStore](),
+		Live:    r.Resolve[*config.Live](),
 	}
 }
 
 // resolveWorkerCore resolves the core every worker provider depends on.
 func resolveWorkerCore(i do.Injector) (workerCore, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	return workerCoreFrom(r), r.err
 }
 
@@ -111,8 +110,8 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 // resolved even with compression disabled, so already-compressed objects stay
 // readable.
 func resolveStoredForm(i do.Injector, cfg *config.Config) (enc *encryption.Encryptor, codec *compression.Codec, err error) {
-	if cfg.Encryption.Enabled {
-		enc, _ = do.Invoke[*encryption.Encryptor](i)
+	if enc, err = resolveOptionalEncryptor(i, cfg.Encryption.Enabled); err != nil {
+		return nil, nil, err
 	}
 	codec, err = do.Invoke[*compression.Codec](i)
 	return enc, codec, err
@@ -132,11 +131,11 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 // takes this worker's ProcessCleanupQueue hook) can be built from the
 // same pieces without an ordering dependency between the two.
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
-	r := newResolver(i)
-	cfg := r.ResolveNamed[*config.Config]("Config")
-	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
-	stores := r.ResolveNamed[metadataStore]("MetadataStore")
-	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	r := NewResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	rt := r.Resolve[*infra.BackendRuntime]()
+	stores := r.Resolve[metadataStore]()
+	id := r.Resolve[instanceid.ID]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -198,8 +197,8 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 // register a service for it; the reconciler is also resolvable directly
 // for the admin handler's inspection endpoints.
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
-	r := newResolver(i)
-	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
+	r := NewResolver(i)
+	rt := r.Resolve[*infra.BackendRuntime]()
 	declared := r.Resolve[*provisioning.Declared]()
 	rec := r.Resolve[*reconcile.Manager]()
 	usageSvc := r.Resolve[*usage.Service]()
@@ -218,9 +217,9 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 // operator side of a drain and a backend removal, from the backend runtime and
 // the opened store's object and backend-state roles.
 func ProvideBackendStateManager(i do.Injector) (*backendstate.Manager, error) {
-	r := newResolver(i)
-	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
-	stores := r.ResolveNamed[metadataStore]("MetadataStore")
+	r := NewResolver(i)
+	rt := r.Resolve[*infra.BackendRuntime]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -232,10 +231,10 @@ func ProvideBackendStateManager(i do.Injector) (*backendstate.Manager, error) {
 // AcceptsWrites current on the instance that runs it, and aborts a drained
 // backend's open uploads through the multipart manager.
 func ProvideDrainer(i do.Injector) (*worker.Drainer, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	c := workerCoreFrom(r)
 	dm := r.Resolve[*backendstate.Manager]()
-	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
+	mp := r.Resolve[*multipart.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}

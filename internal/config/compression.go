@@ -66,15 +66,12 @@ func (c *CompressionConfig) setDefaultsAndValidate() []error {
 		return nil
 	}
 
-	var errs []error
+	errs := failed(
+		between("compression.chunk_size", c.ChunkSize, MinCompressionChunkSize, MaxCompressionChunkSize),
+		nonNegative("compression.min_size", c.MinSize),
+	)
 	if !slices.Contains(compressionLevels, c.Level) {
 		errs = append(errs, ErrInvalidCompressionLevel)
-	}
-	if c.ChunkSize < MinCompressionChunkSize || c.ChunkSize > MaxCompressionChunkSize {
-		errs = append(errs, ErrInvalidCompressionChunkSize)
-	}
-	if c.MinSize < 0 {
-		errs = append(errs, ErrInvalidCompressionMinSize)
 	}
 	// Above 1 would store an object the encoder made larger; at or below 0 no
 	// object could ever qualify, silently disabling the feature.

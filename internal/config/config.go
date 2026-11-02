@@ -18,9 +18,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -176,7 +177,6 @@ func redact(secret string) string {
 func (c *Config) SetDefaultsAndValidate() error {
 	var errs []error
 	errs = append(errs, c.validatePerTypeSections()...)
-	c.applyDefaultsOnlyTypes()
 	errs = append(errs, c.validateRoutingStrategy()...)
 	errs = append(errs, c.validateQuotaReplicationCombo()...)
 	errs = append(errs, c.validateParallelCopies()...)
@@ -201,28 +201,18 @@ func (c *Config) CopiesPerWrite() int {
 func (c *Config) validateParallelCopies() []error {
 	pc := &c.WritePath.ParallelCopies
 	pc.Count = cmp.Or(pc.Count, c.Replication.Factor)
-	pc.MaxInFlight = cmp.Or(pc.MaxInFlight, c.writeAdmissionCapacity())
+	pc.MaxInFlight = cmp.Or(pc.MaxInFlight, c.Server.Admission().WriteCapacity())
 	if !pc.Enabled {
 		return nil
 	}
-	var errs []error
-	if pc.Count < 1 {
-		errs = append(errs, ErrParallelCopiesMin)
-	}
+	errs := failed(
+		positive("write_path.parallel_copies.count", pc.Count),
+		positive("write_path.parallel_copies.max_in_flight", pc.MaxInFlight),
+	)
 	if pc.Count > c.Replication.Factor {
 		errs = append(errs, ErrParallelCopiesOverFactor)
 	}
-	if pc.MaxInFlight < 1 {
-		errs = append(errs, ErrParallelCopiesInFlightMin)
-	}
 	return errs
-}
-
-// writeAdmissionCapacity is how many writes this instance admits at once: the
-// write limit, else the shared request limit, else a floor. The in-flight tail
-// ceiling defaults to it.
-func (c *Config) writeAdmissionCapacity() int {
-	return cmp.Or(c.Server.MaxConcurrentWrites, c.Server.MaxConcurrentRequests, DefaultDetachedUploadCeiling)
 }
 
 // validatePerTypeSections delegates to each sub-type's
@@ -245,41 +235,28 @@ func (c *Config) validatePerTypeSections() []error {
 	// requires one.
 	errs = append(errs, c.Auth.setDefaultsAndValidate(c.UI.Enabled)...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
-	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
+	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
 	errs = append(errs, c.Notifications.setDefaultsAndValidate()...)
+	errs = append(errs, c.CircuitBreaker.setDefaultsAndValidate()...)
+	errs = append(errs, c.BackendCircuitBreaker.setDefaultsAndValidate()...)
+	errs = append(errs, c.Debug.FlightRecorder.setDefaultsAndValidate()...)
+	errs = append(errs, c.CleanupQueue.setDefaultsAndValidate()...)
+	errs = append(errs, c.Reconcile.setDefaultsAndValidate()...)
+	errs = append(errs, c.WritePath.PendingPattern.setDefaultsAndValidate()...)
+	c.WritePath.Multipart.EnforceMinPartSize = new(c.WritePath.Multipart.IsMinPartSizeEnforced())
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}
 	return errs
 }
 
-// applyDefaultsOnlyTypes handles sub-configs that have only zero-value
-// defaults (no validation errors possible): circuit breakers, lifecycle batch
-// size, the flight recorder window, cleanup queue concurrency, reconcile
-// interval.
-func (c *Config) applyDefaultsOnlyTypes() {
-	c.CircuitBreaker.setDefaults()
-	c.BackendCircuitBreaker.setDefaults()
-	c.Lifecycle.setDefaults()
-	c.Debug.FlightRecorder.setDefaults()
-	if c.CleanupQueue.Concurrency <= 0 {
-		c.CleanupQueue.Concurrency = 10
-	}
-	if c.CleanupQueue.ClaimGracePeriod <= 0 {
-		c.CleanupQueue.ClaimGracePeriod = 5 * time.Minute
-	}
-	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
-		c.Reconcile.Interval = 24 * time.Hour
-	}
-}
-
 // validateRoutingStrategy applies the default and enforces the enum.
 func (c *Config) validateRoutingStrategy() []error {
 	c.RoutingStrategy = cmp.Or(c.RoutingStrategy, RoutingPack)
-	if c.RoutingStrategy != RoutingPack && c.RoutingStrategy != RoutingSpread {
-		return []error{ErrInvalidRoutingStrategy}
+	if !c.RoutingStrategy.Valid() {
+		return []error{fmt.Errorf("routing_%w", ErrInvalidRoutingStrategy)}
 	}
 	return nil
 }
@@ -321,169 +298,119 @@ func (c *Config) validateQuotaReplicationCombo() []error {
 // HOT-RELOAD CHANGE DETECTION
 // -------------------------------------------------------------------------
 
-// NonReloadableFieldsChanged compares two configs and returns a list of
-// non-reloadable field descriptions that differ. Used by the SIGHUP handler
-// to warn about changes that require a restart.
+// reloadablePaths are the config paths a reload applies to the running
+// process, through config.Live or a reload hook. A path covers everything
+// below it, and [*] matches any index. Every other path is read once at
+// startup, so a change to it waits for a restart.
+var reloadablePaths = []string{
+	"server.log_level",
+	"server.shutdown_delay",
+	"buckets",
+	"auth",
+	"rate_limit.requests_per_sec",
+	"rate_limit.burst",
+	"backends[*].quota_bytes",
+	"backends[*].api_request_limit",
+	"backends[*].egress_byte_limit",
+	"backends[*].ingress_byte_limit",
+	"backends[*].request_limits",
+	"backends[*].unmetered",
+	"backends[*].usage_reset_day",
+	"backends[*].usage_reset_timezone",
+	"rebalance.enabled",
+	"rebalance.strategy",
+	"rebalance.batch_size",
+	"rebalance.threshold",
+	"rebalance.concurrency",
+	"replication.factor",
+	"replication.batch_size",
+	"replication.concurrency",
+	"replication.unhealthy_threshold",
+	"integrity.enabled",
+	"integrity.verify_on_read",
+	"integrity.verify_on_replicate",
+	"integrity.scrubber_batch_size",
+	"integrity.scrubber_min_age",
+	"integrity.scrubber_egress_reserve",
+	"lifecycle",
+	"usage_flush",
+}
+
+// indexPattern matches a list index in a config path.
+var indexPattern = regexp.MustCompile(`\[\d+\]`)
+
+// NonReloadableFieldsChanged returns the paths, in field order, of the config
+// values that differ between two validated configs and that a reload cannot
+// apply, so the operator knows what still waits for a restart. Values are never
+// reported, so no secret reaches a log.
 func NonReloadableFieldsChanged(old, next *Config) []string {
 	var changed []string
-	changed = append(changed, serverFieldsChanged(&old.Server, &next.Server)...)
-	changed = append(changed, topLevelFieldsChanged(old, next)...)
-	changed = append(changed, redisFieldsChanged(old.Redis, next.Redis)...)
-	changed = append(changed, backendStructuralChanges(old.Backends, next.Backends)...)
+	diffPaths("", reflect.ValueOf(*old), reflect.ValueOf(*next), &changed)
 	return changed
 }
 
-// serverFieldsChanged enumerates non-reloadable server-config fields that
-// differ between two snapshots.
-func serverFieldsChanged(old, next *ServerConfig) []string {
-	var changed []string
-	if old.ListenAddr != next.ListenAddr {
-		changed = append(changed, "server.listen_addr")
+// diffPaths appends the path of every value under a and b that differs, outside
+// the reloadable paths. A list of different length, or a section present in
+// one config only, is reported whole.
+func diffPaths(path string, a, b reflect.Value, out *[]string) {
+	if reloadable(path) {
+		return
 	}
-	if old.MaxConcurrentRequests != next.MaxConcurrentRequests {
-		changed = append(changed, "server.max_concurrent_requests")
+	switch a.Kind() {
+	case reflect.Pointer:
+		if a.IsNil() || b.IsNil() {
+			reportIf(a.IsNil() != b.IsNil(), path, out)
+			return
+		}
+		diffPaths(path, a.Elem(), b.Elem(), out)
+	case reflect.Struct:
+		diffFields(path, a, b, out)
+	case reflect.Slice:
+		if a.Len() != b.Len() || a.Type().Elem().Kind() != reflect.Struct {
+			reportIf(!reflect.DeepEqual(a.Interface(), b.Interface()), path, out)
+			return
+		}
+		for i := range a.Len() {
+			diffPaths(fmt.Sprintf("%s[%d]", path, i), a.Index(i), b.Index(i), out)
+		}
+	default:
+		reportIf(!reflect.DeepEqual(a.Interface(), b.Interface()), path, out)
 	}
-	if old.MaxConcurrentReads != next.MaxConcurrentReads {
-		changed = append(changed, "server.max_concurrent_reads")
-	}
-	if old.MaxConcurrentWrites != next.MaxConcurrentWrites {
-		changed = append(changed, "server.max_concurrent_writes")
-	}
-	if old.MaxHeaderBytes != next.MaxHeaderBytes {
-		changed = append(changed, "server.max_header_bytes")
-	}
-	if old.MaxHeaderValueCount != next.MaxHeaderValueCount {
-		changed = append(changed, "server.max_header_value_count")
-	}
-	if old.LoadShedThreshold != next.LoadShedThreshold {
-		changed = append(changed, "server.load_shed_threshold")
-	}
-	if old.AdmissionWait != next.AdmissionWait {
-		changed = append(changed, "server.admission_wait")
-	}
-	if old.ReadHeaderTimeout != next.ReadHeaderTimeout ||
-		old.ReadTimeout != next.ReadTimeout ||
-		old.WriteTimeout != next.WriteTimeout ||
-		old.IdleTimeout != next.IdleTimeout {
-		changed = append(changed, "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)")
-	}
-	if old.ShutdownDelay != next.ShutdownDelay {
-		changed = append(changed, "server.shutdown_delay")
-	}
-	if old.TLS != next.TLS {
-		changed = append(changed, "server.tls")
-	}
-	return changed
 }
 
-// topLevelFieldsChanged enumerates non-reloadable top-level sub-configs
-// that differ (database, telemetry, UI, circuit breakers, encryption,
-// routing strategy).
-func topLevelFieldsChanged(old, next *Config) []string {
-	var changed []string
-	if old.Database != next.Database {
-		changed = append(changed, "database")
+// diffFields walks a struct's fields under their YAML names, skipping the ones
+// the file never holds.
+func diffFields(path string, a, b reflect.Value, out *[]string) {
+	for i := range a.NumField() {
+		name, _, _ := strings.Cut(a.Type().Field(i).Tag.Get("yaml"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		diffPaths(strings.TrimPrefix(path+"."+name, "."), a.Field(i), b.Field(i), out)
 	}
-	if old.Telemetry != next.Telemetry {
-		changed = append(changed, "telemetry")
-	}
-	if old.UI != next.UI {
-		changed = append(changed, "ui")
-	}
-	if circuitBreakerChanged(old.CircuitBreaker, next.CircuitBreaker) {
-		changed = append(changed, "circuit_breaker")
-	}
-	if old.BackendCircuitBreaker != next.BackendCircuitBreaker {
-		changed = append(changed, "backend_circuit_breaker")
-	}
-	if old.Encryption.Enabled != next.Encryption.Enabled ||
-		old.Encryption.MasterKey != next.Encryption.MasterKey ||
-		old.Encryption.MasterKeyFile != next.Encryption.MasterKeyFile ||
-		!slices.Equal(old.Encryption.PreviousKeys, next.Encryption.PreviousKeys) ||
-		!slices.Equal(old.Encryption.PreviousKeyFiles, next.Encryption.PreviousKeyFiles) ||
-		old.Encryption.ChunkSize != next.Encryption.ChunkSize {
-		changed = append(changed, "encryption")
-	}
-	// The codec is built once at startup from level and chunk_size, and
-	// enabling compression mid-flight would leave the write path without one,
-	// so the whole block follows encryption in requiring a restart.
-	if old.Compression != next.Compression {
-		changed = append(changed, "compression")
-	}
-	if old.RoutingStrategy != next.RoutingStrategy {
-		changed = append(changed, "routing_strategy")
-	}
-	return changed
 }
 
-// circuitBreakerChanged is field-by-field because *bool DegradedReadsEnabled defeats ==.
-func circuitBreakerChanged(old, next CircuitBreakerConfig) bool {
-	if old.FailureThreshold != next.FailureThreshold ||
-		old.OpenTimeout != next.OpenTimeout ||
-		old.CacheTTL != next.CacheTTL ||
-		old.ParallelBroadcast != next.ParallelBroadcast ||
-		old.DegradedBroadcastParallelism != next.DegradedBroadcastParallelism {
-		return true
+// reportIf appends path when changed holds.
+func reportIf(changed bool, path string, out *[]string) {
+	if changed {
+		*out = append(*out, path)
 	}
-	return boolDefault(old.DegradedReadsEnabled, true) != boolDefault(next.DegradedReadsEnabled, true)
 }
 
-// redisFieldsChanged handles the *RedisConfig pointer-nullable case  -
-// either presence change or struct inequality counts as a diff.
-func redisFieldsChanged(old, next *RedisConfig) []string {
-	if (old == nil) != (next == nil) || (old != nil && *old != *next) {
-		return []string{"redis"}
-	}
-	return nil
-}
-
-// backendStructuralChanges reports backend-list edits that cannot be hot-
-// reloaded. Quota and usage limits are explicitly reloadable and handled
-// by a separate code path; only endpoint/credential/routing-shape fields
-// are checked here.
-func backendStructuralChanges(old, next []BackendConfig) []string {
-	if len(old) != len(next) {
-		return []string{"backends (count changed)"}
-	}
-	var changed []string
-	for i := range old {
-		o, n := old[i], next[i]
-		if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
-			o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
-			o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
-			boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
-			o.DisableChecksum != n.DisableChecksum ||
-			o.StripSDKHeaders != n.StripSDKHeaders || o.MaxObjectSize != n.MaxObjectSize ||
-			httpTransportChanged(o.HTTP, n.HTTP) {
-			changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
+// reloadable reports whether path lies at or under a reloadable path.
+func reloadable(path string) bool {
+	general := indexPattern.ReplaceAllString(path, "[*]")
+	for _, p := range reloadablePaths {
+		if general == p || strings.HasPrefix(general, p+".") || strings.HasPrefix(general, p+"[") {
+			return true
 		}
 	}
-	return changed
+	return false
 }
 
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
-
-// httpTransportChanged reports whether a backend's transport settings differ.
-// The transport is built once when the backend client is constructed, so a
-// changed pool size or HTTP/2 setting needs a restart to take effect - which
-// the reload path reports rather than silently ignoring.
-func httpTransportChanged(o, n BackendHTTPConfig) bool {
-	return o.MaxIdleConns != n.MaxIdleConns ||
-		o.MaxIdleConnsPerHost != n.MaxIdleConnsPerHost ||
-		o.MaxConnsPerHost != n.MaxConnsPerHost ||
-		o.ResponseHeaderTimeout != n.ResponseHeaderTimeout ||
-		o.HTTP2Enabled() != n.HTTP2Enabled()
-}
-
-// boolDefault returns the value of a *bool, or the given default if nil.
-func boolDefault(p *bool, def bool) bool {
-	if p != nil {
-		return *p
-	}
-	return def
-}
 
 // ParseLogLevel maps a log level name, in any case, to a slog.Level. An empty
 // name is info, so a log query that names no level withholds DEBUG entries;

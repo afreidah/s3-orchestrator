@@ -36,7 +36,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -96,7 +95,7 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 
 // ProvideS3Server creates the S3-compatible HTTP handler.
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	objects := r.Resolve[*object.Manager]()
 	multipartManager := r.Resolve[*multipart.Manager]()
@@ -144,7 +143,7 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 
 // ProvideOps creates the operations layer both transports call.
 func ProvideOps(i do.Injector) (*ops.Services, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	live := r.Resolve[*config.Live]()
 	rt := r.Resolve[*infra.BackendRuntime]()
 	objectManager := r.Resolve[*object.Manager]()
@@ -194,7 +193,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	live := r.Resolve[*config.Live]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
 	logBuffer := r.Resolve[*telemetry.LogBuffer]()
@@ -203,6 +202,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	reconciler := r.Resolve[*reconcile.Manager]()
 	opsSvc := r.Resolve[*ops.Services]()
 	declared := r.Resolve[*provisioning.Declared]()
+	srv := r.Resolve[*s3api.Server]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -222,7 +222,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Config:        live,
 		LogBuffer:     logBuffer,
 		LoginThrottle: loginThrottle,
-		Registry:      adminBucketRegistry(i),
+		Registry:      srv.GetBucketAuth,
 	}), nil
 }
 
@@ -254,11 +254,10 @@ func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []adminapi.WorkerHealth
 // -------------------------------------------------------------------------
 
 // ProvideAdminHandler creates the admin API handler. The required
-// dependencies are resolved together; the optional ones (reconciler, worker
-// health, flight recorder, cache, log buffer) leave their endpoints inert
-// when absent.
+// dependencies are resolved together; the optional ones (reconciler, flight
+// recorder, cache) leave their endpoints inert when absent.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	usageSvc := r.Resolve[*usage.Service]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
 	logLevel := r.Resolve[*slog.LevelVar]()
@@ -267,32 +266,18 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	opsSvc := r.Resolve[*ops.Services]()
 	aggregator := r.Resolve[*dashboard.Aggregator]()
 	runtime := r.Resolve[*infra.BackendRuntime]()
-	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	id := r.Resolve[instanceid.ID]()
 	shared := r.Resolve[*sharedstate.Shared]()
 	mode := r.Resolve[config.Mode]()
+	lm := r.Resolve[*lifecycle.Manager]()
+	logBuffer := r.Resolve[*telemetry.LogBuffer]()
+	srv := r.Resolve[*s3api.Server]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	recRes := Optional[*worker.Reconciler](i)
-	if recRes.Failed() {
-		slog.WarnContext(context.Background(),
-			"reconciler resolution failed; admin reconcile endpoint will be inert",
-			logfmt.Component("di"),
-			"error", recRes.Err)
-	}
-	// lifecycle.Manager is invoked lazily so a proxy-only deployment
-	// that has no worker pool still resolves the admin handler. The
-	// closure surfaces a nil snapshot to the admin transport, which
-	// then returns 503 to /admin/api/workers.
-	var workerHealth func() []adminapi.WorkerHealth
-	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
-		workerHealth = func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
-	}
-	// FlightRecorder is optional - Optional[*debug.FlightRecorderService]
-	// returns a nil Value when the feature is disabled, so the admin
-	// handler ends up holding a nil *trace.FlightRecorder and the
-	// snapshot endpoint responds 503.
-	frRes := Optional[*debug.FlightRecorderService](i)
+	ctx := context.Background()
+	// A disabled flight recorder leaves the admin handler a nil recorder, and
+	// the snapshot endpoint answers 503.
 	deps := &admin.Deps{
 		BackendOps:   usageSvc,
 		Dashboard:    aggregator,
@@ -307,14 +292,15 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		States:       states,
 		StateStore:   stores,
 		DBHealthy:    cb.IsHealthy,
-		WorkerHealth: workerHealth,
+		WorkerHealth: func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) },
 		Cleanup:      stores,
-		ObjectCache:  Optional[objcache.ObjectCache](i).Value,
-		FlightRec:    frRes.Value.Recorder(),
-		Reconciler:   recRes.Value,
-		Registry:     adminBucketRegistry(i),
+		ObjectCache:  Optional[objcache.ObjectCache](i).Get(ctx),
+		FlightRec:    Optional[*debug.FlightRecorderService](i).Get(ctx).Recorder(),
+		Reconciler:   Optional[*worker.Reconciler](i).Get(ctx),
+		Registry:     srv.GetBucketAuth,
 		BackendNames: runtime.BackendOrder,
 		LogLevel:     logLevel,
+		LogBuffer:    logBuffer,
 		Instance: adminapi.InstanceStatus{
 			ID:        id.String(),
 			Version:   telemetry.Version,
@@ -323,35 +309,17 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		},
 		Shared: shared,
 	}
-	// Set the log buffer only when a real one resolves; assigning a nil
-	// *telemetry.LogBuffer to the interface field would make the /logs
-	// endpoint's nil-guard miss (non-nil interface holding a nil pointer).
-	if lb, err := do.Invoke[*telemetry.LogBuffer](i); err == nil && lb != nil {
-		deps.LogBuffer = lb
-	}
-	// Same guard for the metrics collector behind /admin/api/replication.
-	if mc, err := do.Invoke[*metrics.Collector](i); err == nil && mc != nil {
+	// Set only when the runtime built one; a nil *metrics.Collector in the
+	// interface field would defeat the replication endpoint's nil check.
+	if mc := runtime.MetricsCollector(); mc != nil {
 		deps.ReplMetrics = mc
 	}
 	return admin.New(deps), nil
 }
 
-// adminBucketRegistry reads the S3 server's current registry on each call, so
-// admin auth sees reloaded credentials. It returns nil in a worker-only
-// deployment, where provisioned credentials are refused.
-func adminBucketRegistry(i do.Injector) func() *auth.BucketRegistry {
-	return func() *auth.BucketRegistry {
-		res := Optional[*s3api.Server](i)
-		if res.Failed() || res.Value == nil {
-			return nil
-		}
-		return res.Value.GetBucketAuth()
-	}
-}
-
 // ProvideNotifier creates the webhook notification system.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
-	r := newResolver(i)
+	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	stores := r.Resolve[metadataStore]()
 	rt := r.Resolve[*infra.BackendRuntime]()

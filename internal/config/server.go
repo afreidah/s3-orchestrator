@@ -34,8 +34,8 @@ type ServerConfig struct {
 	MaxObjectSize         int64         `yaml:"max_object_size"`         // Max upload size in bytes (default: 5GB)
 	SpillDir              string        `yaml:"spill_dir"`               // Directory for large-payload spill files (default: OS temp dir)
 	MaxConcurrentRequests int           `yaml:"max_concurrent_requests"` // Max concurrent S3 requests (default: 1000)
-	MaxConcurrentReads    int           `yaml:"max_concurrent_reads"`    // Max concurrent read requests (0 = use global limit)
-	MaxConcurrentWrites   int           `yaml:"max_concurrent_writes"`   // Max concurrent write requests (0 = use global limit)
+	MaxConcurrentReads    int           `yaml:"max_concurrent_reads"`    // Max concurrent read requests; splits the pools (0 = global limit)
+	MaxConcurrentWrites   int           `yaml:"max_concurrent_writes"`   // Max concurrent write requests; splits the pools (0 = global limit)
 	MaxHeaderBytes        int           `yaml:"max_header_bytes"`        // Max total request header size in bytes (default: 1MB)
 	MaxHeaderValueCount   int           `yaml:"max_header_value_count"`  // Max number of header values per request (default: 500)
 	LoadShedThreshold     float64       `yaml:"load_shed_threshold"`     // Active shedding threshold (0.0-1.0, 0 = disabled)
@@ -59,6 +59,46 @@ type TLSConfig struct {
 	ClientCAFile string `yaml:"client_ca_file"` // Path to CA bundle for client certificate verification (mTLS)
 }
 
+// DefaultMaxConcurrentRequests is the shared admission pool when none of the
+// three limits is set, and the size of a pool a split leaves unset.
+const DefaultMaxConcurrentRequests = 1000
+
+// AdmissionPools is the concurrency the S3 listener admits: one shared pool,
+// or a read pool and a write pool when the operator set either of those. A
+// zero Shared admits without limit, which only a config built in code has.
+type AdmissionPools struct {
+	Shared int
+	Reads  int
+	Writes int
+}
+
+// Split reports whether reads and writes are admitted from pools of their own.
+func (a AdmissionPools) Split() bool {
+	return a.Reads > 0
+}
+
+// WriteCapacity is how many writes the pools admit at once, which the
+// background workers share in split mode.
+func (a AdmissionPools) WriteCapacity() int {
+	if a.Split() {
+		return a.Writes
+	}
+	return a.Shared
+}
+
+// Admission decides the admission pools. Setting either split limit splits the
+// pools, and the one left unset takes max_concurrent_requests, or the default
+// when that is unset too, so setting one never turns admission off.
+func (s *ServerConfig) Admission() AdmissionPools {
+	if s.MaxConcurrentReads == 0 && s.MaxConcurrentWrites == 0 {
+		return AdmissionPools{Shared: s.MaxConcurrentRequests}
+	}
+	return AdmissionPools{
+		Reads:  cmp.Or(s.MaxConcurrentReads, s.MaxConcurrentRequests, DefaultMaxConcurrentRequests),
+		Writes: cmp.Or(s.MaxConcurrentWrites, s.MaxConcurrentRequests, DefaultMaxConcurrentRequests),
+	}
+}
+
 // -------------------------------------------------------------------------
 // VALIDATION
 // -------------------------------------------------------------------------
@@ -78,17 +118,16 @@ func (s *ServerConfig) setDefaultsAndValidate() []error {
 // validateBasics checks listen address, log level, and max object size
 // defaults.
 func (s *ServerConfig) validateBasics() []error {
-	var errs []error
-	if s.ListenAddr == "" {
-		errs = append(errs, fmt.Errorf("server.listen_addr is required"))
-	}
 	s.LogLevel = cmp.Or(s.LogLevel, "info")
+	s.MaxObjectSize = cmp.Or(s.MaxObjectSize, 5*1024*1024*1024) // 5 GB
+	errs := failed(
+		required("server.listen_addr", s.ListenAddr != ""),
+		positive("server.max_object_size", s.MaxObjectSize),
+	)
 	if _, err := ParseLogLevel(s.LogLevel); err != nil {
 		errs = append(errs, err)
 	}
-	s.MaxObjectSize = cmp.Or(s.MaxObjectSize, 5*1024*1024*1024) // 5 GB
-	errs = append(errs, s.validateSpillDir()...)
-	return errs
+	return append(errs, s.validateSpillDir()...)
 }
 
 // validateSpillDir checks that a configured spill directory exists and is one.
@@ -112,24 +151,18 @@ func (s *ServerConfig) validateSpillDir() []error {
 // validateConcurrency checks concurrency-limit fields and applies the
 // combined-request default when all three are zero.
 func (s *ServerConfig) validateConcurrency() []error {
-	var errs []error
-	if s.MaxConcurrentRequests < 0 {
-		errs = append(errs, fmt.Errorf("server.max_concurrent_requests must not be negative"))
-	}
+	errs := failed(
+		nonNegative("server.max_concurrent_requests", s.MaxConcurrentRequests),
+		nonNegative("server.max_concurrent_reads", s.MaxConcurrentReads),
+		nonNegative("server.max_concurrent_writes", s.MaxConcurrentWrites),
+		nonNegative("server.admission_wait", s.AdmissionWait),
+	)
 	if s.MaxConcurrentRequests == 0 && s.MaxConcurrentReads == 0 && s.MaxConcurrentWrites == 0 {
-		s.MaxConcurrentRequests = 1000
-	}
-	if s.MaxConcurrentReads < 0 {
-		errs = append(errs, fmt.Errorf("server.max_concurrent_reads must not be negative"))
-	}
-	if s.MaxConcurrentWrites < 0 {
-		errs = append(errs, fmt.Errorf("server.max_concurrent_writes must not be negative"))
+		s.MaxConcurrentRequests = DefaultMaxConcurrentRequests
 	}
 	if s.LoadShedThreshold != 0 && (s.LoadShedThreshold < 0 || s.LoadShedThreshold >= 1) {
-		errs = append(errs, fmt.Errorf("server.load_shed_threshold must be between 0.0 and 1.0 (exclusive)"))
-	}
-	if s.AdmissionWait < 0 {
-		errs = append(errs, fmt.Errorf("server.admission_wait must not be negative"))
+		errs = append(errs, fmt.Errorf("server.load_shed_threshold %w: want 0 (off), or above 0 and below 1 (got %v)",
+			ErrOutOfRange, s.LoadShedThreshold))
 	}
 	return errs
 }
@@ -139,13 +172,10 @@ func (s *ServerConfig) validateConcurrency() []error {
 // constants rather than literals so a future Go release that retunes them
 // carries through instead of silently diverging from unconfigured servers.
 func (s *ServerConfig) validateHeaderLimits() []error {
-	var errs []error
-	if s.MaxHeaderBytes < 0 {
-		errs = append(errs, fmt.Errorf("server.max_header_bytes must not be negative"))
-	}
-	if s.MaxHeaderValueCount < 0 {
-		errs = append(errs, fmt.Errorf("server.max_header_value_count must not be negative"))
-	}
+	errs := failed(
+		nonNegative("server.max_header_bytes", s.MaxHeaderBytes),
+		nonNegative("server.max_header_value_count", s.MaxHeaderValueCount),
+	)
 	s.MaxHeaderBytes = cmp.Or(s.MaxHeaderBytes, http.DefaultMaxHeaderBytes)
 	s.MaxHeaderValueCount = cmp.Or(s.MaxHeaderValueCount, http.DefaultMaxHeaderValueCount)
 	return errs
@@ -161,10 +191,17 @@ func (s *ServerConfig) applyTimeoutDefaults() {
 	s.IdleTimeout = cmp.Or(s.IdleTimeout, 120*time.Second)
 }
 
-// validateTimeouts enforces the ordering invariants between the various
-// timeout knobs.
+// validateTimeouts refuses negative timeouts and enforces the ordering
+// invariants between them.
 func (s *ServerConfig) validateTimeouts() []error {
-	var errs []error
+	errs := failed(
+		positive("server.backend_timeout", s.BackendTimeout),
+		positive("server.read_header_timeout", s.ReadHeaderTimeout),
+		positive("server.read_timeout", s.ReadTimeout),
+		positive("server.write_timeout", s.WriteTimeout),
+		positive("server.idle_timeout", s.IdleTimeout),
+		nonNegative("server.shutdown_delay", s.ShutdownDelay),
+	)
 	if s.ReadHeaderTimeout > s.ReadTimeout {
 		errs = append(errs, fmt.Errorf("server.read_header_timeout must not exceed server.read_timeout"))
 	}

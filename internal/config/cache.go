@@ -43,42 +43,31 @@ func (cc *CacheConfig) setDefaultsAndValidate() []error {
 		return nil
 	}
 
-	var errs []error
-
-	// Default TTL
-	if cc.TTL <= 0 {
-		cc.TTL = 5 * time.Minute
-	}
-
-	// Parse max_size
+	cc.TTL = cmp.Or(cc.TTL, 5*time.Minute)
 	cc.MaxSize = cmp.Or(cc.MaxSize, "256MB")
-	maxSize, err := parseByteSize(cc.MaxSize)
-	switch {
-	case err != nil:
-		errs = append(errs, fmt.Errorf("cache.max_size: %w", err))
-	case maxSize <= 0:
-		errs = append(errs, ErrCacheMaxSizeNotPositive)
-	default:
-		cc.MaxSizeBytes = maxSize
-	}
-
-	// Parse max_object_size
 	cc.MaxObjectSize = cmp.Or(cc.MaxObjectSize, "10MB")
-	maxObj, err := parseByteSize(cc.MaxObjectSize)
-	switch {
-	case err != nil:
-		errs = append(errs, fmt.Errorf("cache.max_object_size: %w", err))
-	case maxObj <= 0:
-		errs = append(errs, ErrCacheMaxObjectNotPositive)
-	default:
-		cc.MaxObjectSizeBytes = maxObj
-	}
-
+	errs := failed(positive("cache.ttl", cc.TTL))
+	errs = append(errs, parseCacheSize("cache.max_size", cc.MaxSize, &cc.MaxSizeBytes)...)
+	errs = append(errs, parseCacheSize("cache.max_object_size", cc.MaxObjectSize, &cc.MaxObjectSizeBytes)...)
 	if cc.MaxSizeBytes > 0 && cc.MaxObjectSizeBytes > 0 && cc.MaxObjectSizeBytes > cc.MaxSizeBytes {
 		errs = append(errs, ErrCacheMaxObjectExceedsMaxSize)
 	}
 
 	return errs
+}
+
+// parseCacheSize parses one size field into bytes, which must be positive.
+// Bytes is left unset when the field does not parse or is not positive.
+func parseCacheSize(path, size string, bytes *int64) []error {
+	n, err := parseByteSize(size)
+	if err != nil {
+		return []error{fmt.Errorf("%s: %w", path, err)}
+	}
+	if err := positive(path, n); err != nil {
+		return []error{err}
+	}
+	*bytes = n
+	return nil
 }
 
 // parseByteSize parses a human-readable byte size string like "256MB", "1GB",

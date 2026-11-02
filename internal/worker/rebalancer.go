@@ -124,7 +124,7 @@ type RebalanceSummary struct {
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
 	return runOpsCycle(ctx, audit.WorkloadRebalance, func(ctx context.Context) (RebalanceSummary, error) {
 		audit.Log(ctx, "rebalance.start",
-			slog.String("strategy", cfg.Strategy),
+			slog.String("strategy", string(cfg.Strategy)),
 			slog.Int("batch_size", cfg.BatchSize),
 			slog.Float64("threshold", cfg.Threshold),
 		)
@@ -143,9 +143,9 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		var plan []RebalanceMove
 		switch cfg.Strategy {
-		case "pack":
+		case config.RoutingPack:
 			plan, err = r.PlanPackTight(ctx, stats, cfg.BatchSize)
-		case "spread":
+		case config.RoutingSpread:
 			plan, err = r.PlanSpreadEven(ctx, stats, cfg.BatchSize)
 		default:
 			return RebalanceSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
@@ -532,7 +532,7 @@ func findSpreadDestination(
 // Skips individual moves that fail and continues with the rest, returning
 // the count of successful moves. observer, when non-nil, receives a step per
 // move labelled with the object and the backends it travels between.
-func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int, observer progress.Observer) batch.Summary {
+func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy config.RoutingStrategy, concurrency int, observer progress.Observer) batch.Summary {
 	runner := batch.Runner[RebalanceMove]{
 		Log:         r.log,
 		Concurrency: concurrency,
@@ -552,7 +552,8 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 // ExecuteOneMove performs a single object move: stream the bytes from
 // source to destination, place the copy there while removing the source row,
 // and delete the source bytes. Returns true when all steps succeed.
-func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
+func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy config.RoutingStrategy) bool {
+	label := string(strategy)
 	key, from := move.Source.ObjectKey, move.Source.BackendName
 	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
 		Source:   move.Source,
@@ -567,7 +568,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		}
 		r.log.WarnContext(ctx, "rebalance move failed",
 			"key", key, "from", from, "to", move.ToBackend, "error", err)
-		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
+		telemetry.RebalanceObjectsMoved.WithLabelValues(label, "error").Inc()
 		return false
 	}
 
@@ -578,8 +579,8 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		slog.Int64("size", movedSize),
 	)
 
-	telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()
-	telemetry.RebalanceBytesMoved.WithLabelValues(strategy).Add(float64(movedSize))
+	telemetry.RebalanceObjectsMoved.WithLabelValues(label, "success").Inc()
+	telemetry.RebalanceBytesMoved.WithLabelValues(label).Add(float64(movedSize))
 	return true
 }
 

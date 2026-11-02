@@ -191,11 +191,12 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	}
 }
 
-// TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly rebuilds the declared
-// bucket set in a mode that serves no S3 API, without resolving a server or a
-// CORS policy that mode never builds. It rebuilds from the configuration in
-// force, not the one the process started with, which a reload has replaced.
-func TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly(t *testing.T) {
+// TestRegistryPublisher_WorkerModeRefreshesTheRegistry verifies a worker
+// instance installs the rebuilt credential registry too, since its admin API
+// authenticates against it: a credential revoked after startup must stop
+// working there as well. It rebuilds from the configuration in force, not the
+// one the process started with, which a reload has replaced.
+func TestRegistryPublisher_WorkerModeRefreshesTheRegistry(t *testing.T) {
 	t.Parallel()
 
 	inj := do.New()
@@ -205,12 +206,18 @@ func TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly(t *testing.T) {
 	do.ProvideValue(inj, config.ModeWorker)
 	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "startup"}}})
 	liveConfig(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
+	srv := &s3api.Server{}
+	do.ProvideValue(inj, srv)
+	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
 	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
 	if got := declared.Buckets(); len(got) != 1 || got[0].Name != "photos" {
 		t.Errorf("declared buckets = %+v, want photos", got)
+	}
+	if srv.GetBucketAuth() == nil {
+		t.Error("the worker's registry was not installed")
 	}
 }
 
