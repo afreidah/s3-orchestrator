@@ -13,6 +13,8 @@ package sharedstate
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
@@ -57,4 +59,21 @@ func (s *Shared) active() Store {
 		return nil
 	}
 	return s.store
+}
+
+// encode is the JSON form v is stored and sent in, naming what in an error.
+func encode(what string, v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encode %s: %w", what, err)
+	}
+	return data, nil
+}
+
+// decode reads data written by encode into v, naming what in an error.
+func decode(what string, data []byte, v any) error {
+	if err := json.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("decode %s: %w", what, err)
+	}
+	return nil
 }

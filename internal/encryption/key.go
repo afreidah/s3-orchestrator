@@ -126,9 +126,15 @@ func (p *MultiKeyProvider) KeyID() string { return p.primary.KeyID() }
 // so a Vault primary wrapped for rotation still stops its token renewal.
 func (p *MultiKeyProvider) Close() {
 	for _, kp := range p.ordered {
-		if closer, ok := kp.(interface{ Close() }); ok {
-			closer.Close()
-		}
+		CloseProvider(kp)
+	}
+}
+
+// CloseProvider releases what kp holds, such as a Vault provider's token
+// renewal. A provider holding nothing is left alone.
+func CloseProvider(kp KeyProvider) {
+	if closer, ok := kp.(interface{ Close() }); ok {
+		closer.Close()
 	}
 }
 
@@ -186,6 +192,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig) (KeyProvider, error)
 		for i, source := range src.sources {
 			p, err := staticKeyFrom(source, src.load)
 			if err != nil {
+				CloseProvider(primary)
 				return nil, fmt.Errorf("%s[%d]: %w", src.field, i, err)
 			}
 			previous = append(previous, p)
@@ -234,9 +241,7 @@ func aesGCMWrap(masterKey, dek []byte) ([]byte, error) {
 		return nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("nonce: %w", err)
-	}
+	_, _ = rand.Read(nonce)
 	return gcm.Seal(nonce, nonce, dek, nil), nil
 }
 

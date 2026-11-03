@@ -89,7 +89,7 @@ func (c *Codec) DecompressRanged(ctx context.Context, f RangeFetcher, compressed
 	if err != nil {
 		return nil, classifyDecode(fmt.Errorf("open ranged seekable reader: %w", err))
 	}
-	return &decodeGuard{inner: r}, nil
+	return &decodeGuard{r}, nil
 }
 
 // InspectStored reports whether stored bytes are in the seekable format this
@@ -225,9 +225,11 @@ func classifyDecode(err error) error {
 
 // decodeGuard classifies the errors the seekable reader raises while decoding,
 // so a decode failure reaches the read path as ErrCorruptObject rather than as
-// whatever shape the library happened to produce.
+// whatever shape the library happened to produce. Seek and Close pass through:
+// seeking moves an offset against the parsed seek table and never decodes a
+// frame, so a failure there is a bad argument rather than a bad object.
 type decodeGuard struct {
-	inner RangedReader
+	RangedReader
 }
 
 // -------------------------------------------------------------------------
@@ -236,25 +238,15 @@ type decodeGuard struct {
 
 // Read implements io.Reader.
 func (g *decodeGuard) Read(p []byte) (int, error) {
-	n, err := g.inner.Read(p)
+	n, err := g.RangedReader.Read(p)
 	return n, classifyDecode(err)
 }
 
 // ReadAt implements io.ReaderAt.
 func (g *decodeGuard) ReadAt(p []byte, off int64) (int, error) {
-	n, err := g.inner.ReadAt(p, off)
+	n, err := g.RangedReader.ReadAt(p, off)
 	return n, classifyDecode(err)
 }
-
-// Seek implements io.Seeker. Its errors pass through unclassified: seeking
-// moves an offset against the parsed seek table and never decodes a frame, so a
-// failure here is a bad argument rather than a bad object.
-func (g *decodeGuard) Seek(offset int64, whence int) (int64, error) {
-	return g.inner.Seek(offset, whence)
-}
-
-// Close implements io.Closer.
-func (g *decodeGuard) Close() error { return g.inner.Close() }
 
 // fromTail serves n bytes at off out of the prefetched tail when it covers
 // them. The caller has already bounded off and n against the object size.

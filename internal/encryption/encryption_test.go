@@ -49,6 +49,13 @@ func testEncryptor(t *testing.T, chunkSize int) *Encryptor {
 	return enc
 }
 
+// decryptAll opens a whole-object decrypt of ct under the key data res
+// carries, the way a read of a stored object does.
+func decryptAll(ctx context.Context, enc *Encryptor, ct []byte, res *EncryptResult) (io.Reader, error) {
+	r, _, err := enc.DecryptStored(ctx, bytes.NewReader(ct), PackKeyData(res.BaseNonce, res.WrappedDEK), res.KeyID, 0, nil)
+	return r, err
+}
+
 // -------------------------------------------------------------------------
 // ENCRYPT + DECRYPT ROUND-TRIP
 // -------------------------------------------------------------------------
@@ -75,7 +82,7 @@ func TestEncryptDecrypt_Empty(t *testing.T) {
 	}
 
 	// Decrypt should produce empty
-	plain, err := enc.Decrypt(ctx, bytes.NewReader(ciphertext), result.WrappedDEK, result.KeyID)
+	plain, err := decryptAll(ctx, enc, ciphertext, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -108,7 +115,7 @@ func TestEncryptDecrypt_OneByte(t *testing.T) {
 		t.Fatalf("ReadAll ciphertext: %v", err)
 	}
 
-	plain, err := enc.Decrypt(ctx, bytes.NewReader(ciphertext), result.WrappedDEK, result.KeyID)
+	plain, err := decryptAll(ctx, enc, ciphertext, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -144,7 +151,7 @@ func TestEncryptDecrypt_ExactlyOneChunk(t *testing.T) {
 		t.Fatalf("ReadAll ciphertext: %v", err)
 	}
 
-	plain, err := enc.Decrypt(ctx, bytes.NewReader(ciphertext), result.WrappedDEK, result.KeyID)
+	plain, err := decryptAll(ctx, enc, ciphertext, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -185,7 +192,7 @@ func TestEncryptDecrypt_MultiChunk(t *testing.T) {
 		t.Errorf("ciphertext len = %d, want %d", len(ciphertext), result.CiphertextSize)
 	}
 
-	plain, err := enc.Decrypt(ctx, bytes.NewReader(ciphertext), result.WrappedDEK, result.KeyID)
+	plain, err := decryptAll(ctx, enc, ciphertext, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -222,7 +229,7 @@ func TestEncryptDecrypt_LargePayload(t *testing.T) {
 		t.Fatalf("ReadAll ciphertext: %v", err)
 	}
 
-	plain, err := enc.Decrypt(ctx, bytes.NewReader(ciphertext), result.WrappedDEK, result.KeyID)
+	plain, err := decryptAll(ctx, enc, ciphertext, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -273,9 +280,9 @@ func TestDecryptRange_FirstChunk(t *testing.T) {
 	// Extract the ciphertext range (skip header, get the chunk bytes)
 	ctBytes := ciphertext[rng.StartChunk*uint64(chunkSize+ChunkOverhead)+uint64(HeaderSize):]
 
-	reader, n, err := enc.DecryptRange(ctx, bytes.NewReader(ctBytes), result.WrappedDEK, result.KeyID, rng, result.BaseNonce)
+	reader, n, err := enc.DecryptStored(ctx, bytes.NewReader(ctBytes), PackKeyData(result.BaseNonce, result.WrappedDEK), result.KeyID, int64(len(original)), rng)
 	if err != nil {
-		t.Fatalf("DecryptRange: %v", err)
+		t.Fatalf("DecryptStored: %v", err)
 	}
 
 	got, err := io.ReadAll(reader)
@@ -477,9 +484,9 @@ func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 	_, _ = fmt.Sscanf(rng.BackendRange, "bytes=%d-%d", &ctStart, &ctEnd)
 	ctSlice := ciphertext[ctStart : ctEnd+1]
 
-	reader, n, err := enc.DecryptRange(ctx, bytes.NewReader(ctSlice), result.WrappedDEK, result.KeyID, rng, result.BaseNonce)
+	reader, n, err := enc.DecryptStored(ctx, bytes.NewReader(ctSlice), PackKeyData(result.BaseNonce, result.WrappedDEK), result.KeyID, int64(len(original)), rng)
 	if err != nil {
-		t.Fatalf("DecryptRange: %v", err)
+		t.Fatalf("DecryptStored: %v", err)
 	}
 
 	got, err := io.ReadAll(reader)
@@ -646,7 +653,7 @@ func TestParseHeader_Valid(t *testing.T) {
 		t.Fatalf("ReadAll: %v", err)
 	}
 
-	chunkSize, baseNonce, err := ParseHeader(bytes.NewReader(ct))
+	chunkSize, baseNonce, err := parseHeader(bytes.NewReader(ct))
 	if err != nil {
 		t.Fatalf("ParseHeader: %v", err)
 	}
@@ -664,7 +671,7 @@ func TestParseHeader_InvalidMagic(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], "XXXX")
-	_, _, err := ParseHeader(bytes.NewReader(hdr))
+	_, _, err := parseHeader(bytes.NewReader(hdr))
 	if err == nil {
 		t.Error("expected error for invalid magic")
 	}
@@ -676,7 +683,7 @@ func TestParseHeader_UnsupportedVersion(t *testing.T) {
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x99
-	_, _, err := ParseHeader(bytes.NewReader(hdr))
+	_, _, err := parseHeader(bytes.NewReader(hdr))
 	if err == nil {
 		t.Error("expected error for unsupported version")
 	}
@@ -685,7 +692,7 @@ func TestParseHeader_UnsupportedVersion(t *testing.T) {
 // TestParseHeader_TooShort verifies the parse header too short path by exercising bytes.NewReader.
 func TestParseHeader_TooShort(t *testing.T) {
 	t.Parallel()
-	_, _, err := ParseHeader(bytes.NewReader(make([]byte, 10)))
+	_, _, err := parseHeader(bytes.NewReader(make([]byte, 10)))
 	if err == nil {
 		t.Error("expected error for truncated header")
 	}
@@ -762,7 +769,8 @@ func TestDecrypt_BadWrappedDEK(t *testing.T) {
 	ct, _ := io.ReadAll(result.Body)
 
 	// Try to decrypt with corrupted wrapped DEK
-	_, err = enc.Decrypt(ctx, bytes.NewReader(ct), []byte("garbage"), result.KeyID)
+	result.WrappedDEK = []byte("garbage")
+	_, err = decryptAll(ctx, enc, ct, result)
 	if err == nil {
 		t.Error("expected error for corrupted wrapped DEK")
 	}
@@ -785,7 +793,7 @@ func TestDecrypt_CorruptedCiphertext(t *testing.T) {
 	// Corrupt a byte in the ciphertext (after header)
 	ct[HeaderSize+NonceSize+5] ^= 0xFF
 
-	reader, err := enc.Decrypt(ctx, bytes.NewReader(ct), result.WrappedDEK, result.KeyID)
+	reader, err := decryptAll(ctx, enc, ct, result)
 	if err != nil {
 		// Error during setup is fine too
 		return
@@ -798,14 +806,16 @@ func TestDecrypt_CorruptedCiphertext(t *testing.T) {
 	}
 }
 
-// TestDecryptRange_BadWrappedDEK verifies the decrypt range bad wrapped dek path by exercising context.Background, enc.DecryptRange, bytes.NewReader.
-func TestDecryptRange_BadWrappedDEK(t *testing.T) {
+// TestDecryptStored_RangeBadWrappedDEK verifies a ranged decrypt fails when
+// the wrapped DEK does not unwrap.
+func TestDecryptStored_RangeBadWrappedDEK(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
 	rng, _ := CiphertextRange(0, 10, 256, ciphertextSizeExact(256, 64))
-	_, _, err := enc.DecryptRange(ctx, bytes.NewReader(nil), []byte("garbage"), "test-0", rng, make([]byte, NonceSize))
+	packed := PackKeyData(make([]byte, NonceSize), []byte("garbage"))
+	_, _, err := enc.DecryptStored(ctx, bytes.NewReader(nil), packed, "test-0", 256, rng)
 	if err == nil {
 		t.Error("expected error for bad wrapped DEK")
 	}
@@ -884,7 +894,7 @@ func TestEncryptDecrypt_SmallReads(t *testing.T) {
 	}
 	ct := readAllOneByteAtATime(t, result.Body)
 
-	reader, err := enc.Decrypt(ctx, bytes.NewReader(ct), result.WrappedDEK, result.KeyID)
+	reader, err := decryptAll(ctx, enc, ct, result)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
@@ -964,7 +974,7 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 	// Both must decrypt to same plaintext
 	for i, ct := range [][]byte{ct1, ct2} {
 		res := []*EncryptResult{first, second}[i]
-		plain, err := enc.Decrypt(ctx, bytes.NewReader(ct), res.WrappedDEK, res.KeyID)
+		plain, err := decryptAll(ctx, enc, ct, res)
 		if err != nil {
 			t.Fatalf("Decrypt[%d]: %v", i, err)
 		}

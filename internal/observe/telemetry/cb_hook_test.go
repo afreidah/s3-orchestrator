@@ -103,7 +103,7 @@ func TestNewBackendCircuitHook_PublishesNoEvent(t *testing.T) {
 		t.Errorf("expected no events from the aggregate hook, got %d", len(emitted))
 	}
 	var m dto.Metric
-	if err := CircuitBreakerState.WithLabelValues("test-aggregate").Write(&m); err != nil {
+	if err := circuitBreakerState.WithLabelValues("test-aggregate").Write(&m); err != nil {
 		t.Fatalf("write gauge: %v", err)
 	}
 	if got := m.GetGauge().GetValue(); got != float64(breaker.StateOpen) {
@@ -143,11 +143,11 @@ func TestNewCircuitBreakerHook_NilEmitIsSafe(t *testing.T) {
 	})
 }
 
-// TestNewDatabaseBreakerHook_GaugeFollowsState pins the DegradedModeActive
-// gauge to the DB breaker: 1 on open, 0 on closed.
-func TestNewDatabaseBreakerHook_GaugeFollowsState(t *testing.T) {
+// TestNewDependencyBreakerHook_GaugeFollowsState pins a dependency's down
+// gauge to its breaker: 1 on open, 0 on closed.
+func TestNewDependencyBreakerHook_GaugeFollowsState(t *testing.T) {
 	event.SetEmitter(nil)
-	hook := NewDatabaseBreakerHook("db")
+	hook := NewDependencyBreakerHook("db", DegradedModeActive)
 	if got := gaugeValue(t); got != 0 {
 		t.Fatalf("initial gauge = %v, want 0", got)
 	}

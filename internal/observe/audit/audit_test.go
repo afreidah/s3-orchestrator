@@ -195,13 +195,13 @@ func TestUserContextRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	if got := User(ctx); got != "" {
+	if got := user(ctx); got != "" {
 		t.Fatalf("bare context reported user %q, want none", got)
 	}
 
 	ctx = WithUser(ctx, "user-abc123")
-	if got := User(ctx); got != "user-abc123" {
-		t.Fatalf("User() = %q, want user-abc123", got)
+	if got := user(ctx); got != "user-abc123" {
+		t.Fatalf("user() = %q, want user-abc123", got)
 	}
 }
 
@@ -210,8 +210,8 @@ func TestUserContextRoundTrip(t *testing.T) {
 func TestUser_WrongTypeInContext(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), userKey, 42)
-	if got := User(ctx); got != "" {
-		t.Fatalf("User() = %q, want none for a non-string value", got)
+	if got := user(ctx); got != "" {
+		t.Fatalf("user() = %q, want none for a non-string value", got)
 	}
 }
 

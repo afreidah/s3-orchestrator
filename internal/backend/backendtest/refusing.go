@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // RefusingReads returns an in-memory backend named name whose GET breaker is
@@ -24,7 +25,7 @@ import (
 func RefusingReads(name string) *backend.CircuitBreakerBackend {
 	inner := NewInMemory()
 	inner.GetErr = &StatusError{Code: http.StatusForbidden, Msg: "download quota exceeded"}
-	cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
+	cb := backend.NewCircuitBreakerBackend(inner, name, config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour})
 	_, _ = cb.GetObject(context.Background(), "refused", "")
 	return cb
 }

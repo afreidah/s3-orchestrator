@@ -25,22 +25,26 @@ type httpStatusError interface {
 	HTTPStatusCode() int
 }
 
+// statusOf returns the HTTP status a response in err's chain carries, or 0
+// when the chain holds no response.
+func statusOf(err error) int {
+	if respErr, ok := errors.AsType[httpStatusError](err); ok {
+		return respErr.HTTPStatusCode()
+	}
+	return 0
+}
+
 // IsNotFound returns true if the error chain contains a typed response
 // whose HTTPStatusCode() reports 404. A 404 from DELETE means the object
 // is already absent on the backend, which is the desired end state -
 // callers can treat it as idempotent success rather than as a failure
 // worth retrying.
 func IsNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	respErr, ok := errors.AsType[httpStatusError](err)
-	return ok && respErr.HTTPStatusCode() == 404
+	return statusOf(err) == http.StatusNotFound
 }
 
 // isRangeNotSatisfiable returns true if the error chain carries a 416: the
 // object exists but is too short for the requested range.
 func isRangeNotSatisfiable(err error) bool {
-	respErr, ok := errors.AsType[httpStatusError](err)
-	return ok && respErr.HTTPStatusCode() == http.StatusRequestedRangeNotSatisfiable
+	return statusOf(err) == http.StatusRequestedRangeNotSatisfiable
 }

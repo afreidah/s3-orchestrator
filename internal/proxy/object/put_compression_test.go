@@ -40,7 +40,7 @@ const putCompressChunk = compression.MinChunkSize
 // newPutCodec builds a codec for the write path and closes it with the test.
 func newPutCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, putCompressChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, putCompressChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

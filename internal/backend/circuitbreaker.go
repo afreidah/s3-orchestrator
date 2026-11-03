@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -49,6 +50,10 @@ const backendBreakerCall = "all"
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
+
+// ErrBackendUnavailable is returned for a call a backend's breakers refuse,
+// while the backend or the call is known to be failing.
+var ErrBackendUnavailable = errors.New("backend unavailable")
 
 // CircuitBreakerBackend wraps an ObjectBackend with circuit breaker
 // protection. A call its breakers refuse returns ErrBackendUnavailable without
@@ -85,13 +90,6 @@ type Probe struct {
 // Compile-time check.
 var _ ObjectBackend = (*CircuitBreakerBackend)(nil)
 
-// CircuitBreakerConfig configures the circuit breakers wrapping a backend.
-type CircuitBreakerConfig struct {
-	Name      string
-	Threshold int
-	Timeout   time.Duration
-}
-
 // failureScope is which breaker a failed call counts against.
 type failureScope int
 
@@ -108,16 +106,16 @@ const (
 // the standard CircuitBreaker* metrics, where the backend counts as open while
 // any call is not served, and on BackendCallRefused per call. Each breaker
 // publishes its own BackendCircuit* event, naming its call.
-func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
+func NewCircuitBreakerBackend(inner CheckedBackend, name string, cfg config.BackendCircuitBreakerConfig) *CircuitBreakerBackend {
 	cb := &CircuitBreakerBackend{
 		inner:         inner,
-		name:          cfg.Name,
+		name:          name,
 		calls:         make(map[core.BackendCalls]*callBreaker),
-		onStateChange: telemetry.NewBackendCircuitHook(cfg.Name),
+		onStateChange: telemetry.NewBackendCircuitHook(name),
 	}
 	cb.callsClosed.Store(uint64(core.AllCalls))
 
-	cb.backend = newBreaker(cfg, cfg.Name, scopeBackend)
+	cb.backend = newBreaker(cfg, name, scopeBackend)
 	cb.backend.AddOnStateChange(func(info breaker.StateChangeInfo) {
 		cb.apply(info, func() { cb.backendOpen.Store(info.To != breaker.StateClosed) })
 		telemetry.BackendCircuitEvent(cb.name, backendBreakerCall, info)
@@ -126,7 +124,7 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 	// Each single bit of AllCalls, lowest first.
 	for rest := uint64(core.AllCalls); rest != 0; rest &= rest - 1 {
 		call := core.BackendCalls(rest & -rest)
-		br := newBreaker(cfg, cfg.Name+"/"+call.String(), scopeCall)
+		br := newBreaker(cfg, name+"/"+call.String(), scopeCall)
 		br.AddOnStateChange(func(info breaker.StateChangeInfo) {
 			cb.apply(info, func() {
 				if info.To == breaker.StateClosed {
@@ -145,13 +143,13 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 
 // newBreaker builds one breaker of a backend, counting only failures of the
 // given scope.
-func newBreaker(cfg CircuitBreakerConfig, name string, scope failureScope) *breaker.CircuitBreaker {
+func newBreaker(cfg config.BackendCircuitBreakerConfig, name string, scope failureScope) *breaker.CircuitBreaker {
 	return breaker.NewCircuitBreaker(breaker.Config{
 		Name:      name,
-		Threshold: cfg.Threshold,
-		Timeout:   cfg.Timeout,
+		Threshold: cfg.FailureThreshold,
+		Timeout:   cfg.OpenTimeout,
 		IsError:   func(err error) bool { return classifyFailure(err) == scope },
-		Sentinel:  breaker.ErrBackendUnavailable,
+		Sentinel:  ErrBackendUnavailable,
 	})
 }
 
@@ -169,15 +167,11 @@ func classifyFailure(err error) failureScope {
 		return scopeNone
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrUnsupported) || errors.Is(err, breaker.ErrBackendUnavailable) {
+		errors.Is(err, ErrUnsupported) || errors.Is(err, ErrBackendUnavailable) {
 		return scopeNone
 	}
-	respErr, ok := errors.AsType[httpStatusError](err)
-	if !ok {
-		return scopeBackend
-	}
-	switch status := respErr.HTTPStatusCode(); {
-	case status == http.StatusUnauthorized:
+	switch status := statusOf(err); {
+	case status == 0, status == http.StatusUnauthorized:
 		return scopeBackend
 	case status >= http.StatusInternalServerError, status == http.StatusTooManyRequests, status == http.StatusForbidden:
 		return scopeCall

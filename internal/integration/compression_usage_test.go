@@ -68,7 +68,7 @@ func setupCompressionEnv(t *testing.T) *compressionEnv {
 	setQuotaLimits(t, 64<<20)
 	ctx := context.Background()
 
-	codec, err := compression.NewCodec(compression.DefaultLevel, compTestChunk)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel,compTestChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

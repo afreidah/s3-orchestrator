@@ -44,7 +44,7 @@ func FuzzParseHeader(f *testing.F) {
 	f.Add(huge)
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		cs, nonce, err := ParseHeader(bytes.NewReader(data))
+		cs, nonce, err := parseHeader(bytes.NewReader(data))
 		if err != nil {
 			return
 		}

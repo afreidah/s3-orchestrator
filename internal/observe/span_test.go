@@ -89,19 +89,22 @@ func TestRun_NilRecorderAllowed(t *testing.T) {
 }
 
 // TestRun_RecorderFiresOnPanic enforces the lifecycle guarantee that a
-// panicking closure still triggers metric/span finalization before the
-// panic propagates.
+// panicking closure is recorded as a failure, on the metric and the span,
+// before the panic propagates.
 func TestRun_RecorderFiresOnPanic(t *testing.T) {
-	t.Parallel()
-	var fired atomic.Bool
-	rec := func(_ string, _ time.Time, _ error) { fired.Store(true) }
+	sr := newSpanRecorder(t)
+	var recorded atomic.Pointer[error]
+	rec := func(_ string, _ time.Time, err error) { recorded.Store(&err) }
 
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic to propagate")
 		}
-		if !fired.Load() {
-			t.Error("recorder did not fire before panic propagated")
+		if got := recorded.Load(); got == nil || !errors.Is(*got, errPanicked) {
+			t.Errorf("recorder saw %v, want errPanicked", got)
+		}
+		if spans := sr.Ended(); len(spans) != 1 || spans[0].Status().Code != codes.Error {
+			t.Errorf("span did not end as an error: %v", spans)
 		}
 	}()
 
@@ -133,28 +136,6 @@ func TestRunErr_PropagatesError(t *testing.T) {
 		return want
 	}); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
-	}
-}
-
-// TestRunValue_ReturnsResultAndReportsSuccess pins the variant the background
-// passes use: the result comes back untouched and the span always closes Ok,
-// since work that cannot fail has no failure to report.
-func TestRunValue_ReturnsResultAndReportsSuccess(t *testing.T) {
-	sr := newSpanRecorder(t)
-
-	got := RunValue(context.Background(), Internal("tick", nil, nil), func(_ context.Context) int {
-		return 42
-	})
-	if got != 42 {
-		t.Errorf("result = %d, want 42", got)
-	}
-
-	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("recorded %d spans, want 1", len(spans))
-	}
-	if status := spans[0].Status(); status.Code != codes.Ok {
-		t.Errorf("status = %v, want Ok", status.Code)
 	}
 }
 

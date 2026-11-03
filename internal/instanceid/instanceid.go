@@ -3,18 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Resolves a stable per-process identifier used to stamp the cleanup_queue
-// claimed_by column for observability and the cleanup_queue.claim_recovered
-// audit event. The identifier has no role in correctness decisions  -  the
-// claim race is settled by FOR UPDATE SKIP LOCKED in postgres and by SQLite's
-// single-writer model. The format hostname-XXXXXXXX (8 lowercase hex chars)
-// keeps a human-readable hostname prefix while still differentiating two
-// instances on the same host (e.g., a rolling deploy with overlap, or two
-// pods on the same node).
-//
-// The identifier is computed once at construction (DI singleton) so every
-// claim within a process carries the same value; future-instance comparisons
-// across pods stay meaningful.
+// A stable per-process identifier, hostname-XXXXXXXX, telling instances apart
+// in shared state, cleanup claims and logs. No claim depends on it for
+// correctness.
 // -------------------------------------------------------------------------------
 
 package instanceid
@@ -35,16 +26,15 @@ func (i ID) String() string { return string(i) }
 
 // New builds a fresh instance identifier from the hostname ("unknown" if it
 // cannot be read) and an 8-hex crypto/rand suffix, so two processes on the
-// same host get distinct identifiers. A rand.Read failure is returned.
-func New() (ID, error) {
+// same host get distinct identifiers.
+func New() ID {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "unknown"
 	}
 
+	// rand.Read never returns an error: it crashes the process instead.
 	var suffix [4]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", fmt.Errorf("instanceid: read random suffix: %w", err)
-	}
-	return ID(fmt.Sprintf("%s-%s", host, hex.EncodeToString(suffix[:]))), nil
+	_, _ = rand.Read(suffix[:])
+	return ID(fmt.Sprintf("%s-%s", host, hex.EncodeToString(suffix[:])))
 }

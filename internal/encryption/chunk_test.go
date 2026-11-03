@@ -152,7 +152,7 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 
 	// Parse header
 	hdrReader := bytes.NewReader(ct)
-	cs, baseNonce, err := ParseHeader(hdrReader)
+	cs, baseNonce, err := parseHeader(hdrReader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestChunkParseHeader_InvalidMagic(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], "BAAD")
-	_, _, err := ParseHeader(bytes.NewReader(hdr))
+	_, _, err := parseHeader(bytes.NewReader(hdr))
 	if err == nil {
 		t.Fatal("expected error for invalid magic")
 	}
@@ -196,7 +196,7 @@ func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x99
-	_, _, err := ParseHeader(bytes.NewReader(hdr))
+	_, _, err := parseHeader(bytes.NewReader(hdr))
 	if err == nil {
 		t.Fatal("expected error for unsupported version")
 	}
@@ -211,7 +211,7 @@ func TestChunkParseHeader_ChunkSizeOverMax(t *testing.T) {
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x01
 	binary.BigEndian.PutUint32(hdr[5:9], config.MaxEncryptionChunkSize+1)
-	if _, _, err := ParseHeader(bytes.NewReader(hdr)); err == nil {
+	if _, _, err := parseHeader(bytes.NewReader(hdr)); err == nil {
 		t.Fatal("expected error for a chunk size over the maximum")
 	}
 }
@@ -219,7 +219,7 @@ func TestChunkParseHeader_ChunkSizeOverMax(t *testing.T) {
 // TestChunkParseHeader_TooShort verifies the chunk parse header too short path by exercising bytes.NewReader.
 func TestChunkParseHeader_TooShort(t *testing.T) {
 	t.Parallel()
-	_, _, err := ParseHeader(bytes.NewReader([]byte("short")))
+	_, _, err := parseHeader(bytes.NewReader([]byte("short")))
 	if err == nil {
 		t.Fatal("expected error for truncated header")
 	}
@@ -235,7 +235,7 @@ func TestChunkParseHeader_ValidRoundTrip(t *testing.T) {
 	binary.BigEndian.PutUint32(hdr[5:9], 4096)
 	copy(hdr[9:21], "base-nonce!!")
 
-	cs, nonce, err := ParseHeader(bytes.NewReader(hdr))
+	cs, nonce, err := parseHeader(bytes.NewReader(hdr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestDecryptReader_NonceMismatch(t *testing.T) {
 
 	// Parse header, then decrypt starting at wrong chunk index
 	r := bytes.NewReader(ct)
-	cs, baseNonce, err := ParseHeader(r)
+	cs, baseNonce, err := parseHeader(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func BenchmarkDecryptReader(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		r := bytes.NewReader(ct)
-		cs, baseNonce, err := ParseHeader(r)
+		cs, baseNonce, err := parseHeader(r)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -425,7 +425,7 @@ func encryptAllForBench(t *testing.T, plaintext, dek []byte, chunkSize int) (bod
 	if err != nil {
 		t.Fatalf("read encrypted: %v", err)
 	}
-	cs, baseNonce, err = ParseHeader(bytes.NewReader(full[:HeaderSize]))
+	cs, baseNonce, err = parseHeader(bytes.NewReader(full[:HeaderSize]))
 	if err != nil {
 		t.Fatalf("parse header: %v", err)
 	}
@@ -526,7 +526,7 @@ func TestDecryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read encrypted: %v", err)
 	}
-	cs, baseNonce, err := ParseHeader(bytes.NewReader(full[:HeaderSize]))
+	cs, baseNonce, err := parseHeader(bytes.NewReader(full[:HeaderSize]))
 	if err != nil {
 		t.Fatalf("parse header: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestEncryptor_PoolReuse_NoCrossStreamLeak(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stream %d: read ct: %v", i, err)
 		}
-		dr, err := enc.Decrypt(ctx, bytes.NewReader(ct), r.WrappedDEK, r.KeyID)
+		dr, err := decryptAll(ctx, enc, ct, r)
 		if err != nil {
 			t.Fatalf("stream %d: Decrypt: %v", i, err)
 		}
@@ -610,7 +610,7 @@ func BenchmarkRoundTrip(b *testing.B) {
 		ct, _ := io.ReadAll(er)
 
 		r := bytes.NewReader(ct)
-		cs, baseNonce, _ := ParseHeader(r)
+		cs, baseNonce, _ := parseHeader(r)
 		dr, _ := newDecryptReader(r, dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
 		_, _ = io.Copy(io.Discard, dr)
 	}

@@ -210,15 +210,11 @@ func (p *Provisioning) CreateUser(ctx context.Context, name string) (core.User, 
 	if name == "" {
 		return core.User{}, ErrNameRequired
 	}
-	id, err := mintID("user")
-	if err != nil {
-		return core.User{}, err
-	}
-	u := core.User{ID: id, Name: name}
+	u := core.User{ID: mintID("user"), Name: name}
 	if err := p.store.CreateUser(ctx, &u); err != nil {
 		return core.User{}, err
 	}
-	audit.Log(ctx, "provisioning.UserCreated", slog.String("user", id), slog.String("name", name))
+	audit.Log(ctx, "provisioning.UserCreated", slog.String("user", u.ID), slog.String("name", name))
 	return u, p.republish(ctx)
 }
 
@@ -320,9 +316,7 @@ func (p *Provisioning) CreateCredential(
 
 	accessKey, secret := keys.AccessKeyID, keys.SecretAccessKey
 	if !keys.complete() {
-		if accessKey, secret, err = mintKeypair(); err != nil {
-			return NewCredential{}, err
-		}
+		accessKey, secret = mintKeypair()
 	}
 	// Check the merged view, not just the store's unique constraint: a
 	// collision with a config-declared key would insert fine and then fail the
@@ -599,33 +593,22 @@ func countCredentials(creds []provisioning.Credential, userID string) int {
 }
 
 // mintKeypair draws a fresh access key and secret.
-func mintKeypair() (accessKey, secret string, err error) {
-	if accessKey, err = mintAccessKey("access key"); err != nil {
-		return "", "", err
-	}
+func mintKeypair() (accessKey, secret string) {
 	raw := make([]byte, secretBytes)
-	if _, err = rand.Read(raw); err != nil {
-		return "", "", fmt.Errorf("generate secret: %w", err)
-	}
-	return accessKey, base64.RawURLEncoding.EncodeToString(raw), nil
+	_, _ = rand.Read(raw)
+	return mintAccessKey(), base64.RawURLEncoding.EncodeToString(raw)
 }
 
 // mintAccessKey draws an access key in the uppercase alphanumeric form S3
-// clients expect to see one in. what names the value in the error.
-func mintAccessKey(what string) (string, error) {
+// clients expect to see one in.
+func mintAccessKey() string {
 	raw := make([]byte, accessKeyBytes)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate %s: %w", what, err)
-	}
-	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw), nil
+	_, _ = rand.Read(raw)
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
 }
 
 // mintID draws an opaque identifier under a kind prefix, so a value that turns
 // up in a log or an audit record says what it names.
-func mintID(kind string) (string, error) {
-	enc, err := mintAccessKey(kind + " id")
-	if err != nil {
-		return "", err
-	}
-	return kind + "-" + strings.ToLower(enc), nil
+func mintID(kind string) string {
+	return kind + "-" + strings.ToLower(mintAccessKey())
 }

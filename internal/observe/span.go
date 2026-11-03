@@ -1,31 +1,18 @@
 // -------------------------------------------------------------------------------
-// Span Helper  -  uniform tracing + metrics + status emission
+// Span Helper - Tracing and Operation Metrics Around One Call
 //
 // Author: Alex Freidah
 //
-// Run wraps a unit of work with the four cross-cutting concerns every
-// instrumented method needs: span lifecycle, success/error status,
-// OpenTelemetry RecordError, and operation-metrics emission. Call sites build
-// an Op describing the trace span (name, kind, attrs) and an optional Recorder
-// for Prometheus, then hand a closure to Run.
-//
-// The helper enforces the invariants on every call site:
-//   - span.End() always fires (defer).
-//   - SetStatus(Ok) on success and SetStatus(Error) + RecordError on failure
-//     fire uniformly.
-//   - The recorder receives the wall-clock duration via the captured start.
-//
-// Usage:
-//
-//	return observe.Run(ctx,
-//	    observe.Client("s3.PutObject", attrs, b.recordOperation),
-//	    func(ctx context.Context) (string, error) { ... })
+// Run wraps a unit of work in a trace span and an optional Recorder for its
+// operation metric. The span always ends, its status follows the error the
+// work returns, and a panic is recorded as a failure before it propagates.
 // -------------------------------------------------------------------------------
 
 package observe
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -41,8 +28,8 @@ import (
 // when none is configured.
 type Recorder func(operation string, start time.Time, err error)
 
-// Op describes a single observable operation. Build one with Client, Server,
-// or Internal; pass it to Run.
+// Op describes a single observable operation. Build one with Client or
+// Internal; pass it to Run.
 type Op struct {
 	Name     string
 	Kind     trace.SpanKind
@@ -60,9 +47,12 @@ func Internal(name string, attrs []attribute.KeyValue, recorder Recorder) Op {
 	return Op{Name: name, Kind: trace.SpanKindInternal, Attrs: attrs, Recorder: recorder}
 }
 
+// errPanicked is the error a span and recorder see for work that panicked.
+var errPanicked = errors.New("panicked")
+
 // Run executes fn under a tracing span, records operation metrics via
-// op.Recorder when present, and emits status codes uniformly. The span and
-// recorder fire even if fn panics (panic is re-thrown after cleanup).
+// op.Recorder when present, and emits status codes uniformly. If fn panics,
+// both see errPanicked and the panic continues unchanged.
 func Run[R any](ctx context.Context, op Op, fn func(context.Context) (R, error)) (R, error) {
 	start := time.Now()
 	ctx, span := telemetry.Tracer().Start(ctx, op.Name,
@@ -73,7 +63,11 @@ func Run[R any](ctx context.Context, op Op, fn func(context.Context) (R, error))
 
 	var result R
 	var err error
+	returned := false
 	defer func() {
+		if !returned {
+			err = errPanicked
+		}
 		if op.Recorder != nil {
 			op.Recorder(op.Name, start, err)
 		}
@@ -85,6 +79,7 @@ func Run[R any](ctx context.Context, op Op, fn func(context.Context) (R, error))
 	}()
 
 	result, err = fn(ctx)
+	returned = true
 	return result, err
 }
 
@@ -95,17 +90,6 @@ func RunErr(ctx context.Context, op Op, fn func(context.Context) error) error {
 		return struct{}{}, fn(ctx)
 	})
 	return err
-}
-
-// RunValue is the variant for work that reports a result but cannot fail -
-// the background passes that tally their own outcomes and return a summary
-// rather than an error. The span always reports success, because the work has
-// no failure to report; anything that went wrong inside is in the summary.
-func RunValue[R any](ctx context.Context, op Op, fn func(context.Context) R) R {
-	result, _ := Run(ctx, op, func(ctx context.Context) (R, error) {
-		return fn(ctx), nil
-	})
-	return result
 }
 
 // RecordSpanError sets the span's error status and records err as an event.

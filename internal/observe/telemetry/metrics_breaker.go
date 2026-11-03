@@ -3,8 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Domain-scoped slice of the s3o_* Prometheus surface. Split out of the
-// original 784-line metrics.go to keep each subsystem under ~150 lines.
+// Domain-scoped slice of the s3o_* Prometheus surface.
 // -------------------------------------------------------------------------------
 
 package telemetry
@@ -13,9 +12,9 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Circuit breaker state and transition metrics.
 var (
-	// CircuitBreakerState tracks the current circuit breaker state per component.
+	// circuitBreakerState tracks the current circuit breaker state per component.
 	// 0=closed (healthy), 1=open (down).
-	CircuitBreakerState = gaugeVec("s3o_circuit_breaker_state",
+	circuitBreakerState = gaugeVec("s3o_circuit_breaker_state",
 		"Current circuit breaker state: 0=closed, 1=open", "name")
 
 	// BackendCallRefused is 1 for each call a backend's circuit breakers are
@@ -24,8 +23,8 @@ var (
 	BackendCallRefused = gaugeVec("s3o_backend_call_refused",
 		"1 while a backend's circuit breakers refuse the call, 0 while it is served", "backend", "call")
 
-	// CircuitBreakerTransitionsTotal counts state transitions per component.
-	CircuitBreakerTransitionsTotal = counterVec("s3o_circuit_breaker_transitions_total",
+	// circuitBreakerTransitionsTotal counts state transitions per component.
+	circuitBreakerTransitionsTotal = counterVec("s3o_circuit_breaker_transitions_total",
 		"Total number of circuit breaker state transitions", "name", "from", "to")
 
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.

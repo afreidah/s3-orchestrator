@@ -29,7 +29,7 @@ func TestTraceHandler_NoSpan(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	handler := NewTraceHandler(inner)
+	handler := newTraceHandler(inner)
 	logger := slog.New(handler)
 
 	logger.InfoContext(context.Background(), "no span")
@@ -53,7 +53,7 @@ func TestTraceHandler_WithSpan(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	handler := NewTraceHandler(inner)
+	handler := newTraceHandler(inner)
 	logger := slog.New(handler)
 
 	// Create a valid span context with known IDs.
@@ -91,7 +91,7 @@ func TestTraceHandler_WithAttrs(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	handler := NewTraceHandler(inner)
+	handler := newTraceHandler(inner)
 	logger := slog.New(handler).With("component", "test")
 
 	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
@@ -124,7 +124,7 @@ func TestTraceHandler_WithGroup(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	handler := NewTraceHandler(inner)
+	handler := newTraceHandler(inner)
 	logger := slog.New(handler).WithGroup("db")
 
 	logger.InfoContext(context.Background(), "group test", "query", "SELECT 1")
@@ -151,7 +151,7 @@ func TestTraceHandler_WithGroup(t *testing.T) {
 func TestTraceHandler_Enabled(t *testing.T) {
 	t.Parallel()
 	inner := slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn})
-	handler := NewTraceHandler(inner)
+	handler := newTraceHandler(inner)
 
 	if handler.Enabled(context.Background(), slog.LevelInfo) {
 		t.Error("expected INFO to be disabled when min level is WARN")

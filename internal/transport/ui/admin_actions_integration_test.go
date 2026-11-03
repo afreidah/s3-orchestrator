@@ -417,7 +417,7 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(store)
-	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compression.MinChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

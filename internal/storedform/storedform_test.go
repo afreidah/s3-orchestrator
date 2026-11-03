@@ -117,7 +117,7 @@ func newFailingEncryptor(t *testing.T) (*encryption.Encryptor, error) {
 // test.
 func newCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compression.MinChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

@@ -72,8 +72,7 @@ type BackendRuntime struct {
 }
 
 // New constructs a *BackendRuntime from cfg. The accounting Recorder is built
-// here so every consumer shares one instance that observes the same usage
-// tracker and the later-wired metrics collector through RecordOperation.
+// here so every consumer shares one instance over the same usage tracker.
 func New(cfg *Config) *BackendRuntime {
 	c := &BackendRuntime{
 		backends:         cfg.Backends,
@@ -87,7 +86,7 @@ func New(cfg *Config) *BackendRuntime {
 		metricsCollector: cfg.MetricsCollector,
 		log:              cfg.Log,
 	}
-	c.recorder = accounting.New(cfg.Usage, c.RecordOperation)
+	c.recorder = accounting.New(cfg.Usage, telemetry.ManagerOps.Record)
 	return c
 }
 
@@ -125,11 +124,6 @@ func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 // insert that claims the space.
 func (c *BackendRuntime) Quota() *counter.QuotaTracker {
 	return c.quota
-}
-
-// RecordOperation delegates to the metrics collector.
-func (c *BackendRuntime) RecordOperation(operation, backend string, start time.Time, err error) {
-	c.metricsCollector.RecordOperation(operation, backend, start, err)
 }
 
 // UpdateQuotaMetrics refreshes Prometheus gauges from the metadata store.

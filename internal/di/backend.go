@@ -89,11 +89,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		var be backend.ObjectBackend = s3be
 		if cfg.BackendCircuitBreaker.Enabled {
-			cbBackend := backend.NewCircuitBreakerBackend(s3be, backend.CircuitBreakerConfig{
-				Name:      bcfg.Name,
-				Threshold: cfg.BackendCircuitBreaker.FailureThreshold,
-				Timeout:   cfg.BackendCircuitBreaker.OpenTimeout,
-			})
+			cbBackend := backend.NewCircuitBreakerBackend(s3be, bcfg.Name, cfg.BackendCircuitBreaker)
 			breakers = append(breakers, cbBackend)
 			be = cbBackend
 		}
@@ -170,6 +166,7 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 	}
 	enc, err := encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
 	if err != nil {
+		encryption.CloseProvider(provider)
 		return nil, err
 	}
 	//nolint:sloglint // bootstrap log; no request/span ctx exists yet

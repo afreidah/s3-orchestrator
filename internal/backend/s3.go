@@ -196,7 +196,8 @@ type backendCall struct {
 
 // run sends one backend request under its span and operation metric, then
 // records what it moved. moved, when set, reports the bytes a successful
-// request carried; a failed one moved none.
+// request carried; a failed one moved none. A failure is named for its
+// operation here, so fn returns the error as it came.
 func run[R any](ctx context.Context, b *S3Backend, c backendCall, moved func(R) int64, fn func(context.Context) (R, error)) (R, error) {
 	return observe.Run(ctx,
 		observe.Client(spanPrefix+c.op,
@@ -205,7 +206,10 @@ func run[R any](ctx context.Context, b *S3Backend, c backendCall, moved func(R) 
 		func(ctx context.Context) (R, error) {
 			res, err := fn(ctx)
 			var n int64
-			if err == nil && moved != nil {
+			switch {
+			case err != nil:
+				err = fmt.Errorf("%s failed: %w", c.op, err)
+			case moved != nil:
 				n = moved(res)
 			}
 			b.recordRequest(ctx, c, n, err)
@@ -271,28 +275,24 @@ func withKnownLength(body io.Reader) io.Reader {
 }
 
 // preparePutBody resolves the body and request options for a single PutObject
-// call, plus a cleanup the caller must defer. In unsigned-payload mode the body
-// streams directly. In signed-payload mode the SDK needs a seekable body to
-// hash, so a non-seekable stream is materialized (memory below
-// materialize.MemThreshold, tempfile above) instead of buffered on the heap.
-func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []func(*s3.Options), func(), error) {
-	// noop is the cleanup for the paths that materialize nothing (unsigned
-	// mode and already-seekable bodies), returned so every caller can defer
-	// unconditionally; only the tempfile path has an fd to release.
-	noop := func() {
-		// Nothing to release on the non-materialized paths.
-	}
+// call, plus the materialized body the caller must clean up, nil when nothing
+// was materialized. In unsigned-payload mode the body streams directly. In
+// signed-payload mode the SDK needs a seekable body to hash, so a non-seekable
+// stream is materialized (memory below materialize.MemThreshold, tempfile
+// above) instead of buffered on the heap.
+func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []func(*s3.Options), *materialize.Body, error) {
 	if b.unsignedPayload {
-		return withKnownLength(body), []func(*s3.Options){withUnsignedPayload}, noop, nil
+		return withKnownLength(body), []func(*s3.Options){withUnsignedPayload}, nil, nil
 	}
 	if _, ok := body.(io.ReadSeeker); ok {
-		return body, nil, noop, nil
+		return body, nil, nil, nil
 	}
 	mb, err := materialize.New(body, size, nil)
 	if err != nil {
-		return nil, nil, noop, fmt.Errorf("materialize signed-payload body: %w", err)
+		return nil, nil, nil, fmt.Errorf("materialize signed-payload body: %w", err)
 	}
-	return mb.Reader(), nil, mb.Cleanup, nil
+	reader := mb.Reader()
+	return reader, nil, mb, nil
 }
 
 // PutObject uploads an object to the backend.
@@ -300,11 +300,11 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 	return run(ctx, b, backendCall{op: "PutObject", key: key},
 		func(string) int64 { return size },
 		func(ctx context.Context) (string, error) {
-			putBody, opts, cleanup, err := b.preparePutBody(body, size)
+			putBody, opts, materialized, err := b.preparePutBody(body, size)
 			if err != nil {
 				return "", err
 			}
-			defer cleanup()
+			defer materialized.Cleanup()
 
 			input := &s3.PutObjectInput{
 				Bucket:        aws.String(b.bucket),
@@ -321,7 +321,7 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 
 			result, err := b.client.PutObject(ctx, input, opts...)
 			if err != nil {
-				return "", fmt.Errorf("put object failed: %w", err)
+				return "", err
 			}
 			return aws.ToString(result.ETag), nil
 		})
@@ -345,11 +345,11 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 			}
 			result, err := b.client.GetObject(ctx, input)
 			if err != nil {
-				return nil, fmt.Errorf("get object failed: %w", err)
+				return nil, err
 			}
 			res := mapGetObjectResult(result)
 			if err := b.emulateRange(ctx, res, rangeHeader); err != nil {
-				return nil, fmt.Errorf("get object failed: %w", err)
+				return nil, err
 			}
 			return res, nil
 		})
@@ -398,7 +398,7 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 				Key:    aws.String(key),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("head object failed: %w", err)
+				return nil, err
 			}
 
 			h := headResultFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
@@ -410,12 +410,10 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 func (b *S3Backend) HeadBucket(ctx context.Context) error {
 	return runErr(ctx, b, backendCall{op: "HeadBucket"},
 		func(ctx context.Context) error {
-			if _, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{
+			_, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{
 				Bucket: aws.String(b.bucket),
-			}); err != nil {
-				return fmt.Errorf("head bucket failed: %w", err)
-			}
-			return nil
+			})
+			return err
 		})
 }
 
@@ -427,10 +425,7 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 				Bucket: aws.String(b.bucket),
 				Key:    aws.String(key),
 			})
-			if err != nil {
-				return fmt.Errorf("delete object failed: %w", err)
-			}
-			return nil
+			return err
 		})
 }
 
@@ -477,7 +472,7 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 					b.markUnsupported(ctx, core.FeatureBatchDelete, err)
 					return fmt.Errorf("%w: %w", ErrBatchDeleteNotSupported, err)
 				}
-				return fmt.Errorf("delete objects failed: %w", err)
+				return err
 			}
 			for _, e := range out.Errors {
 				failed[aws.ToString(e.Key)] = &batchKeyError{code: aws.ToString(e.Code), message: aws.ToString(e.Message)}
@@ -516,7 +511,7 @@ func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType 
 					b.markUnsupported(ctx, core.FeatureNativeCopy, err)
 					return "", fmt.Errorf("%w: %w", ErrCopyNotSupported, err)
 				}
-				return "", fmt.Errorf("copy object failed: %w", err)
+				return "", err
 			}
 			if result.CopyObjectResult == nil {
 				return "", nil
@@ -558,7 +553,7 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 						return paginator.NextPage(ctx)
 					})
 				if err != nil {
-					return fmt.Errorf("list objects failed: %w", err)
+					return err
 				}
 				objects := convertListPage(page)
 				if len(objects) == 0 {
@@ -659,11 +654,5 @@ func resolveCredentials(ctx context.Context, cfg *config.BackendConfig) (aws.Cre
 
 // recordOperation updates Prometheus metrics for a backend operation.
 func (b *S3Backend) recordOperation(operation string, start time.Time, err error) {
-	status := "success"
-	if err != nil {
-		status = "error"
-	}
-
-	telemetry.BackendRequestsTotal.WithLabelValues(operation, b.name, status).Inc()
-	telemetry.BackendDuration.WithLabelValues(operation, b.name).Observe(time.Since(start).Seconds())
+	telemetry.BackendOps.Record(operation, b.name, start, err)
 }

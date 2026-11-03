@@ -3,13 +3,43 @@
 //
 // Author: Alex Freidah
 //
-// Domain-scoped slice of the s3o_* Prometheus surface. Split out of the
-// original 784-line metrics.go to keep each subsystem under ~150 lines.
+// Domain-scoped slice of the s3o_* Prometheus surface.
 // -------------------------------------------------------------------------------
 
 package telemetry
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// operationLatencyBuckets are the latency buckets every storage operation is
+// timed in, from 10ms to two minutes.
+var operationLatencyBuckets = []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}
+
+// OperationMetrics counts each storage operation by operation, backend and
+// outcome, and times it.
+type OperationMetrics struct {
+	requests *prometheus.CounterVec
+	duration *prometheus.HistogramVec
+}
+
+// Record counts one operation on backend under the status err gives it, and
+// times it from start.
+func (m OperationMetrics) Record(op, backend string, start time.Time, err error) {
+	m.requests.WithLabelValues(op, backend, StatusOf(err)).Inc()
+	m.duration.WithLabelValues(op, backend).Observe(time.Since(start).Seconds())
+}
+
+// StatusOf labels an operation's outcome: "success" when err is nil, "error"
+// otherwise.
+func StatusOf(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "success"
+}
 
 // HTTP request count, latency and in-flight metrics.
 var (
@@ -31,13 +61,13 @@ var (
 	// InflightRequests tracks currently processing requests.
 	InflightRequests = gaugeVec("s3o_inflight_requests", "Number of requests currently being processed", "method")
 
-	// BackendRequestsTotal counts backend operations by operation type and status.
-	BackendRequestsTotal = counterVec("s3o_backend_requests_total",
-		"Total number of backend storage operations", "operation", "backend", "status")
-
-	// BackendDuration tracks backend operation latency.
-	BackendDuration = histogramVec("s3o_backend_duration_seconds", "Backend operation latency in seconds",
-		[]float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}, "operation", "backend")
+	// BackendOps counts and times each request sent to a backend.
+	BackendOps = OperationMetrics{
+		requests: counterVec("s3o_backend_requests_total",
+			"Total number of backend storage operations", "operation", "backend", "status"),
+		duration: histogramVec("s3o_backend_duration_seconds", "Backend operation latency in seconds",
+			operationLatencyBuckets, "operation", "backend"),
+	}
 
 	// BackendRangeIgnoredTotal counts ranged GETs a backend answered with the
 	// whole object, which the orchestrator then cut down to the range itself.
@@ -49,13 +79,13 @@ var (
 	BackendUnsupported = gaugeVec("s3o_backend_unsupported",
 		"Optional features a backend refused, 1 per feature", "backend", "feature")
 
-	// ManagerRequestsTotal counts manager-level operations.
-	ManagerRequestsTotal = counterVec("s3o_manager_requests_total",
-		"Total number of manager-level storage operations", "operation", "backend", "status")
-
-	// ManagerDuration tracks manager operation latency.
-	ManagerDuration = histogramVec("s3o_manager_duration_seconds", "Manager operation latency in seconds",
-		[]float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}, "operation", "backend")
+	// ManagerOps counts and times each manager-level storage operation.
+	ManagerOps = OperationMetrics{
+		requests: counterVec("s3o_manager_requests_total",
+			"Total number of manager-level storage operations", "operation", "backend", "status"),
+		duration: histogramVec("s3o_manager_duration_seconds", "Manager operation latency in seconds",
+			operationLatencyBuckets, "operation", "backend"),
+	}
 
 	// RateLimitRejectionsTotal counts requests rejected by the per-IP rate limiter.
 	RateLimitRejectionsTotal = counter("s3o_rate_limit_rejections_total",

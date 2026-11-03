@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -268,7 +269,7 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
 
-	logger := slog.New(NewTeeHandler(jsonHandler, buf))
+	logger := slog.New(newTeeHandler(jsonHandler, buf))
 	logger.InfoContext(context.Background(), "test message", "key", "value")
 
 	// Check stdout got the record.
@@ -366,7 +367,7 @@ func TestTeeHandler_WithAttrs(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
 
-	logger := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "test")
+	logger := slog.New(newTeeHandler(jsonHandler, buf)).With("component", "test")
 	logger.InfoContext(context.Background(), "with attrs")
 
 	entries := buf.Entries(&LogQueryOpts{})
@@ -386,7 +387,7 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
 
-	logger := slog.New(NewTeeHandler(jsonHandler, buf)).WithGroup("db")
+	logger := slog.New(newTeeHandler(jsonHandler, buf)).WithGroup("db")
 	logger.InfoContext(context.Background(), "grouped", "host", "localhost")
 
 	entries := buf.Entries(&LogQueryOpts{})
@@ -398,6 +399,45 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_AttrsKeepTheirGroup pins that a logger attribute keeps the
+// group it was added under, rather than taking groups opened after it.
+func TestTeeHandler_AttrsKeepTheirGroup(t *testing.T) {
+	t.Parallel()
+	buf := NewLogBuffer()
+	var stdout bytes.Buffer
+	logger := slog.New(newTeeHandler(slog.NewJSONHandler(&stdout, nil), buf))
+
+	logger.With("component", "worker").WithGroup("db").With("pool", "main").
+		InfoContext(context.Background(), "grouped", "host", "localhost")
+
+	got := buf.Entries(&LogQueryOpts{})[0].Attrs
+	want := map[string]any{"component": "worker", "db.pool": "main", "db.host": "localhost"}
+	if !maps.Equal(got, want) {
+		t.Errorf("attrs = %v, want %v", got, want)
+	}
+}
+
+// TestTeeHandler_FlattensGroupValues pins that a group-valued attribute is
+// spread into dotted keys holding plain values, an inline group's members
+// keep no prefix, and an empty attribute is dropped.
+func TestTeeHandler_FlattensGroupValues(t *testing.T) {
+	t.Parallel()
+	buf := NewLogBuffer()
+	var stdout bytes.Buffer
+	logger := slog.New(newTeeHandler(slog.NewJSONHandler(&stdout, nil), buf))
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "nested",
+		slog.Group("req", slog.String("id", "r1"), slog.Group("peer", slog.Int("port", 80))),
+		slog.Group("", slog.String("inline", "yes")),
+		slog.Attr{})
+
+	got := buf.Entries(&LogQueryOpts{})[0].Attrs
+	want := map[string]any{"req.id": "r1", "req.peer.port": int64(80), "inline": "yes"}
+	if !maps.Equal(got, want) {
+		t.Errorf("attrs = %v, want %v", got, want)
+	}
+}
+
 // TestTeeHandler_Enabled verifies the tee handler enabled path by exercising slog.NewJSONHandler, handler.Enabled, context.Background.
 func TestTeeHandler_Enabled(t *testing.T) {
 	t.Parallel()
@@ -405,7 +445,7 @@ func TestTeeHandler_Enabled(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
 	buf := NewLogBuffer()
 
-	handler := NewTeeHandler(jsonHandler, buf)
+	handler := newTeeHandler(jsonHandler, buf)
 
 	if handler.Enabled(context.Background(), slog.LevelInfo) {
 		t.Error("should not be enabled for INFO when primary is WARN")
@@ -422,7 +462,7 @@ func TestTeeHandler_WithGroupEmpty(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
 
-	handler := NewTeeHandler(jsonHandler, buf)
+	handler := newTeeHandler(jsonHandler, buf)
 	same := handler.WithGroup("")
 
 	// WithGroup("") should return the same handler.
@@ -439,8 +479,8 @@ func TestTeeHandler_FilterByComponent(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
 
-	serverLog := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "server")
-	storageLog := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "storage")
+	serverLog := slog.New(newTeeHandler(jsonHandler, buf)).With("component", "server")
+	storageLog := slog.New(newTeeHandler(jsonHandler, buf)).With("component", "storage")
 
 	serverLog.InfoContext(context.Background(), "from server")
 	storageLog.InfoContext(context.Background(), "from storage")
@@ -460,7 +500,7 @@ func TestTeeHandler_FilterByComponent(t *testing.T) {
 func TestEntries_DefaultMinLevelWithholdsDebug(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
-	log := slog.New(NewTeeHandler(slog.NewJSONHandler(&bytes.Buffer{},
+	log := slog.New(newTeeHandler(slog.NewJSONHandler(&bytes.Buffer{},
 		&slog.HandlerOptions{Level: slog.LevelDebug}), buf))
 	log.DebugContext(context.Background(), "chatty")
 	log.InfoContext(context.Background(), "notable")

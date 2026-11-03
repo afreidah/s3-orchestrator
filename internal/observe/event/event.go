@@ -3,50 +3,39 @@
 //
 // Author: Alex Freidah
 //
-// Leaf package with zero internal dependencies. Defines notification event
-// types, the Event struct, and the emitter hook every package publishes
-// through. Every package in the codebase can import this without creating
-// cycles. The notifier registers itself at startup; Publish is a no-op until
-// it does.
+// Defines notification event types, the Event struct, and the emitter hook
+// every package publishes through. It imports only syncutil, so every package
+// can import it without a cycle. The notifier registers itself at startup;
+// Publish is a no-op until it does.
 // -------------------------------------------------------------------------------
 
 package event
 
 import (
 	"strings"
-	"sync/atomic"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
 // EMIT HOOK
 // -------------------------------------------------------------------------
 
-// emitter holds the notifier's delivery hook, or nil when the deployment has
-// no notifications configured. It is atomic because a reload can register the
-// notifier while every request goroutine reads the hook.
-var emitter atomic.Pointer[func(Event)]
+// emitter holds the notifier's delivery hook, empty when the deployment has
+// no notifications configured.
+var emitter syncutil.Hook[Event]
 
 // SetEmitter registers the hook Publish delivers through. Pass nil to clear a
 // previously registered one, which is what a notifier does when it stops.
-func SetEmitter(fn func(Event)) {
-	if fn == nil {
-		emitter.Store(nil)
-		return
-	}
-	emitter.Store(&fn)
-}
+func SetEmitter(fn func(Event)) { emitter.Set(fn) }
 
 // Publish sends one event to the configured notifier, or does nothing when the
 // deployment has none. The notifier fills in the CloudEvent envelope. subject
 // is the resource the event is about, such as a backend name or object key,
 // and is empty for fleet-wide events.
 func Publish(eventType, subject string, data map[string]any) {
-	fn := emitter.Load()
-	if fn == nil {
-		return
-	}
-	(*fn)(Event{Type: eventType, Subject: subject, Data: data})
+	emitter.Call(Event{Type: eventType, Subject: subject, Data: data})
 }
 
 // -------------------------------------------------------------------------

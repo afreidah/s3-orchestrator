@@ -3,8 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Domain-scoped slice of the s3o_* Prometheus surface. Split out of the
-// original 784-line metrics.go to keep each subsystem under ~150 lines.
+// Domain-scoped slice of the s3o_* Prometheus surface.
 // -------------------------------------------------------------------------------
 
 package telemetry

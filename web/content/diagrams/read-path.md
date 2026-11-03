@@ -39,7 +39,7 @@ window.s3oDiagram = {
     '    COMP -->|yes| SEEK[Open Seekable<br>Reader]:::process',
     '    SEEK --> FRAME[Ranged GET<br>per Needed Frame]:::storage',
     '    FRAME --> FDEC{Frame<br>Encrypted?}:::decision',
-    '    FDEC -->|yes| FDECRANGE[DecryptRange:<br>Ciphertext Chunks]:::process',
+    '    FDEC -->|yes| FDECRANGE[Decrypt Range:<br>Ciphertext Chunks]:::process',
     '    FDEC -->|no| DECODE',
     '    FDECRANGE --> DECODE[Decode Frames:<br>zstd]:::process',
     '    DECODE --> SLICE[Slice to<br>Client Range]:::process',
@@ -58,7 +58,7 @@ window.s3oDiagram = {
     '    EGRESSCHK -->|over limit| COPIES',
     '    EGRESSCHK -->|within limits| DECRYPT{Decrypt<br>Needed?}:::decision',
     '',
-    '    DECRYPT -->|encrypted + range| DECRANGE[DecryptRange:<br>Chunk Slice]:::process',
+    '    DECRYPT -->|encrypted + range| DECRANGE[Decrypt Range:<br>Chunk Slice]:::process',
     '    DECRYPT -->|encrypted, full| DECFULL[Decrypt:<br>Full Stream]:::process',
     '    DECRYPT -->|plaintext| INTEG',
     '    DECRANGE --> INTEG',
@@ -163,7 +163,7 @@ window.s3oDiagram = {
       body: '<p>Compression runs inside encryption, so a copy with both features on is ciphertext of compressed data.</p><p>That ordering is what lets the same offset arithmetic serve both layers: the compressed stream is exactly the encryptor\'s plaintext domain, so a compressed-domain range translates into a ciphertext range through <code>encryption.CiphertextRange()</code> with no new maths.</p>'
     },
     FDECRANGE: {
-      title: 'DecryptRange: Ciphertext Chunks',
+      title: 'Decrypt Range: Ciphertext Chunks',
       badge: 'process', badgeText: 'range decryption',
       body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt_range"}</p>'
     },
@@ -213,7 +213,7 @@ window.s3oDiagram = {
       body: '<p>Before the fetch, <code>core.ValidateEncryptionMetadata</code> rejects a row whose encryption fields contradict each other. After the fetch, for a read that starts at byte 0, the leading bytes are compared with the row\'s encrypted flag (<code>verifyStoredEnvelope</code> via <code>PeekEnvelope</code>). Either disagreement increments the mismatch counter and fails over to the next copy.</p><p>Then checks if this copy\'s row has <code>Encrypted: true</code> and the encryptor is configured. Three paths:</p><p>1. <b>Encrypted + range request</b>: decrypt the fetched ciphertext chunks for the requested range<br>2. <b>Encrypted, full read</b>: decrypt the entire ciphertext stream<br>3. <b>Plaintext</b>: pass body through directly</p><p class="ac-metric">Metric: s3o_encryption_flag_mismatch_total (label "get")</p>'
     },
     DECRANGE: {
-      title: 'DecryptRange: Chunk Slice',
+      title: 'Decrypt Range: Chunk Slice',
       badge: 'process', badgeText: 'range decryption',
       body: '<p>Envelope decryption for range requests: <code>decryptResponse</code> calls <code>encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, rng)</code>, which unpacks the base nonce and wrapped DEK from the stored key blob itself.</p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>ioutilx.ReadCloser</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt_range"}</p>'
     },

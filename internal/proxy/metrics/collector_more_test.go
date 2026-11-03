@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Tests for RecordOperation (success/error labeling) and UpdateQuotaMetrics
-// (quota stats, object counts, multipart counts, monthly usage, and error paths).
+// Tests for UpdateQuotaMetrics (quota stats, object counts, multipart counts,
+// monthly usage, and error paths).
 // -------------------------------------------------------------------------------
 
 package metrics
@@ -29,15 +29,6 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// stubMetricsStore returns a Deps mock. Most tests in this file exercise the
-// collector's own code path rather than specific store calls, so each states
-// only the reads it depends on.
-func stubMetricsStore(t *testing.T) *MockDeps {
-	t.Helper()
-	store := NewMockDeps(gomock.NewController(t))
-	return store
-}
-
 // noReplication is the ReplicationFactor of a fleet with replication off.
 func noReplication() int { return 0 }
 
@@ -47,24 +38,6 @@ func twoReplicas() int { return 2 }
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
-
-// TestRecordOperation_Success exercises the success label path.
-func TestRecordOperation_Success(t *testing.T) {
-	t.Parallel()
-	store := stubMetricsStore(t)
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := New(&CollectorDeps{Store: store, Usage: usage, ReplicationFactor: noReplication})
-	mc.RecordOperation("PutObject", "b1", time.Now(), nil)
-}
-
-// TestRecordOperation_Error exercises the error label path.
-func TestRecordOperation_Error(t *testing.T) {
-	t.Parallel()
-	store := stubMetricsStore(t)
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := New(&CollectorDeps{Store: store, Usage: usage, ReplicationFactor: noReplication})
-	mc.RecordOperation("GetObject", "b1", time.Now(), errors.New("backend down"))
-}
 
 // TestUpdateQuotaMetrics_Success drives every store call returning a
 // non-empty result.

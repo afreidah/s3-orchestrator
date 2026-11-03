@@ -56,12 +56,10 @@ type SharedBackend interface {
 // Charge is what one recorded call adds to its workload: the request and byte
 // totals, and PoolN on each of Pools. A pool listed twice is charged twice.
 type Charge struct {
-	Workload     string
-	APIRequests  int64
-	EgressBytes  int64
-	IngressBytes int64
-	Pools        []core.RequestPool
-	PoolN        int64
+	core.UsageStat
+	Workload string
+	Pools    []core.RequestPool
+	PoolN    int64
 }
 
 // empty reports whether the charge adds nothing.

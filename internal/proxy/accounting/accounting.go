@@ -10,8 +10,7 @@
 //     (success, error, usage-limit reject - the connection was made).
 //   - A successful GET-like call adds egress bytes on top of the API
 //     call charge. A successful PUT-like call adds ingress bytes.
-//   - The per-operation metric (RecordOperation) carries the
-//     operation/backend/start/err tuple for the Prometheus histogram.
+//   - Every call is counted and timed on the per-operation metric.
 //
 // Every charge goes to the context's workload (audit.WithWorkload).
 //

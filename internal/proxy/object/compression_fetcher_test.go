@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
@@ -116,7 +117,7 @@ func (s *storedObject) fetcher() *storedRangeFetcher {
 // test.
 func newTestCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, fetchTestChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, fetchTestChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

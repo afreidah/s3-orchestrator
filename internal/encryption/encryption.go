@@ -74,11 +74,7 @@ func (e *Encryptor) Provider() KeyProvider { return e.provider }
 // Shutdown releases what the key provider holds, such as a Vault provider's
 // token renewal. The DI container calls it once the process stops, and only
 // for an Encryptor that was built.
-func (e *Encryptor) Shutdown() {
-	if closer, ok := e.provider.(interface{ Close() }); ok {
-		closer.Close()
-	}
-}
+func (e *Encryptor) Shutdown() { CloseProvider(e.provider) }
 
 // -------------------------------------------------------------------------
 // ENCRYPT
@@ -93,37 +89,13 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 	if err != nil {
 		return nil, err
 	}
-	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
+	return e.EncryptWithDEK(body, plaintextSize, dek, wrappedDEK, keyID)
 }
 
 // EncryptWithDEK encrypts under an already-wrapped DEK, skipping WrapDEK. Each
 // call draws a fresh base nonce, so reusing the DEK keeps (key, nonce) unique.
+// Buffers come from the pool and go back when the reader reaches io.EOF.
 func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
-	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
-}
-
-// GenerateAndWrapDEK produces a fresh 256-bit DEK and wraps it via the
-// KeyProvider, returning the unwrapped DEK along with the wrapped form
-// and key ID, for callers that need a DEK before encrypting, such as a
-// multipart upload that reuses one DEK across its parts.
-func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []byte, keyID string, err error) {
-	dek = make([]byte, 32)
-	if _, err = rand.Read(dek); err != nil {
-		return nil, nil, "", fmt.Errorf("generate DEK: %w", err)
-	}
-	wrappedDEK, keyID, err = e.provider.WrapDEK(ctx, dek)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("wrap DEK: %w", err)
-	}
-	return dek, wrappedDEK, keyID, nil
-}
-
-// assembleEncryptResult builds the streaming ciphertext reader and the
-// EncryptResult shared by Encrypt and EncryptWithDEK. The two callers
-// differ only in how they obtain (dek, wrappedDEK, keyID); everything
-// downstream is identical. Buffers come from the per-Encryptor pool
-// and are returned automatically when the reader reaches io.EOF.
-func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
 	bufs, release := e.borrowChunkBuffers(e.chunkSize)
 	encReader, err := newEncryptReader(body, dek, e.chunkSize, bufs, release)
 	if err != nil {
@@ -137,6 +109,20 @@ func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, d
 		KeyID:          keyID,
 		BaseNonce:      encReader.baseNonce,
 	}, nil
+}
+
+// GenerateAndWrapDEK produces a fresh 256-bit DEK and wraps it via the
+// KeyProvider, returning the unwrapped DEK along with the wrapped form
+// and key ID, for callers that need a DEK before encrypting, such as a
+// multipart upload that reuses one DEK across its parts.
+func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []byte, keyID string, err error) {
+	dek = make([]byte, 32)
+	_, _ = rand.Read(dek)
+	wrappedDEK, keyID, err = e.provider.WrapDEK(ctx, dek)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("wrap DEK: %w", err)
+	}
+	return dek, wrappedDEK, keyID, nil
 }
 
 // borrowChunkBuffers returns buffers that hold a chunk of chunkSize and the
@@ -155,28 +141,6 @@ func (e *Encryptor) borrowChunkBuffers(chunkSize int) (*chunkBuffers, func()) {
 // DECRYPT
 // -------------------------------------------------------------------------
 
-// Decrypt unwraps the DEK and returns a streaming plaintext reader for the
-// entire encrypted object. The body must start at the beginning of the
-// ciphertext (including the header). Buffers come from the per-Encryptor
-// pool and are returned automatically when the reader reaches io.EOF.
-func (e *Encryptor) Decrypt(ctx context.Context, body io.Reader, wrappedDEK []byte, keyID string) (io.Reader, error) {
-	dek, err := e.provider.UnwrapDEK(ctx, wrappedDEK, keyID)
-	if err != nil {
-		return nil, fmt.Errorf("unwrap DEK: %w", err)
-	}
-
-	chunkSize, baseNonce, err := ParseHeader(body)
-	if err != nil {
-		return nil, fmt.Errorf("parse header: %w", err)
-	}
-
-	dr, err := e.openDecryptReader(body, dek, baseNonce, chunkSize, 0)
-	if err != nil {
-		return nil, err
-	}
-	return dr, nil
-}
-
 // openDecryptReader starts decrypting chunks of chunkSize at startChunk over
 // borrowed buffers, returning them if the reader cannot be built.
 func (e *Encryptor) openDecryptReader(body io.Reader, dek, baseNonce []byte, chunkSize int, startChunk uint64) (*decryptReader, error) {
@@ -188,37 +152,13 @@ func (e *Encryptor) openDecryptReader(body io.Reader, dek, baseNonce []byte, chu
 	return dr, err
 }
 
-// DecryptRange unwraps the DEK and returns a streaming plaintext reader for
-// a range of the encrypted object. The body should contain only the
-// ciphertext chunks identified by CiphertextRange (no header). Returns the
-// plaintext reader and the number of plaintext bytes it will produce.
-func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK []byte, keyID string, rng *RangeResult, baseNonce []byte) (io.Reader, int64, error) {
-	dek, err := e.provider.UnwrapDEK(ctx, wrappedDEK, keyID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("unwrap DEK: %w", err)
-	}
-
-	dr, err := e.openDecryptReader(body, dek, baseNonce, rng.ChunkSize, rng.StartChunk)
-	if err != nil {
-		return nil, 0, fmt.Errorf("decrypt reader: %w", err)
-	}
-
-	// Skip bytes within the first chunk to reach the requested offset, then
-	// limit output to the requested length.
-	reader, err := ioutilx.Window(dr, rng.SliceStart, rng.SliceLen)
-	if err != nil {
-		return nil, 0, fmt.Errorf("skip to range start: %w", err)
-	}
-	return reader, rng.SliceLen, nil
-}
-
 // DecryptStored decrypts a stored object body from its packed key blob
 // (baseNonce||wrappedDEK, the form held in object_locations.encryption_key).
-// When rng is nil it returns a reader for the full plaintext and fullSize as the
-// length; otherwise it returns the requested plaintext range and that range's
-// length. A malformed key blob is reported as ErrInvalidKeyData. It records
-// EncryptionOpsTotal or EncryptionErrorsTotal, so callers need no decrypt
-// telemetry of their own.
+// When rng is nil the body starts at the header and the reader yields the full
+// plaintext, fullSize long; otherwise the body holds only the chunks
+// CiphertextRange named and the reader yields the requested range. A malformed
+// key blob is reported as ErrInvalidKeyData. It records EncryptionOpsTotal or
+// EncryptionErrorsTotal, so callers need no decrypt telemetry of their own.
 func (e *Encryptor) DecryptStored(ctx context.Context, body io.Reader, packedKey []byte, keyID string, fullSize int64, rng *RangeResult) (io.Reader, int64, error) {
 	op := "decrypt"
 	if rng != nil {
@@ -238,21 +178,39 @@ func (e *Encryptor) DecryptStored(ctx context.Context, body io.Reader, packedKey
 	return reader, n, nil
 }
 
-// decryptStored performs the unpack-and-branch without telemetry; DecryptStored
-// wraps it to keep the op-label and counter bookkeeping in one place.
+// decryptStored is DecryptStored without the telemetry. A whole-object read
+// takes its chunk size and base nonce from the header the body starts with.
 func (e *Encryptor) decryptStored(ctx context.Context, body io.Reader, packedKey []byte, keyID string, fullSize int64, rng *RangeResult) (io.Reader, int64, error) {
 	baseNonce, wrappedDEK, err := UnpackKeyData(packedKey)
 	if err != nil {
 		return nil, 0, err
 	}
-	if rng != nil {
-		return e.DecryptRange(ctx, body, wrappedDEK, keyID, rng, baseNonce)
-	}
-	plain, err := e.Decrypt(ctx, body, wrappedDEK, keyID)
+	dek, err := e.provider.UnwrapDEK(ctx, wrappedDEK, keyID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("unwrap DEK: %w", err)
 	}
-	return plain, fullSize, nil
+
+	if rng == nil {
+		chunkSize, headerNonce, err := parseHeader(body)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse header: %w", err)
+		}
+		dr, err := e.openDecryptReader(body, dek, headerNonce, chunkSize, 0)
+		if err != nil {
+			return nil, 0, err
+		}
+		return dr, fullSize, nil
+	}
+
+	dr, err := e.openDecryptReader(body, dek, baseNonce, rng.ChunkSize, rng.StartChunk)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decrypt reader: %w", err)
+	}
+	reader, err := ioutilx.Window(dr, rng.SliceStart, rng.SliceLen)
+	if err != nil {
+		return nil, 0, fmt.Errorf("skip to range start: %w", err)
+	}
+	return reader, rng.SliceLen, nil
 }
 
 // -------------------------------------------------------------------------

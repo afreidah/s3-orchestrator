@@ -34,7 +34,7 @@ func NewDatabaseBreaker(cfg config.CircuitBreakerConfig, requestError func(error
 		IsError:   func(err error) bool { return unavailable(err, requestError) },
 		Sentinel:  core.ErrDBUnavailable,
 	})
-	cb.AddOnStateChange(telemetry.NewDatabaseBreakerHook("database"))
+	cb.AddOnStateChange(telemetry.NewDependencyBreakerHook("database", telemetry.DegradedModeActive))
 	return cb
 }
 

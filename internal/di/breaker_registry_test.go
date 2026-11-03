@@ -30,8 +30,9 @@ import (
 // the database breaker plus one prober per breaker of each backend.
 func TestProvideBreakerRegistry_EnrollsEveryBreaker(t *testing.T) {
 	t.Parallel()
-	b1 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
-	b2 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b2", Threshold: 1, Timeout: time.Minute})
+	breakers := config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute}
+	b1 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), "b1", breakers)
+	b2 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), "b2", breakers)
 	dbCB := breaker.NewCircuitBreaker(breaker.Config{
 		Name: "database", Threshold: 1, Timeout: time.Minute,
 		IsError: func(err error) bool { return err != nil }, Sentinel: errors.New("db down"),

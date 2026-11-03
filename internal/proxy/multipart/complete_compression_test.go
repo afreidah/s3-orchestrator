@@ -43,7 +43,7 @@ const (
 // newMPCodec builds a codec for assembly and closes it with the test.
 func newMPCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, mpChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, mpChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

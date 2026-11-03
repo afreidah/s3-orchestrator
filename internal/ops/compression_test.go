@@ -54,7 +54,7 @@ const compChunk = compression.MinChunkSize
 // testCodec builds a codec and closes it with the test.
 func testCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, compChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

@@ -114,7 +114,7 @@ func TestScoreCopy_RefusedCalls(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			ops := newMockOps(ctrl)
 			inner := backendtest.NewInMemory()
-			cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Hour})
+			cb := backend.NewCircuitBreakerBackend(inner, "b1", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour})
 			tc.refuse(inner, cb)
 			ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
 			expectFleet(ops, map[string]backend.ObjectBackend{"b1": cb})

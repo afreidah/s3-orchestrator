@@ -120,9 +120,7 @@ func (h *Handler) InstanceReporter() *sharedstate.Roster[adminapi.InstanceReport
 // so a leaked config cannot forge one. A restart invalidates tokens in flight.
 func mustConfirmKey() []byte {
 	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		panic("admin: cannot read random bytes for the confirmation key: " + err.Error())
-	}
+	_, _ = rand.Read(key)
 	return key
 }
 

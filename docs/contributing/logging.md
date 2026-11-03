@@ -25,7 +25,6 @@ call site uses:
 | Helper | Returns | Purpose |
 |---|---|---|
 | `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Use in typed-attr calls (`slog.LogAttrs`, `audit.Log`) or where `err` may be nil — see the error-attribute section below. |
-| `logfmt.Outcome(value)` | `slog.Attr` | `outcome` attr; pass one of `OutcomeOK`, `OutcomeError`, `OutcomeSkipped`, `OutcomeTimeout`, `OutcomeNotFound`. |
 | `logfmt.Component(name)` | `slog.Attr` | `component` attr used at logger construction. |
 | `logfmt.TransformAttr(a)` | `slog.Attr` | Replaces an error-typed attribute value with its `Error()` string, recursing into groups; the runtime's handler applies it to every record, see below. |
 
@@ -158,7 +157,7 @@ list are allowed but should be added here when they recur.
 | `size_bytes` | int64 | Object size in bytes. |
 | `duration_ms` | int64 | Elapsed time in ms (use `slog.Int64`). |
 | `attempts` | int | Retry count. |
-| `outcome` | string | Terminal-log status; see helpers above. |
+| `outcome` | string | How a worker pass ended, on its audit entry. |
 | `error` | string | Rendered from any `error` value by the runtime handler; call sites may pass the raw error directly. |
 
 ### Banned keys
@@ -198,26 +197,6 @@ correlate to. These call sites use the non-context variants
 context" — it carries no trace, no request id, and no cancellation —
 so the *Context call would behave identically but mislead future
 readers into looking for a meaningful ctx that isn't there. See #831.
-
----
-
-## Outcome attribute
-
-Terminal log lines (loop summaries, request completions) carry an
-`outcome` attr so dashboards can aggregate without parsing message
-text:
-
-```go
-r.log.InfoContext(ctx, "rebalance pass complete",
-    logfmt.Outcome(logfmt.OutcomeOK),
-    "moved", n,
-    "duration_ms", elapsed.Milliseconds(),
-)
-```
-
-Use the `Outcome*` constants. New outcomes should be added to the
-constant set in `internal/observe/logfmt/logfmt.go` and to the table
-above.
 
 ---
 

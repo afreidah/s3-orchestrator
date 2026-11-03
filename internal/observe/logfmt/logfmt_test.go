@@ -88,14 +88,10 @@ func TestErr_PreservesStandardErrorMessages(t *testing.T) {
 	}
 }
 
-// TestOutcomeAndComponent_KeysAreCanonical pins the canonical attribute
-// keys so a typo in either constructor would fail loudly  -  these names
-// drive Grafana queries and CI lint rules.
-func TestOutcomeAndComponent_KeysAreCanonical(t *testing.T) {
+// TestComponent_KeyIsCanonical pins the canonical attribute key so a typo in
+// the constructor would fail loudly; the name drives Grafana queries.
+func TestComponent_KeyIsCanonical(t *testing.T) {
 	t.Parallel()
-	if got := logfmt.Outcome(logfmt.OutcomeOK); got.Key != "outcome" {
-		t.Errorf("Outcome key = %q, want outcome", got.Key)
-	}
 	if got := logfmt.Component("rebalancer"); got.Key != "component" {
 		t.Errorf("Component key = %q, want component", got.Key)
 	}
