@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
@@ -55,24 +56,18 @@ type Manager struct {
 	log     *slog.Logger
 }
 
-// New builds a Manager over the lifecycle section cfg. log may be nil, in
-// which case the default logger is used at call time.
-func New(store core.ExpiredObjectsLister, objects ObjectDeleter, cfg syncutil.Section[config.LifecycleConfig], log *slog.Logger) *Manager {
-	return &Manager{Section: cfg, store: store, objects: objects, log: log}
+// New builds a Manager over the lifecycle section cfg, logging under the
+// lifecycle component.
+func New(store core.ExpiredObjectsLister, objects ObjectDeleter, cfg syncutil.Section[config.LifecycleConfig]) *Manager {
+	return &Manager{
+		Section: cfg, store: store, objects: objects,
+		log: slog.Default().With(logfmt.Component("lifecycle")),
+	}
 }
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
-
-// logger returns the configured logger, falling back to the default so a
-// Manager built without one in a test still logs through the standard handler.
-func (m *Manager) logger() *slog.Logger {
-	if m.log == nil {
-		return slog.Default()
-	}
-	return m.log
-}
 
 // ProcessRules evaluates every rule and deletes the objects each one expires,
 // returning the tally across all rules: Succeeded counts the objects deleted.
@@ -127,7 +122,7 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 		return batch.Step{Progress: sum.Succeeded}, nil
 	})
 	if stop == batch.Errored {
-		m.logger().ErrorContext(ctx, "failed to list expired objects",
+		m.log.ErrorContext(ctx, "failed to list expired objects",
 			slog.String("prefix", rule.Prefix), "error", err)
 		total.Attempted++
 		total.Failed++
@@ -170,7 +165,7 @@ func report(obs progress.Observer, key string, phase progress.Phase, status stri
 func (m *Manager) recordExpired(ctx context.Context, rule config.LifecycleRule, res object.DeleteObjectResult) bool {
 	key := res.Key
 	if res.Err != nil {
-		m.logger().WarnContext(ctx, "failed to delete expired object",
+		m.log.WarnContext(ctx, "failed to delete expired object",
 			slog.String("key", key), "error", res.Err)
 		telemetry.LifecycleFailedTotal.Inc()
 		return false

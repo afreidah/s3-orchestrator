@@ -28,15 +28,13 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// MinPartNumber and the other manifest bounds, all of them S3's rather than
+// MaxPartCount and MinPartSizeBytes are the manifest bounds, S3's rather than
 // this implementation's. A manifest outside them is rejected here rather than
 // passed to a backend, so a client that splits too finely fails on the same
 // rule every other S3 implementation would have applied. MaxPartCount equals
-// MaxPartNumber because part numbers are unique and in range.
+// the highest part number because part numbers are unique and in range.
 const (
-	MinPartNumber = 1
-	MaxPartNumber = core.MaxPartNumber
-	MaxPartCount  = MaxPartNumber
+	MaxPartCount = core.MaxPartNumber
 
 	MinPartSizeBytes = 5 * 1024 * 1024 // every part except the last
 )
@@ -60,9 +58,9 @@ func validateManifestShape(manifest []core.CompletePart) error {
 	}
 
 	for i, p := range manifest {
-		if p.PartNumber < MinPartNumber || p.PartNumber > MaxPartNumber {
+		if !core.ValidPartNumber(p.PartNumber) {
 			return badRequest(codeInvalidPart, fmt.Sprintf("Part number %d is outside the valid range %d-%d",
-				p.PartNumber, MinPartNumber, MaxPartNumber))
+				p.PartNumber, core.MinPartNumber, core.MaxPartNumber))
 		}
 		if i == 0 {
 			continue

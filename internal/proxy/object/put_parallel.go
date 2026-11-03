@@ -246,16 +246,9 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 // are safe from this commit's displacement because each sits at its own
 // intent's path.
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
-	err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, s3op.PutObject, &core.RecordObjectRequest{
-		Key:      f.req.Key,
-		Size:     f.plan.uploadSize,
-		Form:     f.plan.form,
-		Identity: p.Identity,
-		Tags:     f.req.Tags,
-		Copies:   []core.ObjectCopy{{Backend: p.BackendName, IntentID: p.IntentID, StorageKey: p.StorageKey}},
-		Placing:  placingCopies(live),
-	})
-	if err != nil {
+	record := p.RecordFor(f.plan.form)
+	record.Placing = placingCopies(live)
+	if err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, s3op.PutObject, record); err != nil {
 		f.settle(writeOutcome{err: err})
 		return err
 	}
@@ -308,7 +301,7 @@ func (f *copyFanout) liveIntents() map[string]*core.PendingObject {
 func placingCopies(live map[string]*core.PendingObject) []core.ObjectCopy {
 	copies := make([]core.ObjectCopy, 0, len(live))
 	for _, p := range live {
-		copies = append(copies, core.ObjectCopy{Backend: p.BackendName, IntentID: p.IntentID, StorageKey: p.StorageKey})
+		copies = append(copies, p.Copy())
 	}
 	return copies
 }

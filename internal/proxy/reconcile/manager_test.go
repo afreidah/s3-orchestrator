@@ -76,8 +76,9 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
 	// Admitted by default so each test states only the accounting it cares
-	// about; the refusal path has its own test.
+	// about; the refusal path and the read charge have their own tests.
 	usage.EXPECT().Allow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
+	usage.EXPECT().Egress(gomock.Any(), s3op.GetObject, gomock.Any(), gomock.Any()).AnyTimes()
 	return NewManager(&Deps{
 		Backends: backends,
 		Stores:   stores,
@@ -577,6 +578,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
+	usage.EXPECT().Egress(gomock.Any(), s3op.GetObject, "b1", gomock.Any()).AnyTimes()
 	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
 
 	lister := newPagedLister([][]backend.ListedObject{
@@ -602,6 +604,30 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	}
 	if imported != 1 {
 		t.Errorf("imported = %d, want the single page the budget allowed", imported)
+	}
+}
+
+// TestSyncBackend_ChargesTheClassifyingReads asserts the read that inspects a
+// discovered key's bytes is charged to its backend with the bytes it returned,
+// like the listing that found the key.
+func TestSyncBackend_ChargesTheClassifyingReads(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	stores := NewMockStores(ctrl)
+	backends := NewMockBackendResolver(ctrl)
+	usage := NewMockUsageRecorder(ctrl)
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+
+	lister := newPagedLister([][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 14}}})
+	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+	ledgerHoldsNone(stores)
+	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).Return(core.ImportInserted, nil)
+	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(true).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1")
+	usage.EXPECT().Egress(gomock.Any(), s3op.GetObject, "b1", int64(14))
+
+	if _, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"}); err != nil {
+		t.Fatalf("SyncBackend: %v", err)
 	}
 }
 

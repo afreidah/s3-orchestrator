@@ -5,10 +5,8 @@
 //
 // CopyObject orchestration: source HEAD across replicas, destination
 // selection, the same-backend server-side fast path (tryNativeCopy +
-// probeDestAfterAmbiguousCopy), and the materialized stream-through
-// fallback. Successful COPY finalization (native + materialized) lives in
-// mutation_finalize.go; the per-source buffering helpers used by the
-// materialized path live in materialize.go.
+// probeDestAfterAmbiguousCopy), and the stream-through fallback. Successful
+// COPY finalization lives in mutation_finalize.go.
 // -------------------------------------------------------------------------------
 
 package object
@@ -48,8 +46,8 @@ func (o *Manager) headSourceForCopy(
 		if !o.core.Acct().Allow(locations[i].BackendName, s3op.CopyObject, 0, 0) {
 			continue
 		}
-		be, ok := o.core.Backends()[locations[i].BackendName]
-		if !ok {
+		be, err := o.core.GetBackend(locations[i].BackendName)
+		if err != nil {
 			continue
 		}
 		headResult, err := o.core.Head(ctx, locations[i].BackendName, be, core.StoragePath(sourceKey, locations[i].StorageKey))
@@ -69,9 +67,7 @@ func (o *Manager) headSourceForCopy(
 // CopyObject copies an object from sourceKey to destKey, across backends if
 // needed and with read failover across the source's copies. It uses a
 // server-side copy when the source has a copy on the destination backend, and
-// otherwise materializes the source into a seekable buffer before the PUT: a
-// non-seekable body makes the SDK drop Content-Length, which some S3
-// implementations (notably OCI) reject with HTTP 411.
+// otherwise streams the first readable copy to the destination.
 func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (string, error) {
 	const operation = s3op.CopyObject
 	sourceKey, destKey := req.SourceKey, req.DestKey
@@ -118,9 +114,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	if err := o.coord.SelectWriteTarget(ctx, span, operation, intent); err != nil {
 		return "", err
 	}
-	destBackendName := intent.BackendName
-	intentID := intent.IntentID
-	destBackend, err := o.core.GetBackend(destBackendName)
+	destBackend, err := o.core.GetBackend(intent.BackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -131,48 +125,37 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// is final, even a metadata failure, because falling back would copy them
 	// a second time.
 	cc := &copyContext{
-		span:            span,
-		destBackend:     destBackend,
-		sourceKey:       sourceKey,
-		srcBackendName:  destBackendName,
-		destKey:         destKey,
-		destStorageKey:  intent.StorageKey,
-		destBackendName: destBackendName,
-		size:            size,
-		contentType:     contentType,
-		metadata:        metadata,
-		srcForm:         srcForm,
-		identity:        srcIdentity,
-		tags:            tags,
-		intentID:        intentID,
-		start:           start,
+		span:           span,
+		intent:         intent,
+		form:           srcForm,
+		destBackend:    destBackend,
+		sourceKey:      sourceKey,
+		srcBackendName: intent.BackendName,
+		contentType:    contentType,
+		metadata:       metadata,
+		start:          start,
 	}
 	// A server-side copy needs the source on the destination's backend, since
 	// no backend can read a CopySource in another provider's bucket.
-	if loc := core.LocationOn(locations, destBackendName); loc != nil {
+	if loc := core.LocationOn(locations, intent.BackendName); loc != nil {
 		cc.srcStorageKey = core.StoragePath(sourceKey, loc.StorageKey)
 		if etag, handled, nerr := o.tryNativeCopy(ctx, cc); handled {
 			return etag, nerr
 		}
 	}
 
-	src, err := o.materializeCopySource(ctx, sourceKey, size, locations)
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return "", err
-	}
-	defer src.cleanup()
-
-	etag, err := o.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
-		Dst: s3be.Endpoint{Name: destBackendName, Backend: destBackend}, Key: intent.StorageKey,
-		Body: src.body, Size: size, ContentType: contentType, Metadata: metadata,
+	src, etag, err := s3be.CopyFromAny(ctx, o.core, &s3be.SourcedCopy{
+		Key:     sourceKey,
+		Sources: locations,
+		Dst:     s3be.Endpoint{Name: intent.BackendName, Backend: destBackend},
+		DstKey:  intent.StorageKey,
 	})
 	if err != nil {
 		observe.RecordSpanError(span, err)
-		return "", fmt.Errorf("failed to write destination: %w", err)
+		return "", fmt.Errorf("failed to copy to destination: %w", err)
 	}
 
-	cc.srcBackendName = src.sourceBackend
+	cc.srcBackendName = src.BackendName
 	return o.finalizeCopy(ctx, cc, etag, false)
 }
 
@@ -226,26 +209,21 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 // -------------------------------------------------------------------------
 
 // copyContext is one CopyObject's state, shared by both copy paths and their
-// finalizer. srcBackendName is the backend the bytes are read from: the
-// destination itself for a server-side copy, and the materialized source
+// finalizer. intent is the destination's claim and form the source row's
+// stored form. srcBackendName is the backend the bytes are read from: the
+// destination itself for a server-side copy, and the source that streamed them
 // otherwise. srcStorageKey is set only for a server-side copy.
 type copyContext struct {
-	span            trace.Span
-	destBackend     s3be.ObjectBackend
-	sourceKey       string
-	srcStorageKey   string
-	srcBackendName  string
-	destKey         string
-	destStorageKey  string
-	destBackendName string
-	size            int64
-	contentType     string
-	metadata        map[string]string
-	srcForm         *core.StoredForm
-	identity        *core.ObjectIdentity
-	tags            []core.Tag
-	intentID        string
-	start           time.Time
+	span           trace.Span
+	intent         *core.PendingObject
+	form           *core.StoredForm
+	destBackend    s3be.ObjectBackend
+	sourceKey      string
+	srcStorageKey  string
+	srcBackendName string
+	contentType    string
+	metadata       map[string]string
+	start          time.Time
 }
 
 // -------------------------------------------------------------------------
@@ -267,11 +245,11 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 	}
 	cctx, ccancel := o.core.WithTimeout(ctx)
 	defer ccancel()
-	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.destStorageKey, req.contentType, req.metadata)
+	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.intent.StorageKey, req.contentType, req.metadata)
 	if errors.Is(err, s3be.ErrCopyNotSupported) {
 		return "", false, nil
 	}
-	o.core.Acct().APICall(ctx, s3op.CopyObject, req.destBackendName)
+	o.core.Acct().APICall(ctx, s3op.CopyObject, req.intent.BackendName)
 	if err == nil {
 		etag, err = o.finalizeCopy(ctx, req, etag, true)
 		return etag, true, err
@@ -279,13 +257,13 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 	// Ambiguous failure: probe the destination via HEAD. If the
 	// destination exists with the expected size, the copy completed
 	// server-side; treat it as success and run the same post-success
-	// path. Otherwise fall back to materialized copy.
+	// path. Otherwise fall back to a stream copy.
 	if recoveredETag, ok := o.probeDestAfterAmbiguousCopy(ctx, req, err); ok {
 		etag, err = o.finalizeCopy(ctx, req, recoveredETag, true)
 		return etag, true, err
 	}
-	o.log.WarnContext(ctx, "native copy failed, falling back to materialized copy",
-		"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName, "error", err)
+	o.log.WarnContext(ctx, "native copy failed, falling back to a stream copy",
+		"source_key", req.sourceKey, "dest_key", req.intent.ObjectKey, "backend", req.intent.BackendName, "error", err)
 	return "", false, nil
 }
 
@@ -294,11 +272,12 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 // destination exists with the expected size, and ("", false) otherwise so the
 // caller falls back. HEAD errors other than 404 are logged as warnings.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *copyContext, origErr error) (string, bool) {
-	head, headErr := o.core.Head(ctx, req.destBackendName, req.destBackend, req.destStorageKey)
+	dst := req.intent
+	head, headErr := o.core.Head(ctx, dst.BackendName, req.destBackend, dst.StorageKey)
 	base := []any{
 		"source_key", req.sourceKey,
-		"dest_key", req.destKey,
-		"backend", req.destBackendName,
+		"dest_key", dst.ObjectKey,
+		"backend", dst.BackendName,
 		"copy_error", origErr,
 	}
 	switch {
@@ -308,9 +287,9 @@ func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *copyCont
 				append(base, "probe_error", headErr)...)
 		}
 		return "", false
-	case head.Size != req.size:
-		o.log.WarnContext(ctx, "ambiguous native-copy destination size mismatch, falling back to materialized copy",
-			append(base, "expected_size", req.size, "observed_size", head.Size)...)
+	case head.Size != dst.SizeBytes:
+		o.log.WarnContext(ctx, "ambiguous native-copy destination size mismatch, falling back to a stream copy",
+			append(base, "expected_size", dst.SizeBytes, "observed_size", head.Size)...)
 		return "", false
 	default:
 		o.log.InfoContext(ctx, "ambiguous native-copy resolved via HEAD probe, destination already populated",

@@ -13,6 +13,7 @@ package readpath
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -49,9 +50,16 @@ type mapLocationCache map[string]string
 // INTERNALS
 // -------------------------------------------------------------------------
 
-func (r *readTestRuntime) Backends() map[string]backend.ObjectBackend { return r.backends }
-func (r *readTestRuntime) BackendOrder() []string                     { return r.order }
-func (r *readTestRuntime) Acct() *accounting.Recorder                 { return r.acct }
+func (r *readTestRuntime) GetBackend(name string) (backend.ObjectBackend, error) {
+	be, ok := r.backends[name]
+	if !ok {
+		return nil, fmt.Errorf("backend %s not found", name)
+	}
+	return be, nil
+}
+
+func (r *readTestRuntime) BackendOrder() []string     { return r.order }
+func (r *readTestRuntime) Acct() *accounting.Recorder { return r.acct }
 
 func (c mapLocationCache) Get(key string) (string, bool) {
 	v, ok := c[key]

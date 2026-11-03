@@ -448,11 +448,11 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	}
 	intent := NewCopyIntent(key, req.DestName, req.Source.SizeBytes, &req.Source.StoredForm)
 	copyReq := &backend.CopyRequest{
-		Src:          backend.Endpoint{Name: srcName, Backend: src},
-		Dst:          backend.Endpoint{Name: req.DestName, Backend: dest},
-		SrcKey:       core.StoragePath(key, req.Source.StorageKey),
-		DstKey:       intent.StorageKey,
-		SizeEstimate: req.Source.SizeBytes,
+		Src:     backend.Endpoint{Name: srcName, Backend: src},
+		Dst:     backend.Endpoint{Name: req.DestName, Backend: dest},
+		SrcKey:  core.StoragePath(key, req.Source.StorageKey),
+		DstKey:  intent.StorageKey,
+		SrcSize: req.Source.SizeBytes,
 	}
 	placement := &core.Placement{Source: req.Source, Intent: intent, RemoveSource: true, Reasons: req.Profile.Reasons}
 	claimed := false

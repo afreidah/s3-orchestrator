@@ -267,13 +267,7 @@ func (o *Manager) describeStoredBytes(plan *putPlan) {
 	if plan.compressed {
 		plan.form = storedform.Describe(plan.form, o.compression.Level, plan.logicalSize)
 	}
-	if plan.contentHash == "" {
-		return
-	}
-	if plan.form == nil {
-		plan.form = &core.StoredForm{}
-	}
-	plan.form.ContentHash = plan.contentHash
+	plan.form = storedform.WithContentHash(plan.form, plan.contentHash)
 }
 
 // putAttemptResult is the outcome of one backend PUT attempt. A non-nil
@@ -322,10 +316,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, operation, &core.RecordObjectRequest{
-		Key: req.Key, Size: plan.uploadSize, Form: plan.form, Identity: identity, Tags: req.Tags,
-		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intent.IntentID, StorageKey: intent.StorageKey}},
-	}); err != nil {
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(plan.form)); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	// The ETag the client is told is the one recorded, not the one the backend

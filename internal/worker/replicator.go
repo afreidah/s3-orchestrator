@@ -402,51 +402,26 @@ func (r *Replicator) copyToReplica(ctx context.Context, key, targetStorageKey st
 		candidates = slices.Clone(copies)
 	}
 
-	for i := range candidates {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		source, terminal, err := r.tryCopyFrom(ctx, key, targetStorageKey, target, targetBackend, &candidates[i])
-		if terminal {
-			return source, err
-		}
-	}
-
-	return nil, fmt.Errorf("all source copies failed for key %s", key)
-}
-
-// tryCopyFrom attempts a stream-copy from one source location to the target.
-// It returns terminal=true on success, or on a *backend.CopyError with
-// CopyPhaseWrite, where no other source could help. Any other error returns
-// terminal=false so the caller tries the next source.
-func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (*core.ObjectLocation, bool, error) {
-	srcBackend, ok := r.ops.Backends()[loc.BackendName]
-	if !ok {
-		return nil, false, nil
-	}
 	// StreamCopy tags a usage-limit refusal with the leg that had no headroom,
 	// so a source out of egress falls through to the next candidate and a
-	// full destination is terminal, as with an I/O failure.
-	_, err := r.ops.StreamCopy(ctx, &backend.CopyRequest{
-		Src:          backend.Endpoint{Name: loc.BackendName, Backend: srcBackend},
-		Dst:          backend.Endpoint{Name: target, Backend: targetBackend},
-		SrcKey:       core.StoragePath(key, loc.StorageKey),
-		DstKey:       targetStorageKey,
-		SizeEstimate: loc.SizeBytes,
+	// full destination ends the walk, as with an I/O failure.
+	source, _, err := backend.CopyFromAny(ctx, r.ops, &backend.SourcedCopy{
+		Key:     key,
+		Sources: candidates,
+		Dst:     backend.Endpoint{Name: target, Backend: targetBackend},
+		DstKey:  targetStorageKey,
+		OnReadFail: func(loc *core.ObjectLocation, err error) {
+			r.log.WarnContext(ctx, "source read failed, trying next copy",
+				"key", key, "source", loc.BackendName, "error", err)
+			if backend.IsNotFound(err) {
+				r.pruneStaleSource(ctx, loc)
+			}
+		},
 	})
-	if err == nil {
-		return loc, true, nil
-	}
-	// Write failures won't improve with a different source - fail immediately.
 	if backend.IsCopyPhase(err, backend.CopyPhaseWrite) {
-		return nil, true, fmt.Errorf("failed to write to target %s: %w", target, err)
+		return nil, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
-	r.log.WarnContext(ctx, "source read failed, trying next copy",
-		"key", key, "source", loc.BackendName, "error", err)
-	if backend.IsNotFound(err) {
-		r.pruneStaleSource(ctx, loc)
-	}
-	return nil, false, nil
+	return source, err
 }
 
 // pruneStaleSource removes a source-side ObjectLocation row when the

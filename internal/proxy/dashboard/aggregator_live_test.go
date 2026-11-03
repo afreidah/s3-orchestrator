@@ -56,12 +56,16 @@ func expectSnapshot(fleet *MockFleetView, snap *metrics.FleetSnapshot) {
 	fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(snap, nil).AnyTimes()
 }
 
-// newStubFleet returns a FleetView serving snap over an idle fleet with no
-// backends.
-func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFleetView {
+// newStubFleet returns a FleetView serving snap over an idle fleet of the
+// named backends, each serving every call with no flags set.
+func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot, order ...string) *MockFleetView {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, snap)
-	fleet.EXPECT().BackendOrder().Return(nil).AnyTimes()
+	fleet.EXPECT().BackendOrder().Return(order).AnyTimes()
+	fleet.EXPECT().Profile(gomock.Any()).Return(core.BackendProfile{}).AnyTimes()
+	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	return fleet
 }
 
@@ -105,7 +109,7 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
 	fleet.EXPECT().Unsupported("b1").Return(core.FeatureRange).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -131,7 +135,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported("b1").Return(core.BackendFeatures(0)).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -162,7 +166,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), "draining").
 		Return(&backendstate.DrainProgress{Active: true, ObjectsRemaining: 6, ObjectsMoved: 4}, nil).Times(1)
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, drainReader)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -195,7 +199,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("boom")).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, drainReader)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -216,7 +220,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
 	data, err := agg.GetData(t.Context())
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
@@ -242,7 +246,7 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	want := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "b", MaxObjectSize: 5 << 30}
 	fleet.EXPECT().Profile("b1").Return(want).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
 	data, err := agg.GetStatus(t.Context())
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)

@@ -255,6 +255,22 @@ func (p *PendingObject) RoleOrDefault() PendingRole {
 	return p.Role
 }
 
+// Copy names the copy this intent placed: its backend, the intent itself and
+// the path its bytes occupy.
+func (p *PendingObject) Copy() ObjectCopy {
+	return ObjectCopy{Backend: p.BackendName, IntentID: p.IntentID, StorageKey: p.StorageKey}
+}
+
+// RecordFor is the request that commits the object this intent placed, with
+// its bytes described by form. The key, size, identity and tags are the ones
+// the intent was claimed with.
+func (p *PendingObject) RecordFor(form *StoredForm) *RecordObjectRequest {
+	return &RecordObjectRequest{
+		Key: p.ObjectKey, Size: p.SizeBytes, Form: form, Identity: p.Identity, Tags: p.Tags,
+		Copies: []ObjectCopy{p.Copy()},
+	}
+}
+
 // PendingPromoteResult describes how PromotePending resolved an intent.
 type PendingPromoteResult int
 

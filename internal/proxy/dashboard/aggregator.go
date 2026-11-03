@@ -115,20 +115,18 @@ type Aggregator struct {
 	store core.DashboardStore
 	usage UsageReader
 	scrub ScrubReachReader
-	order []string
 	fleet FleetView
 	drain DrainProgressReader
 }
 
-// New creates an Aggregator over the given backend order. scrub may be nil,
-// which scopes the integrity figures to every backend; drainReader may be nil
-// when the deployment runs no backend state manager.
-func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, order []string, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
+// New creates an Aggregator over the fleet's backends, in the fleet's order.
+// scrub may be nil, which scopes the integrity figures to every backend;
+// drainReader may be nil when the deployment runs no backend state manager.
+func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
 	return &Aggregator{
 		store: store,
 		usage: usage,
 		scrub: scrub,
-		order: order,
 		fleet: fleet,
 		drain: drainReader,
 	}
@@ -142,7 +140,7 @@ func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, o
 // every backend when no scrubber is wired.
 func (da *Aggregator) scrubbableBackends() []string {
 	if da.scrub == nil {
-		return da.order
+		return da.fleet.BackendOrder()
 	}
 	return da.scrub.ReachableBackends()
 }
@@ -212,7 +210,7 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 
 	coverage := snap.Ledger.Coverage(da.scrubbableBackends(), time.Now())
 	data := &Data{
-		BackendOrder:           da.order,
+		BackendOrder:           da.fleet.BackendOrder(),
 		UsageLimits:            da.usage.GetLimits(),
 		UsagePeriod:            counter.CurrentPeriod(),
 		QuotaStats:             snap.Quota,

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -281,6 +282,24 @@ func TestStoredRangeFetcher_ChargesEveryFetch(t *testing.T) {
 	}
 	if _, err := f.FetchRange(context.Background(), 0, 15); !errors.Is(err, readpath.ErrUsageLimitSkip) {
 		t.Errorf("fetch past the API call limit err = %v, want ErrUsageLimitSkip", err)
+	}
+}
+
+// TestChargedReader_ChargesEachRead verifies the reader a degraded read probes
+// with returns the span asked for and charges it, so a backend capped at one
+// call is spent after one probe.
+func TestChargedReader_ChargesEachRead(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+	_, _ = be.PutObject(context.Background(), fetchTestKey, strings.NewReader("hello world"), 11, "", nil)
+	rt := newFakeRangeRuntime("be1", requestCapped(t, 1, 0, 0))
+
+	got, err := chargedReader{rt: rt, name: "be1", be: be}.ReadRange(context.Background(), fetchTestKey, 0, 4)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("ReadRange = %q, %v; want hello", got, err)
+	}
+	if rt.usage.WithinLimits("be1", s3op.GetObject, 0, 0) {
+		t.Error("backend capped at one call still has headroom; the read was not charged")
 	}
 }
 

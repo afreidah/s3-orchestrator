@@ -64,10 +64,10 @@ func pageImporter(store *pageStore, page []backend.ListedObject, dryRun bool) (P
 	return PageImporter{
 		Store: store,
 		Classify: ClassifyDeps{
-			Backend: be,
-			Stores:  store,
-			Source:  "test",
-			Log:     slog.Default(),
+			Reader: backend.DirectReader{Backend: be},
+			Stores: store,
+			Source: "test",
+			Log:    slog.Default(),
 		},
 		BackendName: "b1",
 		Prefixes:    []string{"vb/"},

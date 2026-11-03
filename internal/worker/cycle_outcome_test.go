@@ -134,7 +134,7 @@ func (f *replicaFleet) replicator() *Replicator {
 // attempt to discard the intent it was writing under.
 func (f *replicaFleet) copyFails(key string) {
 	f.ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: key}).
-		Return(int64(0), errors.New("stream copy: connection reset")).AnyTimes()
+		Return("", errors.New("stream copy: connection reset")).AnyTimes()
 	f.pl.EXPECT().Discard(gomock.Any(), gomock.Cond(func(p *core.PendingObject) bool {
 		return p.ObjectKey == key
 	}), writepath.ReplicationReasons.Orphan).MinTimes(1)
@@ -143,7 +143,7 @@ func (f *replicaFleet) copyFails(key string) {
 // copySucceeds lets every remaining copy through.
 func (f *replicaFleet) copySucceeds() {
 	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any()).
-		Return(int64(100), nil).AnyTimes()
+		Return("", nil).AnyTimes()
 }
 
 // copyOn returns one existing copy row for key, the shape

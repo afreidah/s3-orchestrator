@@ -11,7 +11,6 @@ package infra
 
 import (
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -35,7 +34,6 @@ func newDeleteRuntime(t *testing.T, mem *backendtest.InMemory, objs ...string) (
 		BackendTimeout:  time.Second,
 		Usage:           counter.NewUsageTracker(counters, nil),
 		RoutingStrategy: config.RoutingPack,
-		Log:             slog.Default(),
 	}), counters
 }
 

@@ -19,7 +19,7 @@ import (
 // backend registry + lookup, and the accounting Recorder that owns
 // the per-backend usage / per-operation metric semantics.
 type ReadRuntime interface {
-	Backends() map[string]backend.ObjectBackend
+	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendOrder() []string
 	Acct() *accounting.Recorder
 }

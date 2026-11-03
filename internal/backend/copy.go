@@ -6,8 +6,8 @@
 // Optional capability interface a backend can implement to expose a
 // server-side (native) CopyObject operation. The orchestrator type-asserts
 // to Copier to detect support, so backends that lack native copy
-// are unaffected and the proxy falls back to materialized copy (GET on the
-// source, buffer/spill, PUT on the destination).
+// are unaffected and the proxy falls back to a stream copy (GET on the
+// source, PUT on the destination).
 //
 // Native copy is only meaningful when both keys live on the same backend.
 // Cross-backend copies still flow through the orchestrator because no
@@ -23,7 +23,7 @@ import (
 
 // Copier is the optional capability for backends that support a server-side
 // CopyObject, which lets a same-backend copy skip GET-then-PUT through the
-// proxy. Callers fall back to materialized copy when the backend does not
+// proxy. Callers fall back to a stream copy when the backend does not
 // implement it or returns ErrCopyNotSupported, which a decorator does when its
 // wrapped backend lacks native copy.
 type Copier interface {
@@ -31,8 +31,8 @@ type Copier interface {
 }
 
 // ErrCopyNotSupported signals that a backend (or a decorator wrapping
-// one) cannot perform a server-side copy. Callers should fall back to
-// materialized copy. Returned by a backend whose provider refused one, and
+// one) cannot perform a server-side copy. Callers should fall back to a
+// stream copy. Returned by a backend whose provider refused one, and
 // by decorators like CircuitBreakerBackend when their wrapped backend does
 // not implement Copier.
 var ErrCopyNotSupported = fmt.Errorf("native copy: %w", ErrUnsupported)

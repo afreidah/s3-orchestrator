@@ -29,13 +29,13 @@ import (
 // EligibleForWrite filter ahead of it is racy.
 type Runtime interface {
 	RangeFetchRuntime
-	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendFlags(name string) core.BackendFlags
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	Put(ctx context.Context, op s3op.Operation, req *backend.PutRequest) (string, error)
+	StreamCopy(ctx context.Context, req *backend.CopyRequest) (string, error)
 	EligibleForWrite(op s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error
 	Quota() *counter.QuotaTracker

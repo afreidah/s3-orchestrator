@@ -1699,7 +1699,7 @@ func TestCompleteMultipartUpload_InvalidManifest_PreservesParts(t *testing.T) {
 	}{
 		{"descending", []core.CompletePart{{PartNumber: 2}, {PartNumber: 1}}},
 		{"duplicate", []core.CompletePart{{PartNumber: 1}, {PartNumber: 1}}},
-		{"out of range", []core.CompletePart{{PartNumber: MaxPartNumber + 1}}},
+		{"out of range", []core.CompletePart{{PartNumber: core.MaxPartNumber + 1}}},
 		{"stale etag", []core.CompletePart{{PartNumber: 1, ETag: "wrong"}, {PartNumber: 2, ETag: "e2"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

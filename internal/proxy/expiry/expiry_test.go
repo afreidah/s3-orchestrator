@@ -126,7 +126,7 @@ func newManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *storetest.Moc
 	t.Helper()
 	lister := storetest.NewMockExpiredObjectsLister(ctrl)
 	deleter := NewMockObjectDeleter(ctrl)
-	return New(lister, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100}), nil), lister, deleter
+	return New(lister, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100})), lister, deleter
 }
 
 // -------------------------------------------------------------------------

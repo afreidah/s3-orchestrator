@@ -138,11 +138,15 @@ func expectBackendOrder(ops *MockOps, order, targets []string) {
 	ops.EXPECT().WriteTargets().DoAndReturn(func() []string { return slices.Clone(targets) }).AnyTimes()
 }
 
-// expectFleet has ops serve fleet as its backends, and answer which calls each
-// one serves from the backend itself, so a tripped breaker in a fixture reads
-// as refusing. A name missing from fleet serves nothing.
+// expectFleet has ops serve fleet as its backends, by map and by name, and
+// answer which calls each one serves from the backend itself, so a tripped
+// breaker in a fixture reads as refusing. A name missing from fleet serves
+// nothing.
 func expectFleet(ops *MockOps, fleet map[string]backend.ObjectBackend) {
 	ops.EXPECT().Backends().Return(fleet).AnyTimes()
+	for name, be := range fleet {
+		ops.EXPECT().GetBackend(name).Return(be, nil).AnyTimes()
+	}
 	ops.EXPECT().ServedCalls(gomock.Any()).DoAndReturn(func(name string) core.BackendCalls {
 		b, ok := fleet[name]
 		if !ok {

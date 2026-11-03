@@ -64,6 +64,12 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**One copy loop, charged probe reads ([#1857](https://github.com/afreidah/s3-orchestrator/issues/1857), [#1825](https://github.com/afreidah/s3-orchestrator/issues/1825), v0.179.7)**
+
+- A backend-to-backend copy refuses a source whose bytes are not the size its row records. Replication and CopyObject move on to the next copy; a rebalance or drain move and a stored-form rewrite stop for that object instead of placing damaged bytes.
+- CopyObject's fallback streams the source copy to the destination as replication does. It used to buffer the whole object in memory or a temp file first.
+- The reads reconcile makes to classify a key it found on a backend are charged to that backend's API and egress usage. During a database outage, the reads a GET or HEAD makes to learn how the newest copy is stored run under `server.backend_timeout` and are charged as well.
+
 **One pass definition for the admin API and the dashboard ([#1855](https://github.com/afreidah/s3-orchestrator/issues/1855), v0.179.6)**
 
 Scripts that read admin API or dashboard responses need updating.

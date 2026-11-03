@@ -48,7 +48,28 @@ type storedRangeFetcher struct {
 	beName     string
 
 	mu    sync.Mutex
-	attrs *s3be.GetObjectResult
+	attrs *s3be.ObjectAttrs
+}
+
+// chargedReader reads ranges of one backend's objects under the runtime's
+// backend timeout, charging each read like any other GET.
+type chargedReader struct {
+	rt   RangeFetchRuntime
+	name string
+	be   s3be.ObjectBackend
+}
+
+// ReadRange implements backend.RangeReader. A failed read is charged by the
+// runtime and a successful one with the bytes the backend sent.
+func (c chargedReader) ReadRange(ctx context.Context, key string, start, end int64) ([]byte, error) {
+	r, cancel, err := c.rt.Get(ctx, c.name, c.be, key, byterange.Header(start, end))
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	defer func() { _ = r.Body.Close() }()
+	c.rt.Acct().Egress(ctx, s3op.GetObject, c.name, r.WireBytes())
+	return s3be.ReadSpan(r.Body, start, end)
 }
 
 // newStoredRangeFetcher builds a fetcher for one copy. enc may be nil only when
@@ -124,17 +145,13 @@ func (f *storedRangeFetcher) recordAttrs(r *s3be.GetObjectResult) {
 	if f.attrs != nil {
 		return
 	}
-	f.attrs = &s3be.GetObjectResult{
-		ContentType:  r.ContentType,
-		ETag:         r.ETag,
-		LastModified: r.LastModified,
-		Metadata:     r.Metadata,
-	}
+	attrs := r.ObjectAttrs
+	f.attrs = &attrs
 }
 
 // objectAttrs returns the metadata captured from the backend, or nil when no
 // fetch has completed yet.
-func (f *storedRangeFetcher) objectAttrs() *s3be.GetObjectResult {
+func (f *storedRangeFetcher) objectAttrs() *s3be.ObjectAttrs {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.attrs

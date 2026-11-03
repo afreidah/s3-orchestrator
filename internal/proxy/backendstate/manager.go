@@ -38,7 +38,7 @@ const purgePageSize = 100
 // *infra.BackendRuntime satisfies it structurally without the drain package
 // importing infra.
 type Runtime interface {
-	Backends() map[string]backend.ObjectBackend
+	GetBackend(name string) (backend.ObjectBackend, error)
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 }
 
@@ -149,10 +149,8 @@ func (d *Manager) change(ctx context.Context, name string, t *transition) error 
 // requireBackend refuses a backend the runtime does not know, so a typo never
 // leaves a state record for a backend that does not exist.
 func (d *Manager) requireBackend(name string) error {
-	if _, ok := d.infra.Backends()[name]; !ok {
-		return fmt.Errorf("backend %q not found", name)
-	}
-	return nil
+	_, err := d.infra.GetBackend(name)
+	return err
 }
 
 // -------------------------------------------------------------------------
@@ -297,7 +295,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 	ctx = audit.WithWorkload(audit.WithRequestID(ctx, audit.NewID()), audit.WorkloadPurge)
 
 	if purge {
-		if be, ok := d.infra.Backends()[name]; ok {
+		if be, err := d.infra.GetBackend(name); err == nil {
 			d.PurgeBackendObjects(ctx, be, name, observer)
 		}
 	}

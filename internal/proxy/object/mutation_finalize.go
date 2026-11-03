@@ -56,21 +56,19 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // sent. A record failure on a server-side copy still ends the copy, because
 // its bytes are already on the destination.
 func (o *Manager) finalizeCopy(ctx context.Context, req *copyContext, etag string, native bool) (string, error) {
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, req.span, s3op.CopyObject, &core.RecordObjectRequest{
-		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
-		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID, StorageKey: req.destStorageKey}},
-	}); err != nil {
+	dst := req.intent
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, req.span, s3op.CopyObject, dst.RecordFor(req.form)); err != nil {
 		return "", err
 	}
-	if req.identity.Complete() {
-		etag = req.identity.ETag
+	if dst.Identity.Complete() {
+		etag = dst.Identity.ETag
 	}
-	o.core.Acct().Operation(s3op.CopyObject, req.destBackendName, req.start, nil)
+	o.core.Acct().Operation(s3op.CopyObject, dst.BackendName, req.start, nil)
 	if native {
 		req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
 	}
-	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
-	o.cache.Delete(req.destKey)
+	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, dst.ObjectKey, req.srcBackendName, dst.BackendName, dst.SizeBytes)
+	o.cache.Delete(dst.ObjectKey)
 	return etag, nil
 }
 

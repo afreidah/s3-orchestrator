@@ -57,6 +57,11 @@ type Object struct {
 	Metadata     map[string]string
 }
 
+// attrs is what a GET or HEAD of the object reports besides its bytes.
+func (o *Object) attrs() backend.ObjectAttrs {
+	return backend.ObjectAttrs{ContentType: o.ContentType, ETag: o.ETag, LastModified: o.LastModified, Metadata: o.Metadata}
+}
+
 // InMemory is an in-memory backend.ObjectBackend. The zero value is not
 // usable; construct with NewInMemory. Safe for concurrent use.
 //
@@ -64,7 +69,7 @@ type Object struct {
 // should read it through Has or Snapshot rather than directly.
 //
 // CopyObject reports ErrCopyNotSupported until a test sets CopyEnabled, which
-// leaves callers on the materialized-copy path by default. CopyLandsBeforeErr
+// leaves callers on the stream-copy path by default. CopyLandsBeforeErr
 // makes a failing CopyObject write the destination anyway, modelling a
 // server-side copy whose response was lost.
 //
@@ -88,7 +93,7 @@ type InMemory struct {
 	GetPanic      bool  // GetObject panics instead of returning
 	DeleteDelay   time.Duration
 
-	LastPutBodySeekable   bool
+	PutCalls              int
 	LastDeleteHadDeadline bool
 	LastDeleteDeadline    time.Time
 
@@ -145,15 +150,13 @@ type errReader struct{ err error }
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // PutObject stores the body under key and returns an etag derived from its
-// length. Records whether the body was seekable before reading it.
+// length. Every call is counted, including one that fails.
 func (m *InMemory) PutObject(
 	_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string,
 ) (string, error) {
-	_, seekable := body.(io.Seeker)
-
 	m.mu.Lock()
 	err := m.PutErr
-	m.LastPutBodySeekable = seekable
+	m.PutCalls++
 	m.mu.Unlock()
 	if err != nil {
 		return "", err
@@ -207,13 +210,10 @@ func (m *InMemory) GetObject(_ context.Context, key, rangeHeader string) (*backe
 		body = io.NopCloser(&errReader{err: m.GetReadErr})
 	}
 	return &backend.GetObjectResult{
+		ObjectAttrs:  obj.attrs(),
 		Body:         body,
 		Size:         int64(len(data)),
-		ContentType:  obj.ContentType,
-		ETag:         obj.ETag,
-		LastModified: obj.LastModified,
 		ContentRange: contentRange,
-		Metadata:     obj.Metadata,
 	}, nil
 }
 
@@ -228,13 +228,7 @@ func (m *InMemory) HeadObject(_ context.Context, key string) (*backend.HeadObjec
 	if !ok {
 		return nil, notFound(key)
 	}
-	return &backend.HeadObjectResult{
-		Size:         int64(len(obj.Data)),
-		ContentType:  obj.ContentType,
-		ETag:         obj.ETag,
-		LastModified: obj.LastModified,
-		Metadata:     obj.Metadata,
-	}, nil
+	return &backend.HeadObjectResult{ObjectAttrs: obj.attrs(), Size: int64(len(obj.Data))}, nil
 }
 
 // DeleteObject removes key, recording whether the caller supplied a deadline
@@ -451,12 +445,11 @@ func (m *InMemory) LastDelete() (hadDeadline bool, deadline time.Time) {
 	return m.LastDeleteHadDeadline, m.LastDeleteDeadline
 }
 
-// PutBodyWasSeekable reports whether the most recent PutObject received a
-// seekable body, under the lock.
-func (m *InMemory) PutBodyWasSeekable() bool {
+// PutCallCount returns how many times PutObject was invoked, under the lock.
+func (m *InMemory) PutCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.LastPutBodySeekable
+	return m.PutCalls
 }
 
 // Get returns the stored object and whether it was present, under the lock.

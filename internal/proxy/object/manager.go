@@ -5,11 +5,8 @@
 //
 // Manager type / Deps / New plus the small shared helpers and pre-flight
 // readiness probes (CanAcceptWrite, BackendCapacityStats, ObjectExists)
-// the transport layer consults before deciding to accept a request. The
-// per-operation orchestration lives in the sibling files: get.go,
-// head.go, list.go, range.go, integrity_reader.go for the read paths;
-// put.go, copy.go, delete.go, mutation_finalize.go, materialize.go for
-// the write paths.
+// the transport layer consults before deciding to accept a request. Each
+// operation's orchestration lives in its own sibling file.
 // -------------------------------------------------------------------------------
 
 package object

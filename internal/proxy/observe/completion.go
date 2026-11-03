@@ -39,15 +39,21 @@ func PutCompleted(ctx context.Context, span trace.Span, key, backend string, siz
 		slog.String("backend", backend),
 		slog.Int64("size", size),
 	)
-	bucket, userKey := internalkey.Split(key)
-	event.Publish(event.ObjectCreatedPut, userKey, map[string]any{
-		"bucket":     bucket,
-		"key":        userKey,
-		"backend":    backend,
-		"size":       size,
-		"request_id": audit.RequestID(ctx),
+	publishObjectEvent(ctx, event.ObjectCreatedPut, key, map[string]any{
+		"backend": backend,
+		"size":    size,
 	})
 	span.SetStatus(codes.Ok, "")
+}
+
+// publishObjectEvent sends one object's notification with its bucket, its
+// key within the bucket and the request id added to fields.
+func publishObjectEvent(ctx context.Context, eventType, key string, fields map[string]any) {
+	bucket, userKey := internalkey.Split(key)
+	fields["bucket"] = bucket
+	fields["key"] = userKey
+	fields["request_id"] = audit.RequestID(ctx)
+	event.Publish(eventType, userKey, fields)
 }
 
 // CopyCompleted marks a successful CopyObject. Emits the
@@ -61,14 +67,10 @@ func CopyCompleted(ctx context.Context, span trace.Span, sourceKey, destKey, sou
 		slog.String("dest_backend", destBackend),
 		slog.Int64("size", size),
 	)
-	bucket, userKey := internalkey.Split(destKey)
-	event.Publish(event.ObjectCreatedCopy, userKey, map[string]any{
-		"bucket":     bucket,
-		"key":        userKey,
+	publishObjectEvent(ctx, event.ObjectCreatedCopy, destKey, map[string]any{
 		"source_key": sourceKey,
 		"backend":    destBackend,
 		"size":       size,
-		"request_id": audit.RequestID(ctx),
 	})
 	span.SetStatus(codes.Ok, "")
 }
@@ -81,12 +83,8 @@ func DeleteCompleted(ctx context.Context, span trace.Span, key string, copiesDel
 		slog.String("key", key),
 		slog.Int("copies_deleted", copiesDeleted),
 	)
-	bucket, userKey := internalkey.Split(key)
-	event.Publish(event.ObjectRemovedDelete, userKey, map[string]any{
-		"bucket":         bucket,
-		"key":            userKey,
+	publishObjectEvent(ctx, event.ObjectRemovedDelete, key, map[string]any{
 		"copies_deleted": copiesDeleted,
-		"request_id":     audit.RequestID(ctx),
 	})
 	span.SetStatus(codes.Ok, "")
 }
@@ -209,15 +207,11 @@ func MultipartCompleted(ctx context.Context, span trace.Span, key, backend, uplo
 		slog.Int64("total_size", totalSize),
 		slog.Int("parts_count", partsCount),
 	)
-	bucket, userKey := internalkey.Split(key)
-	event.Publish(event.ObjectCreatedCompleteMultipartUpload, userKey, map[string]any{
-		"bucket":      bucket,
-		"key":         userKey,
+	publishObjectEvent(ctx, event.ObjectCreatedCompleteMultipartUpload, key, map[string]any{
 		"backend":     backend,
 		"size":        totalSize,
 		"parts_count": partsCount,
 		"upload_id":   uploadID,
-		"request_id":  audit.RequestID(ctx),
 	})
 	span.SetStatus(codes.Ok, "")
 }

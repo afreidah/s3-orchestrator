@@ -414,7 +414,6 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Profiles:         br.Profiles,
 		MetricsCollector: collector,
 		AdmissionSem:     admissionSemFor(&cfg.Server),
-		Log:              slog.Default().With(logfmt.Component("backend_manager")),
 	}), nil
 }
 
@@ -469,14 +468,13 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
-	br := r.Resolve[*BackendsResult]()
 	stores := r.Resolve[metadataStore]()
 	scrubber := r.Resolve[*worker.Scrubber]()
 	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return dashboard.New(stores, rt.Usage(), scrubber, br.Order, rt, states), nil
+	return dashboard.New(stores, rt.Usage(), scrubber, rt, states), nil
 }
 
 // ProvideExpiryManager builds the lifecycle-expiration manager over the
@@ -489,7 +487,7 @@ func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	return expiry.New(stores, objects, live.Lifecycle(), slog.Default().With(logfmt.Component("lifecycle"))), nil
+	return expiry.New(stores, objects, live.Lifecycle()), nil
 }
 
 // ProvideReconcileManager builds the sync/reconcile orchestrator. Its store
@@ -508,7 +506,6 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 		Stores:   stores,
 		Usage:    rt.Acct(),
 		Codec:    codec,
-		Log:      slog.Default().With(logfmt.Component("reconcile")),
 	}), nil
 }
 

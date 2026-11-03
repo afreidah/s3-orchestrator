@@ -59,11 +59,11 @@ func TestValidateManifestShape(t *testing.T) {
 	}{
 		{"ascending", []core.CompletePart{{PartNumber: 1}, {PartNumber: 2}, {PartNumber: 7}}, ""},
 		{"single part", []core.CompletePart{{PartNumber: 1}}, ""},
-		{"at the upper bound", []core.CompletePart{{PartNumber: MaxPartNumber}}, ""},
+		{"at the upper bound", []core.CompletePart{{PartNumber: core.MaxPartNumber}}, ""},
 		{"empty", nil, "InvalidRequest"},
 		{"part number zero", []core.CompletePart{{PartNumber: 0}}, "InvalidPart"},
 		{"negative part number", []core.CompletePart{{PartNumber: -1}}, "InvalidPart"},
-		{"above the upper bound", []core.CompletePart{{PartNumber: MaxPartNumber + 1}}, "InvalidPart"},
+		{"above the upper bound", []core.CompletePart{{PartNumber: core.MaxPartNumber + 1}}, "InvalidPart"},
 		{"duplicate", []core.CompletePart{{PartNumber: 1}, {PartNumber: 1}}, "InvalidPart"},
 		{"descending", []core.CompletePart{{PartNumber: 2}, {PartNumber: 1}}, "InvalidPartOrder"},
 		{"unordered", []core.CompletePart{{PartNumber: 1}, {PartNumber: 5}, {PartNumber: 3}}, "InvalidPartOrder"},
