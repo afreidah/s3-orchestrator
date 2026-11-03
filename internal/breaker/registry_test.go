@@ -12,6 +12,7 @@ package breaker
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestRegistry_EmptyProbeIsNoOp(t *testing.T) {
 // TestRegistry_RecoveryProberSatisfiesInterface verifies that a real
 // *RecoveryProber can be registered without type assertions.
 func TestRegistry_RecoveryProberSatisfiesInterface(t *testing.T) {
-	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: 0, IsError: func(error) bool { return true }, Sentinel: ErrBackendUnavailable})
+	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: 0, IsError: func(error) bool { return true }, Sentinel: errors.New("test unavailable")})
 	NewRegistry(NewRecoveryProber(cb, Recovery{Check: func(context.Context) error { return nil }})).
 		ProbeAll(t.Context()) // must not panic on a closed circuit
 }

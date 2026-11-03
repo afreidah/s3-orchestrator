@@ -30,11 +30,11 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// TracerName identifies spans created by this service.
-const TracerName = "s3-orchestrator"
+// tracerName identifies spans created by this service.
+const tracerName = "s3-orchestrator"
 
 // Version of the service for trace metadata. Set at build time via
-// -ldflags "-X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=..."
+// -ldflags "-X github.com/afreidah/s3-orchestrator/internal/observe/telemetry.Version=..."
 var Version = "dev"
 
 // -------------------------------------------------------------------------
@@ -63,7 +63,7 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewSchemaless(
-			semconv.ServiceName(TracerName),
+			semconv.ServiceName(tracerName),
 			semconv.ServiceVersion(Version),
 		),
 	)
@@ -103,7 +103,7 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 
 // Tracer returns the global tracer for this service.
 func Tracer() trace.Tracer {
-	return otel.Tracer(TracerName)
+	return otel.Tracer(tracerName)
 }
 
 // StartSpan creates a new internal span with the given name and attributes.
@@ -123,11 +123,8 @@ func StartServerSpan(ctx context.Context, name string, attrs ...attribute.KeyVal
 // S3 orchestrator specific attribute keys.
 var (
 	AttrRequestID         = attribute.Key("s3o.request_id")
-	AttrVirtualBucket     = attribute.Key("s3o.bucket.virtual")
-	AttrBackendBucket     = attribute.Key("s3o.bucket.backend")
 	AttrObjectKey         = attribute.Key("s3o.key")
 	AttrBackendName       = attribute.Key("s3o.backend.name")
-	AttrBackendEndpoint   = attribute.Key("s3o.backend.endpoint")
 	AttrObjectSize        = attribute.Key("s3o.object.size")
 	AttrContentType       = attribute.Key("s3o.object.content_type")
 	AttrOperation         = attribute.Key("s3o.operation")
@@ -145,12 +142,19 @@ var (
 	AttrCopiesClaimed     = attribute.Key("s3o.write_copies_claimed")
 )
 
+// Attribute keys only the span attribute builders below set.
+var (
+	attrVirtualBucket   = attribute.Key("s3o.bucket.virtual")
+	attrBackendBucket   = attribute.Key("s3o.bucket.backend")
+	attrBackendEndpoint = attribute.Key("s3o.backend.endpoint")
+)
+
 // RequestAttributes returns common attributes for HTTP request spans.
 func RequestAttributes(method, path, bucket, key, clientIP string) []attribute.KeyValue {
 	return []attribute.KeyValue{
 		semconv.HTTPRequestMethodKey.String(method),
 		semconv.URLPath(path),
-		AttrVirtualBucket.String(bucket),
+		attrVirtualBucket.String(bucket),
 		AttrObjectKey.String(key),
 		semconv.ClientAddress(clientIP),
 	}
@@ -161,8 +165,8 @@ func BackendAttributes(operation, backendName, endpoint, bucket, key string) []a
 	return []attribute.KeyValue{
 		AttrOperation.String(operation),
 		AttrBackendName.String(backendName),
-		AttrBackendEndpoint.String(endpoint),
-		AttrBackendBucket.String(bucket),
+		attrBackendEndpoint.String(endpoint),
+		attrBackendBucket.String(bucket),
 		AttrObjectKey.String(key),
 	}
 }

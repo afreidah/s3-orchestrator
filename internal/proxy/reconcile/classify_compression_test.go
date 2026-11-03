@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -34,7 +35,7 @@ const classifyChunk = compression.MinChunkSize
 // newClassifyCodec builds a codec and closes it with the test.
 func newClassifyCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, classifyChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, classifyChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

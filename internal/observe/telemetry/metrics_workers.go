@@ -7,9 +7,9 @@
 // background workers. Operators alert on these to catch stalled or
 // repeatedly failing workers without scraping logs:
 //
-//   - rate(worker_ticks_total{result="error"}[15m]) > 0  -> persistent failures
-//   - time() - worker_last_success_timestamp_seconds > N -> staleness
-//   - worker_consecutive_failures > N                    -> degraded but running
+//   - rate(s3o_worker_ticks_total{result="error"}[15m]) > 0  -> persistent failures
+//   - time() - s3o_worker_last_success_timestamp_seconds > N -> staleness
+//   - s3o_worker_consecutive_failures > N                    -> degraded but running
 // -------------------------------------------------------------------------------
 
 package telemetry
@@ -18,8 +18,8 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // WorkerTicksTotal counts each completed tick of a locked-ticker service,
 // labelled by service name and outcome: success when the work returned nil,
-// error when it returned one, and skipped when shouldRun gated the tick or the
-// advisory lock was busy.
+// error when it returned one, and skipped when ShouldRun declined the tick,
+// the advisory lock was busy or the database was unavailable.
 var (
 	WorkerTicksTotal = counterVec("s3o_worker_ticks_total",
 		"Locked-ticker service ticks by service and outcome", "service", "result")

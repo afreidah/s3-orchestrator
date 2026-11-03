@@ -26,6 +26,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -307,7 +308,7 @@ func TestCharge_FailureKeepsTheChargeLocally(t *testing.T) {
 
 	r.Charge(backendB1, oldBucket, Charge{APIRequests: 3})
 
-	if !r.inFallback() {
+	if !inFallback(r) {
 		t.Error("a failure on an open breaker should enter fallback")
 	}
 	if got := loaded(r.local, backendB1).APIRequests; got != 3 {
@@ -478,11 +479,16 @@ func TestTakeShared_SkipsWhatCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestTakeShared_StageErrorStillReadsStaged asserts a failed rename stops the
-// staging pass but still returns hashes already staged.
+// TestTakeShared_StageErrorStillReadsStaged asserts a failed rename that
+// leaves the breaker closed stops the staging pass but still returns hashes
+// already staged.
 func TestTakeShared_StageErrorStillReadsStaged(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
+	r.cb = breaker.NewCircuitBreaker(breaker.Config{
+		Name: "test-redis", Threshold: 2, Timeout: time.Minute,
+		IsError: func(err error) bool { return err != nil }, Sentinel: ErrRedisUnavailable,
+	})
 	fr.seed(r.stagedKey(backendB1, "left"), fieldAPIRequests, 4)
 	fr.renameErr = errRedisDown
 

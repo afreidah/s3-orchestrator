@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Tests for the circuit breaker wrapper: calls forward while closed and return
-// breaker.ErrBackendUnavailable while open, a failure to reach the backend
+// ErrBackendUnavailable while open, a failure to reach the backend
 // takes out every call while a refusal takes out only its own, the served set
 // and the backend-level transitions follow the breakers, each breaker's probe
 // passes or fails on the right answers, and client requests never probe.
@@ -25,6 +25,7 @@ import (
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -34,7 +35,7 @@ import (
 
 // newTestCBBackend constructs a new test cbbackend.
 func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *CircuitBreakerBackend {
-	return NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "test-backend", Threshold: threshold, Timeout: timeout})
+	return NewCircuitBreakerBackend(mock, "test-backend", config.BackendCircuitBreakerConfig{FailureThreshold: threshold, OpenTimeout: timeout})
 }
 
 // servesAll reports whether cb serves every call.
@@ -136,7 +137,7 @@ func TestCBBackend_DeleteObject_Forwards(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestCBBackend_PutObject_CircuitOpen verifies the cbbackend put object circuit open contract.
-// Asserts that expected breaker.ErrBackendUnavailable, got.
+// Asserts that expected ErrBackendUnavailable, got.
 func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -146,15 +147,15 @@ func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
 	// Trip the circuit
 	_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
 
-	// Next call should return breaker.ErrBackendUnavailable without hitting mock
+	// Next call should return ErrBackendUnavailable without hitting mock
 	_, err := cb.PutObject(context.Background(), "key2", strings.NewReader("data"), 4, "text/plain", nil)
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
-		t.Fatalf("expected breaker.ErrBackendUnavailable, got %v", err)
+	if !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("expected ErrBackendUnavailable, got %v", err)
 	}
 }
 
 // TestCBBackend_GetObject_CircuitOpen verifies the cbbackend get object circuit open contract.
-// Asserts that expected breaker.ErrBackendUnavailable, got.
+// Asserts that expected ErrBackendUnavailable, got.
 func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -165,13 +166,13 @@ func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
 	_, _ = cb.GetObject(context.Background(), "key", "")
 
 	_, err := cb.GetObject(context.Background(), "key", "")
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
-		t.Fatalf("expected breaker.ErrBackendUnavailable, got %v", err)
+	if !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("expected ErrBackendUnavailable, got %v", err)
 	}
 }
 
 // TestCBBackend_HeadObject_CircuitOpen verifies the cbbackend head object circuit open contract.
-// Asserts that expected breaker.ErrBackendUnavailable, got.
+// Asserts that expected ErrBackendUnavailable, got.
 func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -181,13 +182,13 @@ func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
 	_, _ = cb.HeadObject(context.Background(), "key")
 
 	_, err := cb.HeadObject(context.Background(), "key")
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
-		t.Fatalf("expected breaker.ErrBackendUnavailable, got %v", err)
+	if !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("expected ErrBackendUnavailable, got %v", err)
 	}
 }
 
 // TestCBBackend_DeleteObject_CircuitOpen verifies the cbbackend delete object circuit open contract.
-// Asserts that expected breaker.ErrBackendUnavailable, got.
+// Asserts that expected ErrBackendUnavailable, got.
 func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -197,8 +198,8 @@ func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 	_ = cb.DeleteObject(context.Background(), "key")
 
 	err := cb.DeleteObject(context.Background(), "key")
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
-		t.Fatalf("expected breaker.ErrBackendUnavailable, got %v", err)
+	if !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("expected ErrBackendUnavailable, got %v", err)
 	}
 }
 
@@ -224,7 +225,7 @@ func TestCBBackend_ClientRequestsNeverProbe(t *testing.T) {
 		mock.mu.Unlock()
 
 		_, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
-		if !errors.Is(err, breaker.ErrBackendUnavailable) {
+		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("PutObject after the open timeout = %v, want ErrBackendUnavailable", err)
 		}
 		if servesAll(cb) {
@@ -249,7 +250,7 @@ func TestCBBackend_OpeningErrorKeepsCause(t *testing.T) {
 	cb := newTestCBBackend(mock, 1, time.Minute)
 
 	_, err := cb.GetObject(context.Background(), "key", "")
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
+	if !errors.Is(err, ErrBackendUnavailable) {
 		t.Errorf("err = %v, want it to match ErrBackendUnavailable", err)
 	}
 	if !errors.Is(err, cause) {
@@ -296,7 +297,7 @@ func TestCBBackend_ListObjectsRespectsTheCircuit(t *testing.T) {
 		t.Fatalf("ListObjects on a closed circuit = %v, want nil", err)
 	}
 	_, _ = cb.GetObject(context.Background(), "key", "")
-	if err := cb.ListObjects(context.Background(), "", noop); !errors.Is(err, breaker.ErrBackendUnavailable) {
+	if err := cb.ListObjects(context.Background(), "", noop); !errors.Is(err, ErrBackendUnavailable) {
 		t.Errorf("ListObjects on an open circuit = %v, want ErrBackendUnavailable", err)
 	}
 }
@@ -339,7 +340,7 @@ func TestCBBackend_RefusalTakesOutOnlyItsCall(t *testing.T) {
 	if got, want := cb.Served(), core.AllCalls&^core.CallGetObject; got != want {
 		t.Fatalf("Served = %s, want %s", got, want)
 	}
-	if _, err := cb.GetObject(context.Background(), "key", ""); !errors.Is(err, breaker.ErrBackendUnavailable) {
+	if _, err := cb.GetObject(context.Background(), "key", ""); !errors.Is(err, ErrBackendUnavailable) {
 		t.Errorf("GetObject = %v, want ErrBackendUnavailable", err)
 	}
 	if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); err != nil {
@@ -363,7 +364,7 @@ func TestCBBackend_UnreachableTakesOutEveryCall(t *testing.T) {
 	if got := cb.Served(); got != 0 {
 		t.Fatalf("Served = %s, want nothing", got)
 	}
-	if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); !errors.Is(err, breaker.ErrBackendUnavailable) {
+	if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); !errors.Is(err, ErrBackendUnavailable) {
 		t.Errorf("PutObject = %v, want ErrBackendUnavailable", err)
 	}
 
@@ -453,7 +454,7 @@ func TestCBBackend_RefusedGaugeFollowsServed(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
 	mock.getErr = &httpError{code: 403}
-	cb := NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "gauge-backend", Threshold: 1, Timeout: time.Minute})
+	cb := NewCircuitBreakerBackend(mock, "gauge-backend", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 	refused := func(call core.BackendCalls) float64 {
 		return promtest.ToFloat64(telemetry.BackendCallRefused.WithLabelValues("gauge-backend", call.String()))
 	}
@@ -480,7 +481,7 @@ func TestCBBackend_EventsNameTheCall(t *testing.T) {
 	mock := newMockBackend()
 	mock.getErr = &httpError{code: 403}
 	mock.headErr = errors.New("connection refused")
-	cb := NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "event-backend", Threshold: 1, Timeout: time.Minute})
+	cb := NewCircuitBreakerBackend(mock, "event-backend", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 	_, _ = cb.GetObject(context.Background(), "key", "")
 	_, _ = cb.HeadObject(context.Background(), "key")
 
@@ -682,7 +683,7 @@ func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 
 	// Next call should return ErrBackendUnavailable without reaching backend
 	_, err := cb.GetObject(context.Background(), "key", "")
-	if !errors.Is(err, breaker.ErrBackendUnavailable) {
+	if !errors.Is(err, ErrBackendUnavailable) {
 		t.Errorf("expected ErrBackendUnavailable, got %v", err)
 	}
 }
@@ -710,7 +711,7 @@ func TestClassifyFailure(t *testing.T) {
 		{"409", &httpError{code: 409}, scopeNone},
 		{"412", &httpError{code: 412}, scopeNone},
 		{"416 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 416}), scopeNone},
-		{"breaker refusal", fmt.Errorf("%w: %w", breaker.ErrBackendUnavailable, &httpError{code: 403}), scopeNone},
+		{"breaker refusal", fmt.Errorf("%w: %w", ErrBackendUnavailable, &httpError{code: 403}), scopeNone},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

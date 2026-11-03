@@ -28,10 +28,10 @@ var (
 	CompressionStoredBytesTotal = counter("s3o_compression_stored_bytes_total",
 		"Bytes those objects occupy on backends after encoding")
 
-	// CompressionRatio observes the ratio one object reached, which the two
+	// compressionRatio observes the ratio one object reached, which the two
 	// counters above cannot show: a fleet averaging 0.4 behaves differently
 	// depending on whether that is every object or half of them at 0.05.
-	CompressionRatio = histogram("s3o_compression_ratio",
+	compressionRatio = histogram("s3o_compression_ratio",
 		"Encoded size as a fraction of logical size, per stored object", prometheus.LinearBuckets(0.05, 0.05, 20))
 )
 
@@ -58,7 +58,7 @@ func RecordCompressed(logicalSize, storedSize int64) {
 	}
 	CompressionLogicalBytesTotal.Add(float64(logicalSize))
 	CompressionStoredBytesTotal.Add(float64(storedSize))
-	CompressionRatio.Observe(float64(storedSize) / float64(logicalSize))
+	compressionRatio.Observe(float64(storedSize) / float64(logicalSize))
 }
 
 // CompressionSkippedTotal counts objects a write declined to encode. The reason

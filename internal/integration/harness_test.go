@@ -240,7 +240,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		opts.Encryptor = h.enc
 	}
 	if spec.Compression != nil {
-		codec, err := compression.NewCodec(compression.DefaultLevel, spec.Compression.ChunkSize)
+		codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel,spec.Compression.ChunkSize)
 		if err != nil {
 			t.Fatalf("harness codec: %v", err)
 		}

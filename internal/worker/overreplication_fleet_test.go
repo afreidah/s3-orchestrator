@@ -78,7 +78,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	store := newPermissiveStore(t)
 	mock := backendtest.NewInMemory()
 	mock.PutErr = errors.New("backend down")
-	cbBackend := backend.NewCircuitBreakerBackend(mock, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
+	cbBackend := backend.NewCircuitBreakerBackend(mock, "b1", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": cbBackend}, &fleetOpts{Order: []string{"b1"}})

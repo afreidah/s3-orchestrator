@@ -12,11 +12,7 @@
 
 package sharedstate
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-)
+import "context"
 
 // Topic carries messages of type T on one channel.
 type Topic[T any] struct {
@@ -36,9 +32,9 @@ func (t Topic[T]) Publish(ctx context.Context, msg T) error {
 	if store == nil {
 		return nil
 	}
-	payload, err := json.Marshal(msg)
+	payload, err := encode(t.channel+" message", msg)
 	if err != nil {
-		return fmt.Errorf("encode %s message: %w", t.channel, err)
+		return err
 	}
 	return store.PublishShared(ctx, t.channel, payload)
 }
@@ -55,7 +51,7 @@ func (t Topic[T]) Watch(ctx context.Context, apply func(context.Context, T), res
 	}
 	store.WatchShared(ctx, t.channel, func(ctx context.Context, payload []byte) {
 		var msg T
-		if payload == nil || json.Unmarshal(payload, &msg) != nil {
+		if payload == nil || decode(t.channel+" message", payload, &msg) != nil {
 			resync(ctx)
 			return
 		}

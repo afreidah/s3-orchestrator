@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -106,7 +107,7 @@ func TestCompressExisting_NoCodecStreamsFailure(t *testing.T) {
 func TestCompressExisting_EmptyFleet(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compression.MinChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestCompressExisting_EmptyFleet(t *testing.T) {
 func TestDecompressExisting_EmptyFleet(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compression.MinChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestDecompressExisting_EmptyFleet(t *testing.T) {
 func TestCompressExisting_StreamsProgress(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, compression.MinChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

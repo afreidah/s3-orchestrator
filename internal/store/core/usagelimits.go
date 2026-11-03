@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/usagestat"
 )
 
 // PoolAll is the name given to the pool that a bare api_request_limit
@@ -254,11 +255,7 @@ func (u UsageLimits) Meters(used Usage) []UsageMeter {
 // APIRequests is the count of backend calls made, including ones no pool
 // charges, so it stays an honest record of request volume rather than a
 // figure derived from the budgets.
-type UsageStat struct {
-	APIRequests  int64
-	EgressBytes  int64
-	IngressBytes int64
-}
+type UsageStat = usagestat.Stat
 
 // PoolUsage is the per-pool request count for one backend in one period,
 // keyed by pool name. Pools are additive, so these do not sum to
@@ -290,9 +287,7 @@ func (u *Usage) AddPool(name string, n int64) {
 
 // Add adds o's totals and pools into u.
 func (u *Usage) Add(o Usage) {
-	u.APIRequests += o.APIRequests
-	u.EgressBytes += o.EgressBytes
-	u.IngressBytes += o.IngressBytes
+	u.UsageStat = u.Plus(o.UsageStat)
 	for name, n := range o.Pools {
 		u.AddPool(name, n)
 	}

@@ -18,26 +18,26 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TraceHandler wraps an slog.Handler and injects OpenTelemetry trace context
+// traceHandler wraps an slog.Handler and injects OpenTelemetry trace context
 // (trace_id, span_id) into every log record that has an active span.
-type TraceHandler struct {
+type traceHandler struct {
 	inner slog.Handler
 }
 
-// NewTraceHandler creates a handler that injects trace context into log records
+// newTraceHandler creates a handler that injects trace context into log records
 // before delegating to the inner handler.
-func NewTraceHandler(inner slog.Handler) *TraceHandler {
-	return &TraceHandler{inner: inner}
+func newTraceHandler(inner slog.Handler) *traceHandler {
+	return &traceHandler{inner: inner}
 }
 
 // Enabled delegates to the inner handler.
-func (h *TraceHandler) Enabled(ctx context.Context, level slog.Level) bool {
+func (h *traceHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.inner.Enabled(ctx, level)
 }
 
 // Handle adds trace_id and span_id attributes if the context carries an
 // active span, then delegates to the inner handler.
-func (h *TraceHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
+func (h *traceHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
 		r.AddAttrs(
@@ -49,11 +49,11 @@ func (h *TraceHandler) Handle(ctx context.Context, r slog.Record) error { //noli
 }
 
 // WithAttrs returns a new TraceHandler wrapping the inner handler with attrs.
-func (h *TraceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &TraceHandler{inner: h.inner.WithAttrs(attrs)}
+func (h *traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &traceHandler{inner: h.inner.WithAttrs(attrs)}
 }
 
 // WithGroup returns a new TraceHandler wrapping the inner handler with a group.
-func (h *TraceHandler) WithGroup(name string) slog.Handler {
-	return &TraceHandler{inner: h.inner.WithGroup(name)}
+func (h *traceHandler) WithGroup(name string) slog.Handler {
+	return &traceHandler{inner: h.inner.WithGroup(name)}
 }

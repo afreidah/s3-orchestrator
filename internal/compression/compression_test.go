@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // testChunk is small enough to cross several boundaries without large fixtures.
@@ -29,7 +31,7 @@ const testChunk = MinChunkSize
 // newTestCodec builds a codec at the test chunk size and closes it with the test.
 func newTestCodec(t testing.TB) *Codec {
 	t.Helper()
-	c, err := NewCodec(DefaultLevel, testChunk)
+	c, err := NewCodecForLevel(config.DefaultCompressionLevel, testChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}
@@ -244,11 +246,11 @@ func TestStoredObject_DecodesWithZstdCLI(t *testing.T) {
 func TestNewCodec_RejectsChunkSizeOutOfRange(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{0, -1, MinChunkSize - 1, MaxChunkSize + 1} {
-		if _, err := NewCodec(DefaultLevel, size); !errors.Is(err, ErrChunkSizeRange) {
+		if _, err := NewCodecForLevel(config.DefaultCompressionLevel, size); !errors.Is(err, ErrChunkSizeRange) {
 			t.Errorf("NewCodec(chunk=%d) error = %v, want ErrChunkSizeRange", size, err)
 		}
 	}
-	c, err := NewCodec(DefaultLevel, DefaultChunkSize)
+	c, err := NewCodecForLevel(config.DefaultCompressionLevel, DefaultChunkSize)
 	if err != nil {
 		t.Fatalf("NewCodec at the default: %v", err)
 	}
@@ -429,15 +431,6 @@ func TestDecompress_SeekFailureIsAFetchFailure(t *testing.T) {
 		if _, err := c.Decompress(src); !errors.Is(err, ErrFetchFailed) {
 			t.Errorf("%s: err = %v, want ErrFetchFailed", name, err)
 		}
-	}
-}
-
-// TestChunkSize_ReportsConfigured pins the accessor the write path uses to size
-// its reads against what the codec was built with.
-func TestChunkSize_ReportsConfigured(t *testing.T) {
-	t.Parallel()
-	if got := newTestCodec(t).ChunkSize(); got != testChunk {
-		t.Errorf("ChunkSize() = %d, want %d", got, testChunk)
 	}
 }
 

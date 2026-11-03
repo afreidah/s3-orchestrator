@@ -142,8 +142,8 @@ func TestPublishShared_SendsPayloadAndDeclinesInFallback(t *testing.T) {
 
 	fallback := newBackend()
 	fallback.cb.Trip(errors.New("redis down"))
-	if err := fallback.PublishShared(ctx, "prov", []byte("m")); !errors.Is(err, ErrSharedStateUnavailable) {
-		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
+	if err := fallback.PublishShared(ctx, "prov", []byte("m")); !errors.Is(err, ErrRedisUnavailable) {
+		t.Errorf("err = %v in fallback, want ErrRedisUnavailable", err)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestListShared_PagesScanAndSkipsExpired(t *testing.T) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
 
-	if _, err := r.ListShared(ctx, "inst:"); !errors.Is(err, ErrSharedStateUnavailable) {
-		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
+	if _, err := r.ListShared(ctx, "inst:"); !errors.Is(err, ErrRedisUnavailable) {
+		t.Errorf("err = %v in fallback, want ErrRedisUnavailable", err)
 	}
 }

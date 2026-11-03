@@ -24,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -208,7 +207,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 	}
 	if err := r.store.DeletePending(ctx, p.IntentID); err != nil {
 		r.log.ErrorContext(ctx, "delete pending intent",
-			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
+			"intent_id", p.IntentID, "error", err)
 		return batch.ItemFailed
 	}
 	r.onResolved(ctx, p, "dropped", slog.String("reason", reason))
@@ -223,7 +222,7 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	result, cleanup, err := r.store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
-			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
+			"intent_id", p.IntentID, "error", err)
 		return batch.ItemFailed
 	}
 	// Whatever bytes the resolution stopped recording - the copies a promotion

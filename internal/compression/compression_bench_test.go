@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------
@@ -25,7 +27,7 @@ import (
 // benchCodec builds a codec at the production default chunk size.
 func benchCodec(b *testing.B) *Codec {
 	b.Helper()
-	c, err := NewCodec(DefaultLevel, DefaultChunkSize)
+	c, err := NewCodecForLevel(config.DefaultCompressionLevel, DefaultChunkSize)
 	if err != nil {
 		b.Fatalf("NewCodec: %v", err)
 	}

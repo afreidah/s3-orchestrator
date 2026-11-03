@@ -14,9 +14,7 @@ package sharedstate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -52,16 +50,15 @@ func NewRoster[T any](s *Shared, cfg RosterConfig[T]) *Roster[T] {
 // reports its own outage. On a single instance it only waits for ctx, so a
 // supervisor does not restart it.
 func (r *Roster[T]) Run(ctx context.Context) error {
-	store := r.shared.active()
-	if store == nil {
+	if r.shared.active() == nil {
 		<-ctx.Done()
 		return nil
 	}
+	own := NewValue[T](r.shared, r.key(), rosterTTLBeats*r.cfg.Interval)
 	beat := syncutil.Schedule{Interval: r.cfg.Interval, Immediately: true}
 	beat.Run(ctx, func(ctx context.Context) {
-		if data, err := json.Marshal(r.cfg.Report(ctx)); err == nil {
-			_ = store.PutShared(ctx, r.key(), data, rosterTTLBeats*r.cfg.Interval)
-		}
+		report := r.cfg.Report(ctx)
+		_ = own.Put(ctx, &report)
 	})
 	return nil
 }
@@ -85,8 +82,8 @@ func (r *Roster[T]) List(ctx context.Context) ([]T, error) {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(stored)) {
 		var rep T
-		if err := json.Unmarshal(stored[name], &rep); err != nil {
-			errs = append(errs, fmt.Errorf("decode %s: %w", name, err))
+		if err := decode(name, stored[name], &rep); err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		reports = append(reports, rep)

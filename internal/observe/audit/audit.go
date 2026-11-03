@@ -1,12 +1,11 @@
 // -------------------------------------------------------------------------------
-// Audit - Request ID Tracing and Structured Audit Logging
+// Audit - Request Context and Structured Audit Logging
 //
 // Author: Alex Freidah
 //
-// Context-based request ID propagation and structured audit logging. Generates
-// unique request IDs for S3 API requests (honoring client-provided X-Request-Id)
-// and correlation IDs for internal operations. Emits structured slog entries
-// with an "audit" marker for log pipeline filtering.
+// Carries the request ID, the authenticated identity and the workload on the
+// context, and emits structured slog entries with an "audit" marker that name
+// all three.
 // -------------------------------------------------------------------------------
 
 package audit
@@ -16,24 +15,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
-	"sync/atomic"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// onEvent holds an optional callback invoked for each audit event with the
-// event name. Set via SetOnEvent at startup to integrate audit logging with
-// metrics (e.g. Prometheus counters). When nil, audit logging still works  -
-// events are emitted via slog but no counter is incremented.
-var onEvent atomic.Pointer[func(event string)]
+// onEvent is called with each audit event's name, for the metric counting
+// them. Audit entries are logged whether or not it is set.
+var onEvent syncutil.Hook[string]
 
-// SetOnEvent registers a callback invoked for each audit event. Pass nil to
-// clear a previously registered callback.
-func SetOnEvent(fn func(event string)) {
-	if fn == nil {
-		onEvent.Store(nil)
-	} else {
-		onEvent.Store(&fn)
-	}
-}
+// SetOnEvent registers the callback each audit event's name is passed to.
+// Pass nil to clear a previously registered callback.
+func SetOnEvent(fn func(event string)) { onEvent.Set(fn) }
 
 // -------------------------------------------------------------------------
 // CONTEXT KEYS
@@ -59,8 +51,7 @@ const (
 // -------------------------------------------------------------------------
 
 // NewID generates a hex-encoded 16-byte random ID suitable for request
-// correlation. crypto/rand.Read always returns len(b) and nil error on
-// all supported platforms (see Go docs), so no error handling is needed.
+// correlation.
 func NewID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
@@ -90,11 +81,11 @@ func WithUser(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, userKey, id)
 }
 
-// User extracts the authenticated identity from the context. Returns empty
+// user extracts the authenticated identity from the context. Returns empty
 // string for a request that has not authenticated yet, or one that failed to,
 // which is what keeps a rejected request from claiming an identity it never
 // proved.
-func User(ctx context.Context) string {
+func user(ctx context.Context) string {
 	id, _ := ctx.Value(userKey).(string)
 	return id
 }
@@ -147,21 +138,18 @@ func WorkloadOf(ctx context.Context) Workload {
 // AUDIT LOGGING
 // -------------------------------------------------------------------------
 
-// Log emits a structured audit log entry at Info level. Automatically
-// includes the request ID, the authenticated identity and the workload from
-// context. If
-// OnEvent is set, it is called with the event name for metrics integration.
+// Log emits a structured audit log entry at Info level, naming the request ID,
+// the authenticated identity and the workload from the context, and passes
+// the event name to the SetOnEvent callback.
 func Log(ctx context.Context, event string, attrs ...slog.Attr) {
-	if fn := onEvent.Load(); fn != nil {
-		(*fn)(event)
-	}
+	onEvent.Call(event)
 
 	base := []slog.Attr{
 		slog.Bool("audit", true),
 		slog.String("event", event),
 	}
 
-	if id := User(ctx); id != "" {
+	if id := user(ctx); id != "" {
 		base = append(base, slog.String("user", id))
 	}
 

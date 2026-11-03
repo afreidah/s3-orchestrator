@@ -131,7 +131,7 @@ func TestCore_Serving_DropsRefusingBackends(t *testing.T) {
 	t.Parallel()
 	// Build a CB-wrapped backend whose underlying call fails repeatedly
 	// so the breaker trips.
-	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, backend.CircuitBreakerConfig{Name: "flaky", Threshold: 1, Timeout: time.Hour})
+	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, "flaky", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour})
 	c := New(&Config{
 		Backends: map[string]backend.ObjectBackend{"healthy": fakeBackend{}, "flaky": cb},
 		Order:    []string{"healthy", "flaky"},

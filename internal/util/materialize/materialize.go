@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
 // -------------------------------------------------------------------------
@@ -62,9 +63,9 @@ func spillTarget() string {
 // once the payload is no longer needed (always safe to defer, even on a
 // materialization error).
 type Body struct {
-	buf  *bytes.Buffer
-	file *os.File
-	size int64
+	buf     *bytes.Buffer
+	file    *os.File
+	written ioutilx.CountingWriter
 }
 
 // -------------------------------------------------------------------------
@@ -108,7 +109,7 @@ func NewEmpty(size int64) (*Body, error) {
 	// Cleanup only needs to Close the fd. Removes the leak window if the
 	// process panics mid-write.
 	_ = os.Remove(f.Name()) //nolint:gosec // G703: path comes from os.CreateTemp, not user input
-	return &Body{file: f}, nil
+	return &Body{file: f, written: ioutilx.CountingWriter{W: f}}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -116,9 +117,9 @@ func NewEmpty(size int64) (*Body, error) {
 // -------------------------------------------------------------------------
 
 // Cleanup removes the tempfile when the body spilled to disk. Always safe to
-// defer.
+// defer, on a nil body too, which stands for a payload never materialized.
 func (b *Body) Cleanup() {
-	if b.file != nil {
+	if b != nil && b.file != nil {
 		_ = b.file.Close()
 	}
 }
@@ -127,22 +128,9 @@ func (b *Body) Cleanup() {
 // bytes written, since Reader needs the length.
 func (b *Body) Writer() io.Writer {
 	if b.file != nil {
-		return &countingWriter{dst: b.file, written: &b.size}
+		return &b.written
 	}
 	return b.buf
-}
-
-// countingWriter forwards to the sink and accumulates the byte count.
-type countingWriter struct {
-	dst     io.Writer
-	written *int64
-}
-
-// Write forwards and adds what was accepted.
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.dst.Write(p)
-	*c.written += int64(n)
-	return n, err
 }
 
 // Size returns the number of bytes written to the sink. For the in-memory
@@ -150,7 +138,7 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 // returned by the copy.
 func (b *Body) Size() int64 {
 	if b.file != nil {
-		return b.size
+		return b.written.N
 	}
 	return int64(b.buf.Len())
 }
@@ -160,7 +148,7 @@ func (b *Body) Size() int64 {
 // reader because a shared *os.File has a single offset.
 func (b *Body) Reader() io.ReadSeeker {
 	if b.file != nil {
-		return io.NewSectionReader(b.file, 0, b.size)
+		return io.NewSectionReader(b.file, 0, b.written.N)
 	}
 	return bytes.NewReader(b.buf.Bytes())
 }

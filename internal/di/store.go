@@ -128,10 +128,8 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Ci
 	}
 }
 
-// ProvideInstanceID resolves a stable per-process identifier used as the
-// claimed_by stamp on cleanup_queue rows, both those the store's transactions
-// queue and those the cleanup worker claims. The identifier is generated once
-// at first invoke and reused everywhere the value is needed.
+// ProvideInstanceID resolves this process's identifier, generated once at
+// first invoke and reused everywhere the value is needed.
 func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
-	return instanceid.New()
+	return instanceid.New(), nil
 }

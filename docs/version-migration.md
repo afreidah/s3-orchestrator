@@ -64,6 +64,16 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Shared helpers for backends, counters, encryption, compression and logging ([#1861](https://github.com/afreidah/s3-orchestrator/issues/1861), v0.179.5)**
+
+- `/admin/api/logs` shows a group-valued attribute as dotted keys with plain values. It used to show `[{"Key":..,"Value":{}}]`. A logger's own attribute keeps the group it was added under, and an empty attribute no longer appears under an empty key.
+- A Vault key provider stops renewing its token when startup fails after building it, on a bad previous key or an invalid encryption chunk size. A renewal in flight stops at shutdown.
+- While the Redis breaker is open, every Redis call is refused straight away with `redis unavailable`, shared state included.
+- Backend errors read `<operation> failed: <cause>` for every call.
+- Work that panicked inside a traced call is recorded as an error on its span and its operation metric. It used to be recorded as a success.
+- Circuit breaker transition logs drop the duplicate `name` attribute; `breaker_name` carries it.
+- The pending reaper's failed delete and promote logs no longer carry `outcome`.
+
 **One report per worker pass, one periodic loop, shared verification ([#1854](https://github.com/afreidah/s3-orchestrator/issues/1854), v0.179.4)**
 
 Logs, metrics and alerts that read a worker's completion lines need updating.

@@ -319,11 +319,7 @@ func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewKeyProviderFromConfig: %v", err)
 	}
-	t.Cleanup(func() {
-		if closer, ok := p.(interface{ Close() }); ok {
-			closer.Close()
-		}
-	})
+	t.Cleanup(func() { CloseProvider(p) })
 	if p.KeyID() != "vault:transit/my-key" {
 		t.Errorf("KeyID = %q, want %q", p.KeyID(), "vault:transit/my-key")
 	}

@@ -75,11 +75,9 @@ func (b *S3Backend) markUnsupported(ctx context.Context, feature core.BackendFea
 // rather than failing to carry it out: not implemented, or method not allowed.
 // Sending the same request again would be refused the same way.
 func isUnsupported(err error) bool {
-	if respErr, ok := errors.AsType[httpStatusError](err); ok {
-		switch respErr.HTTPStatusCode() {
-		case http.StatusNotImplemented, http.StatusMethodNotAllowed:
-			return true
-		}
+	switch statusOf(err) {
+	case http.StatusNotImplemented, http.StatusMethodNotAllowed:
+		return true
 	}
 	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 		switch apiErr.ErrorCode() {

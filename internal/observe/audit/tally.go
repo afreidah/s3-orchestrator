@@ -17,27 +17,12 @@ import (
 	"maps"
 	"slices"
 	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/usagestat"
 )
 
-// BackendUsage is what one backend was charged: the requests made of it and
-// the bytes it sent and received.
-type BackendUsage struct {
-	APIRequests  int64
-	EgressBytes  int64
-	IngressBytes int64
-}
-
-// plus returns the sum of two charges.
-func (u BackendUsage) plus(o BackendUsage) BackendUsage {
-	return BackendUsage{
-		APIRequests:  u.APIRequests + o.APIRequests,
-		EgressBytes:  u.EgressBytes + o.EgressBytes,
-		IngressBytes: u.IngressBytes + o.IngressBytes,
-	}
-}
-
 // Usage is the usage charged to each backend, keyed by backend name.
-type Usage map[string]BackendUsage
+type Usage map[string]usagestat.Stat
 
 // Plus returns the sum of two usages without modifying either.
 func (u Usage) Plus(o Usage) Usage {
@@ -49,7 +34,7 @@ func (u Usage) Plus(o Usage) Usage {
 		out = make(Usage, len(o))
 	}
 	for name, c := range o {
-		out[name] = out[name].plus(c)
+		out[name] = out[name].Plus(c)
 	}
 	return out
 }
@@ -91,13 +76,13 @@ func TallyOf(ctx context.Context) *Tally {
 }
 
 // Add charges c to the backend on this tally and every tally enclosing it.
-func (t *Tally) Add(backend string, c BackendUsage) {
+func (t *Tally) Add(backend string, c usagestat.Stat) {
 	for ; t != nil; t = t.parent {
 		t.mu.Lock()
 		if t.usage == nil {
 			t.usage = make(Usage)
 		}
-		t.usage[backend] = t.usage[backend].plus(c)
+		t.usage[backend] = t.usage[backend].Plus(c)
 		t.mu.Unlock()
 	}
 }

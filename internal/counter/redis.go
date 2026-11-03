@@ -158,15 +158,14 @@ type RedisCounterBackend struct {
 // backend serves from local counters and logs at error level, and the
 // breaker's prober moves it onto Redis once Redis answers.
 func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) *RedisCounterBackend {
-	sentinel := errors.New("redis unavailable")
 	cb := breaker.NewCircuitBreaker(breaker.Config{
 		Name:      "redis",
 		Threshold: cfg.FailureThreshold,
 		Timeout:   cfg.OpenTimeout,
 		IsError:   func(err error) bool { return err != nil },
-		Sentinel:  sentinel,
+		Sentinel:  ErrRedisUnavailable,
 	})
-	cb.AddOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
+	cb.AddOnStateChange(telemetry.NewDependencyBreakerHook("redis", telemetry.RedisFallbackActive))
 
 	r := &RedisCounterBackend{
 		client: client,
@@ -223,31 +222,26 @@ func (r *RedisCounterBackend) Charge(backend string, bucket time.Time, c Charge)
 	if c.empty() || !slices.Contains(r.backends, backend) {
 		return
 	}
-	if r.inFallback() {
-		r.local.Charge(backend, bucket, c)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	key := r.hashKey(backend)
-	prefix := fieldPrefix(bucket, c.Workload)
-	tx := r.client.TxPipeline()
-	incr := func(field string, n int64) {
-		if n > 0 {
-			tx.HIncrBy(ctx, key, prefix+field, n)
+	err := r.call(context.Background(), "charge", func(ctx context.Context) error {
+		key := r.hashKey(backend)
+		prefix := fieldPrefix(bucket, c.Workload)
+		tx := r.client.TxPipeline()
+		incr := func(field string, n int64) {
+			if n > 0 {
+				tx.HIncrBy(ctx, key, prefix+field, n)
+			}
 		}
-	}
-	incr(fieldAPIRequests, c.APIRequests)
-	incr(fieldEgressBytes, c.EgressBytes)
-	incr(fieldIngressBytes, c.IngressBytes)
-	for i := range c.Pools {
-		incr(poolFieldPrefix+c.Pools[i].Name, c.PoolN)
-	}
-	tx.Expire(ctx, key, keyTTL)
-
-	_, err := tx.Exec(ctx)
-	if r.observe("charge", err) != nil {
+		incr(fieldAPIRequests, c.APIRequests)
+		incr(fieldEgressBytes, c.EgressBytes)
+		incr(fieldIngressBytes, c.IngressBytes)
+		for i := range c.Pools {
+			incr(poolFieldPrefix+c.Pools[i].Name, c.PoolN)
+		}
+		tx.Expire(ctx, key, keyTTL)
+		_, err := tx.Exec(ctx)
+		return err
+	})
+	if err != nil {
 		r.local.Charge(backend, bucket, c)
 	}
 }
@@ -256,14 +250,11 @@ func (r *RedisCounterBackend) Charge(backend string, bucket time.Time, c Charge)
 // u: whatever this instance holds locally, plus the shared hash.
 func (r *RedisCounterBackend) Load(backend string, since time.Time, u *core.Usage) {
 	r.local.Load(backend, since, u)
-	if r.inFallback() {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	fields, err := r.client.HGetAll(ctx, r.hashKey(backend)).Result()
-	if r.observe("load", err) == nil {
+	ctx := context.Background()
+	fields, err := roundTrip(ctx, r, "load", func(ctx context.Context) (map[string]string, error) {
+		return r.client.HGetAll(ctx, r.hashKey(backend)).Result()
+	})
+	if err == nil {
 		r.addFields(ctx, fields, func(bucket time.Time, _ string) *core.Usage {
 			if bucket.Before(since) {
 				return nil
@@ -283,9 +274,6 @@ func (r *RedisCounterBackend) Take(ctx context.Context) []core.UsageBatch {
 // every staged hash, including ones an earlier flush on any instance staged
 // and never deleted.
 func (r *RedisCounterBackend) TakeShared(ctx context.Context) []core.UsageBatch {
-	if r.inFallback() {
-		return nil
-	}
 	r.stage(ctx)
 	return r.readStaged(ctx)
 }
@@ -298,12 +286,12 @@ func (r *RedisCounterBackend) Settle(ctx context.Context, b *core.UsageBatch, ap
 		r.local.Settle(ctx, b, applied)
 		return
 	}
-	if !applied || r.inFallback() {
+	if !applied {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
-	defer cancel()
-	_ = r.observe("unstage", r.client.Del(ctx, r.stagedKey(b.Backend, b.ID)).Err())
+	_ = r.call(ctx, "unstage", func(ctx context.Context) error {
+		return r.client.Del(ctx, r.stagedKey(b.Backend, b.ID)).Err()
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -312,16 +300,17 @@ func (r *RedisCounterBackend) Settle(ctx context.Context, b *core.UsageBatch, ap
 
 // stage renames each live hash to a staged key. A charge landing after the
 // rename starts a fresh live hash, so nothing is lost between the two. A
-// missing hash means the backend was not charged and is skipped.
+// missing hash means the backend was not charged, and Redis answered.
 func (r *RedisCounterBackend) stage(ctx context.Context) {
 	for _, backend := range r.backends {
-		octx, cancel := context.WithTimeout(ctx, opTimeout)
-		err := r.client.Rename(octx, r.hashKey(backend), r.stagedKey(backend, rand.Text())).Err()
-		cancel()
-		if err != nil && strings.Contains(err.Error(), "no such key") {
-			continue
-		}
-		if r.observe("stage", err) != nil {
+		err := r.call(ctx, "stage", func(ctx context.Context) error {
+			err := r.client.Rename(ctx, r.hashKey(backend), r.stagedKey(backend, rand.Text())).Err()
+			if err != nil && strings.Contains(err.Error(), "no such key") {
+				return nil
+			}
+			return err
+		})
+		if err != nil {
 			return
 		}
 	}
@@ -345,10 +334,14 @@ func (r *RedisCounterBackend) readStaged(ctx context.Context) []core.UsageBatch 
 func (r *RedisCounterBackend) scanKeys(ctx context.Context, op, match string, fn func(key string) error) error {
 	var cursor uint64
 	for {
-		octx, cancel := context.WithTimeout(ctx, opTimeout)
-		keys, next, err := r.client.Scan(octx, cursor, match, scanCount).Result()
-		cancel()
-		if err := r.observe(op, err); err != nil {
+		var next uint64
+		keys, err := roundTrip(ctx, r, op, func(ctx context.Context) ([]string, error) {
+			var keys []string
+			var err error
+			keys, next, err = r.client.Scan(ctx, cursor, match, scanCount).Result()
+			return keys, err
+		})
+		if err != nil {
 			return err
 		}
 		for _, key := range keys {
@@ -370,10 +363,10 @@ func (r *RedisCounterBackend) readBatch(ctx context.Context, key string) (core.U
 	if !ok {
 		return b, false
 	}
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
-	defer cancel()
-	fields, err := r.client.HGetAll(ctx, key).Result()
-	if r.observe("read_staged", err) != nil || len(fields) == 0 {
+	fields, err := roundTrip(ctx, r, "read_staged", func(ctx context.Context) (map[string]string, error) {
+		return r.client.HGetAll(ctx, key).Result()
+	})
+	if err != nil || len(fields) == 0 {
 		return b, false
 	}
 	parsed := make(map[bucketKey]*core.Usage)
@@ -426,22 +419,40 @@ func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]s
 // FALLBACK
 // -------------------------------------------------------------------------
 
-// inFallback reports whether the backend is serving from local counters,
-// which it does while the breaker is open.
-func (r *RedisCounterBackend) inFallback() bool {
-	return !r.cb.IsHealthy()
+// ErrRedisUnavailable is the Redis breaker's refusal: while it is open no call
+// is sent, the counters run locally, and shared state has nowhere to go.
+var ErrRedisUnavailable = errors.New("redis unavailable")
+
+// roundTrip sends one Redis call under the operation timeout, counted as op on
+// the operations metric and the breaker. While the breaker is open nothing is
+// sent and ErrRedisUnavailable is returned.
+func roundTrip[T any](ctx context.Context, r *RedisCounterBackend, op string, fn func(context.Context) (T, error)) (T, error) {
+	if err := r.cb.PreCheck(); err != nil {
+		var zero T
+		return zero, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	res, err := fn(ctx)
+	return res, r.observe(op, err)
 }
 
-// onStateChange moves the gauge and the log with the breaker: open means
-// local counters, closed means Redis again. The charges kept locally
-// meanwhile need nothing here: the usage flush writes them to the store.
+// call is roundTrip for a call that returns only an error.
+func (r *RedisCounterBackend) call(ctx context.Context, op string, fn func(context.Context) error) error {
+	_, err := roundTrip(ctx, r, op, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, fn(ctx)
+	})
+	return err
+}
+
+// onStateChange logs the switch with the breaker: open means local counters,
+// closed means Redis again. The charges kept locally meanwhile need nothing
+// here: the usage flush writes them to the store.
 func (r *RedisCounterBackend) onStateChange(info breaker.StateChangeInfo) {
 	if info.To == breaker.StateClosed {
-		telemetry.RedisFallbackActive.Set(0)
 		r.log.InfoContext(context.Background(), "Redis counter backend recovered")
 		return
 	}
-	telemetry.RedisFallbackActive.Set(1)
 	r.log.WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
 }
 
@@ -452,11 +463,7 @@ func (r *RedisCounterBackend) observe(op string, err error) error {
 	if errors.Is(err, redis.Nil) {
 		err = nil
 	}
-	status := "success"
-	if err != nil {
-		status = "error"
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues(op, status).Inc()
+	telemetry.RedisOperationsTotal.WithLabelValues(op, telemetry.StatusOf(err)).Inc()
 	_ = r.cb.PostCheck(err)
 	return err
 }
@@ -497,43 +504,25 @@ func (r *RedisCounterBackend) sharedKey(name string) string {
 // SHARED STATE
 // -------------------------------------------------------------------------
 
-// ErrSharedStateUnavailable is returned while Redis is in fallback, when
-// there is nowhere shared to write to or read from.
-var ErrSharedStateUnavailable = errors.New("redis shared state unavailable")
-
 // PutShared stores value under name for every instance to read, expiring
 // after ttl.
 func (r *RedisCounterBackend) PutShared(ctx context.Context, name string, value []byte, ttl time.Duration) error {
-	if r.inFallback() {
-		return ErrSharedStateUnavailable
-	}
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
-	defer cancel()
-	return r.observe("set", r.client.Set(ctx, r.sharedKey(name), value, ttl).Err())
+	return r.call(ctx, "set", func(ctx context.Context) error {
+		return r.client.Set(ctx, r.sharedKey(name), value, ttl).Err()
+	})
 }
 
 // GetShared returns the value stored under name, or nil when there is none.
 func (r *RedisCounterBackend) GetShared(ctx context.Context, name string) ([]byte, error) {
-	if r.inFallback() {
-		return nil, ErrSharedStateUnavailable
-	}
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
-	defer cancel()
-
-	val, err := r.client.Get(ctx, r.sharedKey(name)).Bytes()
-	if err := r.observe("get", err); err != nil {
-		return nil, err
-	}
-	return val, nil
+	return roundTrip(ctx, r, "get", func(ctx context.Context) ([]byte, error) {
+		return r.client.Get(ctx, r.sharedKey(name)).Bytes()
+	})
 }
 
 // ListShared returns every value stored under a name starting with prefix,
 // keyed by its full name. A value that expires between the scan and the read
 // is left out.
 func (r *RedisCounterBackend) ListShared(ctx context.Context, prefix string) (map[string][]byte, error) {
-	if r.inFallback() {
-		return nil, ErrSharedStateUnavailable
-	}
 	out := make(map[string][]byte)
 	err := r.scanKeys(ctx, "scan_shared", globEscaper.Replace(r.sharedKey(prefix))+"*", func(key string) error {
 		name := strings.TrimPrefix(key, r.sharedKey(""))
@@ -552,12 +541,9 @@ func (r *RedisCounterBackend) ListShared(ctx context.Context, prefix string) (ma
 // PublishShared sends payload to every instance watching channel. An instance
 // that is not subscribed at that moment never receives it.
 func (r *RedisCounterBackend) PublishShared(ctx context.Context, channel string, payload []byte) error {
-	if r.inFallback() {
-		return ErrSharedStateUnavailable
-	}
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
-	defer cancel()
-	return r.observe("publish", r.client.Publish(ctx, r.sharedKey(channel), payload).Err())
+	return r.call(ctx, "publish", func(ctx context.Context) error {
+		return r.client.Publish(ctx, r.sharedKey(channel), payload).Err()
+	})
 }
 
 // WatchShared calls onMessage with the payload of every message on channel,

@@ -58,7 +58,7 @@ func TestNewRedisCounterBackend_HappyPath(t *testing.T) {
 	if r.log == nil {
 		t.Fatal("log field left nil")
 	}
-	if r.inFallback() {
+	if inFallback(r) {
 		t.Error("backend started in fallback with Redis reachable")
 	}
 	if err := r.Close(); err != nil {
@@ -85,7 +85,7 @@ func TestNewRedisCounterBackend_UnreachableStartsInFallback(t *testing.T) {
 	r := NewRedisCounterBackend(mock, cfg, []string{"b1"})
 	defer func() { _ = r.Close() }()
 
-	if !r.inFallback() {
+	if !inFallback(r) {
 		t.Fatal("backend not in fallback with Redis unreachable at startup")
 	}
 	r.Charge(backendB1, oldBucket, Charge{APIRequests: 5})
@@ -95,8 +95,8 @@ func TestNewRedisCounterBackend_UnreachableStartsInFallback(t *testing.T) {
 	if got := r.TakeShared(context.Background()); got != nil {
 		t.Errorf("TakeShared in fallback = %+v, want nil", got)
 	}
-	if _, err := r.GetShared(context.Background(), "x"); !errors.Is(err, ErrSharedStateUnavailable) {
-		t.Errorf("GetShared err = %v, want ErrSharedStateUnavailable", err)
+	if _, err := r.GetShared(context.Background(), "x"); !errors.Is(err, ErrRedisUnavailable) {
+		t.Errorf("GetShared err = %v, want ErrRedisUnavailable", err)
 	}
 }
 
@@ -150,11 +150,11 @@ func TestSharedState_PutAndGet(t *testing.T) {
 // redis.Nil answer counts as success.
 func TestObserve_FailureOpensFallback(t *testing.T) {
 	r := &RedisCounterBackend{cb: newTestCB(), local: NewLocalCounterBackend([]string{"b1"}), log: slog.Default()}
-	if err := r.observe("get", redis.Nil); err != nil || r.inFallback() {
-		t.Fatalf("observe(redis.Nil) = %v, fallback %v; want nil and no fallback", err, r.inFallback())
+	if err := r.observe("get", redis.Nil); err != nil || inFallback(r) {
+		t.Fatalf("observe(redis.Nil) = %v, fallback %v; want nil and no fallback", err, inFallback(r))
 	}
-	if err := r.observe("get", errors.New("boom")); err == nil || !r.inFallback() {
-		t.Fatalf("observe(boom) = %v, fallback %v; want the error and fallback", err, r.inFallback())
+	if err := r.observe("get", errors.New("boom")); err == nil || !inFallback(r) {
+		t.Fatalf("observe(boom) = %v, fallback %v; want the error and fallback", err, inFallback(r))
 	}
 }
 
@@ -167,7 +167,7 @@ func TestRecovery_LeavesLocalChargesForTheFlush(t *testing.T) {
 
 	r.cb.Recover()
 
-	if r.inFallback() {
+	if inFallback(r) {
 		t.Error("expected fallback to be cleared after recovery")
 	}
 	batches := r.Take(context.Background())
@@ -176,7 +176,14 @@ func TestRecovery_LeavesLocalChargesForTheFlush(t *testing.T) {
 	}
 }
 
-// newTestCB creates a closed circuit breaker that opens on the first failure.
+// newTestCB creates a closed circuit breaker that opens on the first failure,
+// refusing with the backend's own sentinel.
 func newTestCB() *breaker.CircuitBreaker {
-	return breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 1, Timeout: time.Millisecond, IsError: func(err error) bool { return err != nil }, Sentinel: errors.New("redis unavailable")})
+	return breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 1, Timeout: time.Millisecond, IsError: func(err error) bool { return err != nil }, Sentinel: ErrRedisUnavailable})
+}
+
+// inFallback reports whether r is serving from local counters, which it does
+// while its breaker is open.
+func inFallback(r *RedisCounterBackend) bool {
+	return !r.cb.IsHealthy()
 }

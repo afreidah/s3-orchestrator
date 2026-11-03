@@ -21,6 +21,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -109,7 +110,7 @@ func TestIsUnsupported(t *testing.T) {
 func TestUnsupported_ThroughBreaker(t *testing.T) {
 	t.Parallel()
 	be := newTestBackend(t, copyServer(http.StatusNotImplemented, "NotImplemented", new(atomic.Int32)))
-	cb := NewCircuitBreakerBackend(be, CircuitBreakerConfig{Name: "test", Threshold: 1, Timeout: time.Minute})
+	cb := NewCircuitBreakerBackend(be, "test", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 
 	if _, err := cb.CopyObject(t.Context(), "src", "dst", "", nil); !errors.Is(err, ErrCopyNotSupported) {
 		t.Fatalf("err = %v, want ErrCopyNotSupported", err)

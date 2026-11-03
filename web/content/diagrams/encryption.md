@@ -169,7 +169,7 @@ window.s3oDiagram = {
     CTIN: {
       title: 'Ciphertext (Full Object)',
       badge: 'entry', badgeText: 'decrypt entry',
-      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. The <code>Encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code> method handles the complete decryption flow.</p><p>The wrapped DEK and keyID are retrieved from the metadata store along with the object location metadata.</p><p>Before decrypting a read that starts at byte 0, the GET path peeks at the first bytes for the envelope signature. If the row\'s <code>encrypted</code> flag disagrees with what is stored, that copy is skipped and the read fails over to the next one, rather than serving ciphertext or failing to decrypt plaintext.</p><p class="ac-metric">Metric: s3o_encryption_flag_mismatch_total{op="get"}</p>'
+      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. <code>Encryptor.DecryptStored(ctx, body, packedKey, keyID, size, nil)</code> handles the complete decryption flow.</p><p>The packed key blob and keyID are retrieved from the metadata store along with the object location metadata.</p><p>Before decrypting a read that starts at byte 0, the GET path peeks at the first bytes for the envelope signature. If the row\'s <code>encrypted</code> flag disagrees with what is stored, that copy is skipped and the read fails over to the next one, rather than serving ciphertext or failing to decrypt plaintext.</p><p class="ac-metric">Metric: s3o_encryption_flag_mismatch_total{op="get"}</p>'
     },
     UNWRAP: {
       title: 'UnwrapDEK via KeyProvider',
@@ -179,7 +179,7 @@ window.s3oDiagram = {
     PARSE: {
       title: 'Parse 32-Byte Header',
       badge: 'process', badgeText: 'header parsing',
-      body: '<p><code>ParseHeader(r)</code> reads 32 bytes, validates the <code>SENC</code> magic and version <code>0x01</code>, extracts chunk size (big-endian uint32 at offset 5) and base nonce (12 bytes at offset 9).</p><p>Returns error on invalid magic, unsupported version, or a chunk size over the 1 MiB maximum, preventing decryption of corrupted or non-encrypted data. Decryption reads chunks of the size the header declares, not the configured <code>chunk_size</code>.</p>'
+      body: '<p>The header parser reads 32 bytes, validates the <code>SENC</code> magic and version <code>0x01</code>, extracts chunk size (big-endian uint32 at offset 5) and base nonce (12 bytes at offset 9).</p><p>Returns error on invalid magic, unsupported version, or a chunk size over the 1 MiB maximum, preventing decryption of corrupted or non-encrypted data. Decryption reads chunks of the size the header declares, not the configured <code>chunk_size</code>.</p>'
     },
     DCHUNK: {
       title: 'Read Ciphertext Chunk',
@@ -209,7 +209,7 @@ window.s3oDiagram = {
     RANGE: {
       title: 'Range Request (start-end)',
       badge: 'entry', badgeText: 'range entry',
-      body: '<p>HTTP Range request (<code>Range: bytes=X-Y</code>) for an encrypted object. The <code>DecryptRange()</code> method handles translating plaintext offsets to ciphertext offsets.</p><p>The base nonce is retrieved from the DB via <code>UnpackKeyData()</code> (stored as <code>baseNonce || wrappedDEK</code>), avoiding a round trip to fetch the ciphertext header.</p>'
+      body: '<p>HTTP Range request (<code>Range: bytes=X-Y</code>) for an encrypted object. <code>CiphertextRange()</code> translates plaintext offsets to ciphertext offsets, and <code>DecryptStored()</code> with that range decrypts the fetched chunks.</p><p>The base nonce is retrieved from the DB via <code>UnpackKeyData()</code> (stored as <code>baseNonce || wrappedDEK</code>), avoiding a round trip to fetch the ciphertext header.</p>'
     },
     XLATE: {
       title: 'CiphertextRange Translation',
@@ -234,7 +234,7 @@ window.s3oDiagram = {
     SLICE: {
       title: 'Skip + Limit to Byte Range',
       badge: 'filter', badgeText: 'byte slicing',
-      body: '<p>Two-step byte-level slicing from <code>DecryptRange()</code>:</p><p>1. <code>io.CopyN(io.Discard, dr, rng.SliceStart)</code> &mdash; skip bytes within the first chunk before the requested offset<br>2. <code>io.LimitReader(dr, rng.SliceLen)</code> &mdash; cap output to exactly the requested byte count</p><p>Result: the caller receives exactly <code>end - start + 1</code> plaintext bytes matching the original Range request semantics.</p>'
+      body: '<p>Two-step byte-level slicing by <code>ioutilx.Window</code>:</p><p>1. <code>io.CopyN(io.Discard, dr, rng.SliceStart)</code> &mdash; skip bytes within the first chunk before the requested offset<br>2. <code>io.LimitReader(dr, rng.SliceLen)</code> &mdash; cap output to exactly the requested byte count</p><p>Result: the caller receives exactly <code>end - start + 1</code> plaintext bytes matching the original Range request semantics.</p>'
     },
     ROUT: {
       title: 'Range Plaintext Bytes',

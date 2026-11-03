@@ -164,9 +164,7 @@ func newEncryptReader(src io.Reader, dek []byte, chunkSize int, bufs *chunkBuffe
 	}
 
 	baseNonce := make([]byte, NonceSize)
-	if _, err := rand.Read(baseNonce); err != nil {
-		return nil, fmt.Errorf("nonce: %w", err)
-	}
+	_, _ = rand.Read(baseNonce)
 
 	// Build header into the reusable header buffer.
 	hdr := bufs.header[:HeaderSize]
@@ -323,20 +321,19 @@ func deriveNonce(dst, base []byte, idx uint64) {
 // HEADER PARSING
 // -------------------------------------------------------------------------
 
-// ParseHeader reads and validates the 32-byte encryption header from r.
+// parseHeader reads and validates the 32-byte encryption header from r.
 // Returns the chunk size and base nonce encoded in the header.
-func ParseHeader(r io.Reader) (chunkSize int, baseNonce []byte, err error) {
+func parseHeader(r io.Reader) (chunkSize int, baseNonce []byte, err error) {
 	hdr := make([]byte, HeaderSize)
 	if _, err := io.ReadFull(r, hdr); err != nil {
 		return 0, nil, fmt.Errorf("read header: %w", err)
 	}
-	return ParseHeaderBytes(hdr)
+	return parseHeaderBytes(hdr)
 }
 
-// ParseHeaderBytes validates an already-read 32-byte encryption header and
-// returns the chunk size and base nonce encoded in it. Callers that fetched
-// the header as part of a larger ranged read use this to avoid a second read.
-func ParseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
+// parseHeaderBytes validates an already-read 32-byte encryption header and
+// returns the chunk size and base nonce encoded in it.
+func parseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
 	if len(hdr) < HeaderSize {
 		return 0, nil, fmt.Errorf("short encryption header: %d bytes", len(hdr))
 	}
@@ -366,7 +363,7 @@ func ParseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
 // establishes identity, not authenticity: forged header bytes still fail the
 // AEAD tag on the first real read.
 func SameEncryptionOperation(header, packedKey []byte) bool {
-	_, headerNonce, err := ParseHeaderBytes(header)
+	_, headerNonce, err := parseHeaderBytes(header)
 	if err != nil {
 		return false
 	}
@@ -378,13 +375,8 @@ func SameEncryptionOperation(header, packedKey []byte) bool {
 }
 
 // HasEnvelopeMagic reports whether b begins with the envelope signature.
-// b shorter than the signature is never an envelope.
 func HasEnvelopeMagic(b []byte) bool {
-	if len(b) < len(headerMagic) {
-		return false
-	}
-	return b[0] == headerMagic[0] && b[1] == headerMagic[1] &&
-		b[2] == headerMagic[2] && b[3] == headerMagic[3]
+	return bytes.HasPrefix(b, headerMagic[:])
 }
 
 // PeekEnvelope reports whether r's stream begins with the envelope signature,

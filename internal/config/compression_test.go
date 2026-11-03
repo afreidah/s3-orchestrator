@@ -247,16 +247,15 @@ func TestCompressionConfig_LevelsMatchEncoder(t *testing.T) {
 	}
 }
 
-// TestCompressionConfig_DefaultLevelMatchesCodec verifies the default name
-// resolves to the level the codec documents as its default.
-func TestCompressionConfig_DefaultLevelMatchesCodec(t *testing.T) {
+// TestCompressionConfig_DefaultLevelIsZstdThree verifies the default name
+// resolves to zstd level 3, the level the default is documented as.
+func TestCompressionConfig_DefaultLevelIsZstdThree(t *testing.T) {
 	t.Parallel()
 	ok, parsed := zstd.EncoderLevelFromString(DefaultCompressionLevel)
 	if !ok {
 		t.Fatalf("default level %q is not an encoder level", DefaultCompressionLevel)
 	}
-	if want := zstd.EncoderLevelFromZstd(compression.DefaultLevel); parsed != want {
-		t.Errorf("default level %q resolves to %v, codec DefaultLevel %d resolves to %v",
-			DefaultCompressionLevel, parsed, compression.DefaultLevel, want)
+	if want := zstd.EncoderLevelFromZstd(3); parsed != want {
+		t.Errorf("default level %q resolves to %v, want zstd level 3 (%v)", DefaultCompressionLevel, parsed, want)
 	}
 }

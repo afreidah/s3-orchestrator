@@ -18,7 +18,6 @@ package breaker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -51,14 +50,6 @@ func (s State) String() string {
 		return "unknown"
 	}
 }
-
-// -------------------------------------------------------------------------
-// SENTINEL ERRORS
-// -------------------------------------------------------------------------
-
-// ErrBackendUnavailable is returned by CircuitBreakerBackend when the circuit
-// is open (backend is known to be unreachable or returning errors).
-var ErrBackendUnavailable = errors.New("backend unavailable")
 
 // -------------------------------------------------------------------------
 // CIRCUIT BREAKER
@@ -258,7 +249,6 @@ func (cb *CircuitBreaker) transition(to State) {
 	case StateOpen:
 		cb.openedAt = time.Now()
 		cb.log.WarnContext(context.Background(), "opened: failure threshold reached",
-			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"failures", cb.failures,
@@ -267,7 +257,6 @@ func (cb *CircuitBreaker) transition(to State) {
 
 	case StateClosed:
 		cb.log.InfoContext(context.Background(), "closed: recovered",
-			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"degraded_duration", openFor.Round(time.Millisecond).String())

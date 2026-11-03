@@ -18,8 +18,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // healthCheckTimeout bounds one check so a hung dependency cannot stall the
@@ -59,7 +57,7 @@ func NewRecoveryProber(cb *CircuitBreaker, r Recovery) *RecoveryProber {
 	return &RecoveryProber{
 		breaker:  cb,
 		recovery: r,
-		log:      slog.Default().With(logfmt.Component("circuit_breaker"), "breaker_name", cb.Name()),
+		log:      cb.log,
 		now:      time.Now,
 	}
 }

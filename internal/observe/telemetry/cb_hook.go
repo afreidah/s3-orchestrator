@@ -14,6 +14,8 @@ import (
 	"maps"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 )
@@ -36,11 +38,11 @@ func NewCircuitBreakerHook(name string) func(breaker.StateChangeInfo) {
 // no event, since each of the backend's breakers publishes its own through
 // BackendCircuitEvent.
 func NewBackendCircuitHook(name string) func(breaker.StateChangeInfo) {
-	CircuitBreakerState.WithLabelValues(name).Set(float64(breaker.StateClosed))
+	circuitBreakerState.WithLabelValues(name).Set(float64(breaker.StateClosed))
 
 	return func(info breaker.StateChangeInfo) {
-		CircuitBreakerState.WithLabelValues(info.Name).Set(float64(info.To))
-		CircuitBreakerTransitionsTotal.WithLabelValues(info.Name, info.From.String(), info.To.String()).Inc()
+		circuitBreakerState.WithLabelValues(info.Name).Set(float64(info.To))
+		circuitBreakerTransitionsTotal.WithLabelValues(info.Name, info.From.String(), info.To.String()).Inc()
 	}
 }
 
@@ -50,17 +52,18 @@ func BackendCircuitEvent(backend, call string, info breaker.StateChangeInfo) {
 	emitCircuitEvent(info, backend, map[string]any{"call": call})
 }
 
-// NewDatabaseBreakerHook chains the standard breaker hook with the
-// DegradedModeActive gauge (1 when not closed, 0 when closed).
-func NewDatabaseBreakerHook(name string) func(breaker.StateChangeInfo) {
-	DegradedModeActive.Set(0)
+// NewDependencyBreakerHook chains the standard breaker hook with a gauge that
+// says the dependency the breaker guards is down: 1 while the breaker is not
+// closed, 0 while it is.
+func NewDependencyBreakerHook(name string, down prometheus.Gauge) func(breaker.StateChangeInfo) {
+	down.Set(0)
 	standard := NewCircuitBreakerHook(name)
 	return func(info breaker.StateChangeInfo) {
 		standard(info)
 		if info.To == breaker.StateClosed {
-			DegradedModeActive.Set(0)
+			down.Set(0)
 		} else {
-			DegradedModeActive.Set(1)
+			down.Set(1)
 		}
 	}
 }

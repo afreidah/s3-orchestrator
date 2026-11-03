@@ -40,7 +40,7 @@ const scrubChunk = compression.MinChunkSize
 // newScrubCodec builds a codec and closes it with the test.
 func newScrubCodec(t *testing.T) *compression.Codec {
 	t.Helper()
-	c, err := compression.NewCodec(compression.DefaultLevel, scrubChunk)
+	c, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, scrubChunk)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

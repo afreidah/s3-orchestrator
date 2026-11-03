@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	vault "github.com/hashicorp/vault/api"
@@ -35,7 +34,8 @@ import (
 // VaultKeyProvider wraps and unwraps DEKs via the Vault Transit encrypt and
 // decrypt endpoints. A background goroutine renews the token before expiry
 // (static token mode) or re-reads it from a file (Nomad workload identity
-// mode). The provider is safe for concurrent use.
+// mode). The provider is safe for concurrent use: the Vault client locks its
+// own token.
 type VaultKeyProvider struct {
 	client        *vault.Client
 	keyName       string
@@ -43,7 +43,6 @@ type VaultKeyProvider struct {
 	keyID         string
 	tokenFile     string
 	renewInterval time.Duration
-	mu            sync.RWMutex
 	cancel        context.CancelFunc
 	log           *slog.Logger
 }
@@ -108,23 +107,9 @@ func (p *VaultKeyProvider) Close() { p.cancel() }
 // WrapDEK sends the plaintext DEK to Vault Transit for encryption and returns
 // the Vault ciphertext blob as the wrapped DEK.
 func (p *VaultKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	path := fmt.Sprintf("%s/encrypt/%s", p.mountPath, p.keyName)
-	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]any{
-		"plaintext": base64.StdEncoding.EncodeToString(dek),
-	})
+	ciphertext, err := p.transit(ctx, "encrypt", "plaintext", base64.StdEncoding.EncodeToString(dek), "ciphertext")
 	if err != nil {
-		return nil, "", fmt.Errorf("vault encrypt: %w", err)
-	}
-	if secret == nil || secret.Data == nil {
-		return nil, "", fmt.Errorf("vault encrypt: empty response")
-	}
-
-	ciphertext, ok := secret.Data["ciphertext"].(string)
-	if !ok || ciphertext == "" {
-		return nil, "", fmt.Errorf("vault encrypt: ciphertext not found in response")
+		return nil, "", err
 	}
 	return []byte(ciphertext), p.keyID, nil
 }
@@ -132,30 +117,32 @@ func (p *VaultKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, str
 // UnwrapDEK sends a Vault Transit ciphertext blob for decryption and returns
 // the recovered plaintext DEK.
 func (p *VaultKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, _ string) ([]byte, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	path := fmt.Sprintf("%s/decrypt/%s", p.mountPath, p.keyName)
-	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]any{
-		"ciphertext": string(wrappedDEK),
-	})
+	plaintext, err := p.transit(ctx, "decrypt", "ciphertext", string(wrappedDEK), "plaintext")
 	if err != nil {
-		return nil, fmt.Errorf("vault decrypt: %w", err)
+		return nil, err
 	}
-	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("vault decrypt: empty response")
-	}
-
-	plaintext, ok := secret.Data["plaintext"].(string)
-	if !ok || plaintext == "" {
-		return nil, fmt.Errorf("vault decrypt: plaintext not found in response")
-	}
-
 	dek, err := base64.StdEncoding.DecodeString(plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("vault decrypt: decode plaintext: %w", err)
 	}
 	return dek, nil
+}
+
+// transit sends one value to a Transit endpoint (encrypt or decrypt) of the
+// configured key and returns the named field of the response.
+func (p *VaultKeyProvider) transit(ctx context.Context, op, in, value, out string) (string, error) {
+	secret, err := p.client.Logical().WriteWithContext(ctx, p.mountPath+"/"+op+"/"+p.keyName, map[string]any{in: value})
+	if err != nil {
+		return "", fmt.Errorf("vault %s: %w", op, err)
+	}
+	if secret == nil || secret.Data == nil {
+		return "", fmt.Errorf("vault %s: empty response", op)
+	}
+	result, ok := secret.Data[out].(string)
+	if !ok || result == "" {
+		return "", fmt.Errorf("vault %s: %s not found in response", op, out)
+	}
+	return result, nil
 }
 
 // -------------------------------------------------------------------------
@@ -179,17 +166,9 @@ func (p *VaultKeyProvider) refreshToken(ctx context.Context) {
 }
 
 // renewToken attempts to extend the current token's TTL via Vault's
-// token/renew-self endpoint. The network call runs without the mutex
-// held so concurrent WrapDEK/UnwrapDEK calls are not blocked by slow
-// or unresponsive Vault instances.
+// token/renew-self endpoint.
 func (p *VaultKeyProvider) renewToken(ctx context.Context) error {
-	// Read the current client reference under the read lock. The Vault
-	// client is safe for concurrent use; only SetToken mutates state.
-	p.mu.RLock()
-	client := p.client
-	p.mu.RUnlock()
-
-	secret, err := client.Auth().Token().RenewSelf(0)
+	secret, err := p.client.Auth().Token().RenewSelfWithContext(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("token renewal failed: %w", err)
 	}
@@ -208,8 +187,6 @@ func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.client.SetToken(token)
 	p.log.DebugContext(ctx, "Vault token reloaded from file", "path", p.tokenFile)
 	return nil

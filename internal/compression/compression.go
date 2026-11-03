@@ -30,6 +30,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
 // -------------------------------------------------------------------------
@@ -54,12 +55,6 @@ const (
 	Algorithm     = "zstd"
 	FormatVersion = 1
 )
-
-// DefaultLevel is zstd level 3. Measured against levels 1, 7 and 11, it sits at
-// the point where compression speed has not yet collapsed (177 MB/s against
-// 22 MB/s at level 11) for a ratio within 3% of the best. Decompression speed
-// does not degrade with level, so the trade is entirely on the write side.
-const DefaultLevel = 3
 
 // decoderMaxMemory caps what a single decode may allocate, so a corrupt or
 // hostile frame declaring an enormous window cannot exhaust the process.
@@ -95,27 +90,16 @@ type Codec struct {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewCodec builds a codec at the given zstd level and chunk size. zstd
-// collapses levels into four buckets (below 3, 3 to 5, 6 to 9, 10 and above).
-// A chunk size change affects new objects only.
-func NewCodec(level, chunkSize int) (*Codec, error) {
-	return newCodec(zstd.EncoderLevelFromZstd(level), chunkSize)
-}
-
-// NewCodecForLevel builds a codec from the level name the config exposes.
-// Naming the levels is the only honest way to offer the choice: zstd collapses
-// its numeric range into four buckets, so a config taking 1 to 19 would present
-// fifteen settings that change nothing.
+// NewCodecForLevel builds a codec from the level name the config exposes and
+// the chunk size, which affects new objects only. Naming the levels is the
+// only honest way to offer the choice: zstd collapses its numeric range into
+// four buckets, so a config taking 1 to 19 would present fifteen settings that
+// change nothing.
 func NewCodecForLevel(name string, chunkSize int) (*Codec, error) {
 	ok, level := zstd.EncoderLevelFromString(name)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownLevel, name)
 	}
-	return newCodec(level, chunkSize)
-}
-
-// newCodec is the shared constructor body behind both level forms.
-func newCodec(level zstd.EncoderLevel, chunkSize int) (*Codec, error) {
 	if chunkSize < MinChunkSize || chunkSize > MaxChunkSize {
 		return nil, fmt.Errorf("%w: %d not in [%d, %d]",
 			ErrChunkSizeRange, chunkSize, MinChunkSize, MaxChunkSize)
@@ -166,7 +150,7 @@ var frameMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
 // file matches too, so this only filters out plaintext before InspectStored
 // fetches the tail.
 func HasFrameMagic(b []byte) bool {
-	return len(b) >= len(frameMagic) && bytes.Equal(b[:len(frameMagic)], frameMagic)
+	return bytes.HasPrefix(b, frameMagic)
 }
 
 // WorthStoring reports whether an encoded object shrank enough to be stored in
@@ -179,9 +163,6 @@ func WorthStoring(logicalSize, encodedSize int64, minRatio float64) bool {
 	return float64(encodedSize) <= float64(logicalSize)*minRatio
 }
 
-// ChunkSize reports the logical chunk size new objects are written at.
-func (c *Codec) ChunkSize() int { return c.chunkSize }
-
 // Close releases the encoder and decoder. A Codec is process-lifetime, so this
 // exists for tests and for a clean shutdown rather than per-request use.
 func (c *Codec) Close() {
@@ -189,11 +170,12 @@ func (c *Codec) Close() {
 	c.dec.Close()
 }
 
-// Compress encodes src into dst and reports the physical bytes written. The
-// seekable writer emits one frame per Write, so a full chunk is accumulated
-// before each call; only io.EOF ends the input, never a short read.
+// Compress encodes src into dst and reports the physical bytes written: what
+// the backend stores and what quota is charged for. The seekable writer emits
+// one frame per Write, so a full chunk is accumulated before each call; only
+// io.EOF ends the input, never a short read.
 func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
-	counter := &countingWriter{w: dst}
+	counter := &ioutilx.CountingWriter{W: dst}
 	w, err := seekable.NewWriter(counter, c.enc, seekable.WithWriterLogger(c.log))
 	if err != nil {
 		return 0, fmt.Errorf("open seekable writer: %w", err)
@@ -208,7 +190,7 @@ func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 		if n > 0 {
 			if _, err := w.Write(buf[:n]); err != nil {
 				_ = w.Close()
-				return counter.n, fmt.Errorf("write chunk: %w", err)
+				return counter.N, fmt.Errorf("write chunk: %w", err)
 			}
 		}
 		if readErr != nil {
@@ -216,16 +198,16 @@ func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 				break
 			}
 			_ = w.Close()
-			return counter.n, fmt.Errorf("read source: %w", readErr)
+			return counter.N, fmt.Errorf("read source: %w", readErr)
 		}
 	}
 
 	// Close writes the seek table, so its error is not incidental: without the
 	// table the object is still valid zstd but no longer seekable.
 	if err := w.Close(); err != nil {
-		return counter.n, fmt.Errorf("finalize seek table: %w", err)
+		return counter.N, fmt.Errorf("finalize seek table: %w", err)
 	}
-	return counter.n, nil
+	return counter.N, nil
 }
 
 // Decompress returns a reader over the logical bytes of a stored object. It
@@ -251,35 +233,18 @@ func (c *Codec) DecompressStream(r io.Reader) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, classifyDecode(fmt.Errorf("open zstd reader: %w", err))
 	}
-	return &streamGuard{inner: dec.IOReadCloser()}, nil
+	return &streamGuard{dec.IOReadCloser()}, nil
 }
 
 // streamGuard classifies decode errors from a front-to-back read the way
 // decodeGuard does for a seekable one. Separate because a stream has no ReadAt
-// or Seek to carry.
+// or Seek to carry. Close passes through.
 type streamGuard struct {
-	inner io.ReadCloser
+	io.ReadCloser
 }
 
 // Read implements io.Reader.
 func (g *streamGuard) Read(p []byte) (int, error) {
-	n, err := g.inner.Read(p)
+	n, err := g.ReadCloser.Read(p)
 	return n, classifyDecode(err)
-}
-
-// Close implements io.Closer.
-func (g *streamGuard) Close() error { return g.inner.Close() }
-
-// countingWriter totals the bytes written through it, which is the object's
-// physical size: what the backend stores and what quota is charged for.
-type countingWriter struct {
-	w io.Writer
-	n int64
-}
-
-// Write implements io.Writer.
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
 }

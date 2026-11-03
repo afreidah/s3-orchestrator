@@ -13,8 +13,6 @@ package sharedstate
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -37,9 +35,9 @@ func (v Value[T]) Put(ctx context.Context, val *T) error {
 	if store == nil {
 		return nil
 	}
-	data, err := json.Marshal(val)
+	data, err := encode(v.name, val)
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", v.name, err)
+		return err
 	}
 	return store.PutShared(ctx, v.name, data, v.ttl)
 }
@@ -56,8 +54,8 @@ func (v Value[T]) Get(ctx context.Context) (*T, error) {
 		return nil, err
 	}
 	val := new(T)
-	if err := json.Unmarshal(data, val); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", v.name, err)
+	if err := decode(v.name, data, val); err != nil {
+		return nil, err
 	}
 	return val, nil
 }

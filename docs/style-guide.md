@@ -1044,9 +1044,9 @@ Background workers (rebalancer, replicator, cleanup) log errors and continue rat
 
 ## Logging and Audit
 
-All logs are structured `log/slog` JSON. The handler chain (JSON, then
-the error handler, then `telemetry.TraceHandler`) is built in
-`startObservability` in `internal/runtime/observability.go`. The full operational
+All logs are structured `log/slog` JSON. The handler chain is built by
+`telemetry.NewLogHandler`, which `startObservability` in
+`internal/runtime/observability.go` installs. The full operational
 logging conventions (helper package, attribute glossary, banned keys,
 component scoping, outcome rollups) live in
 [`docs/contributing/logging.md`](contributing/logging.md). This
@@ -1161,7 +1161,7 @@ Request IDs flow through context via `audit.WithRequestID` /
   mint a fresh ID with `audit.NewID()`. Periodic ticks do not: a tick is
   not an operator action.
 - `trace_id` and `span_id` are automatically injected into JSON log
-  output by `telemetry.TraceHandler` for any log call with an active
+  output by the log handler for any log call with an active
   span in context - use `*Context` slog variants
   (`InfoContext`/`WarnContext`/`ErrorContext`).
 
@@ -1272,7 +1272,7 @@ if err != nil {
 
 Every `slog.InfoContext`, `WarnContext`, `ErrorContext` call inside an
 active span automatically attaches `trace_id` and `span_id` fields via
-`telemetry.TraceHandler`. This is why context-aware slog must be used
+the log handler. This is why context-aware slog must be used
 (see Logging and Audit). Never use `slog.Info` (no context) when an
 active span exists - that produces a log line with no trace correlation.
 

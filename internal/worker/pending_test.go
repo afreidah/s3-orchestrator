@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -398,7 +399,7 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	rawBE := backendtest.NewMockCheckedBackend(ctrl)
-	cb := backend.NewCircuitBreakerBackend(rawBE, backend.CircuitBreakerConfig{Name: "broken", Threshold: 1, Timeout: time.Hour})
+	cb := backend.NewCircuitBreakerBackend(rawBE, "broken", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour})
 
 	// Trip the breaker: one HEAD failure with threshold=1 opens it.
 	rawBE.EXPECT().HeadObject(gomock.Any(), gomock.Any()).Return(nil, errors.New("backend down"))

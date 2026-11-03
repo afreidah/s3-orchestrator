@@ -17,6 +17,8 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/usagestat"
 )
 
 // TestTally_ConcurrentAdds verifies concurrent charges all land.
@@ -26,7 +28,7 @@ func TestTally_ConcurrentAdds(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			TallyOf(ctx).Add("b1", BackendUsage{APIRequests: 1, EgressBytes: 10})
+			TallyOf(ctx).Add("b1", usagestat.Stat{APIRequests: 1, EgressBytes: 10})
 		})
 	}
 	wg.Wait()
@@ -43,8 +45,8 @@ func TestTally_NestedAddsReachEnclosing(t *testing.T) {
 	ctx, outer := WithTally(context.Background())
 	inner, in := WithTally(ctx)
 
-	TallyOf(inner).Add("b1", BackendUsage{IngressBytes: 7})
-	TallyOf(ctx).Add("b2", BackendUsage{APIRequests: 1})
+	TallyOf(inner).Add("b1", usagestat.Stat{IngressBytes: 7})
+	TallyOf(ctx).Add("b2", usagestat.Stat{APIRequests: 1})
 
 	if got, want := in.Usage(), (Usage{"b1": {IngressBytes: 7}}); !reflect.DeepEqual(got, want) {
 		t.Errorf("inner = %+v, want %+v", got, want)
@@ -69,9 +71,9 @@ func TestTally_NoneOpen(t *testing.T) {
 func TestTally_UsageIsACopy(t *testing.T) {
 	t.Parallel()
 	_, tally := WithTally(context.Background())
-	tally.Add("b1", BackendUsage{APIRequests: 1})
+	tally.Add("b1", usagestat.Stat{APIRequests: 1})
 	snap := tally.Usage()
-	tally.Add("b1", BackendUsage{APIRequests: 1})
+	tally.Add("b1", usagestat.Stat{APIRequests: 1})
 	if snap["b1"].APIRequests != 1 {
 		t.Errorf("snapshot changed to %+v", snap)
 	}

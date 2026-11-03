@@ -22,6 +22,14 @@ import (
 	"testing"
 )
 
+// TestCleanup_NilBody pins that Cleanup on a nil body is a no-op, so a caller
+// can defer it on a path that never materialized.
+func TestCleanup_NilBody(t *testing.T) {
+	t.Parallel()
+	var mb *Body
+	mb.Cleanup()
+}
+
 // TestMemoryBranch covers the small-object path. The sink returns an in-memory
 // writer, no tempfile is created, and the resulting body is a seekable
 // *bytes.Reader.

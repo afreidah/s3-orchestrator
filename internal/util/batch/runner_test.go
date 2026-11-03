@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/usagestat"
 )
 
 // TestRunner_Run_Tallies verifies sequential tallying of mixed outcomes.
@@ -179,11 +180,11 @@ func TestSummary_ReportedAndChanged(t *testing.T) {
 func TestRunner_Run_ReportsItemUsage(t *testing.T) {
 	t.Parallel()
 	ctx, outer := audit.WithTally(context.Background())
-	audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 9})
+	audit.TallyOf(ctx).Add("b1", usagestat.Stat{APIRequests: 9})
 
 	runner := Runner[int]{Concurrency: 2}
 	sum := runner.Run(ctx, []int{1, 2}, func(ctx context.Context, _ int) ItemResult {
-		audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 1, EgressBytes: 10})
+		audit.TallyOf(ctx).Add("b1", usagestat.Stat{APIRequests: 1, EgressBytes: 10})
 		return ItemResult{Outcome: ItemSucceeded}
 	})
 

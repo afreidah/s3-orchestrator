@@ -95,11 +95,11 @@ func TestPreparePutBody_UnsignedStreamsDirectly(t *testing.T) {
 	payload := []byte("prepare-put-body-payload")
 	b := &S3Backend{unsignedPayload: true}
 
-	got, opts, cleanup, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
+	got, opts, materialized, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("preparePutBody: %v", err)
 	}
-	defer cleanup()
+	defer materialized.Cleanup()
 
 	if len(opts) != 1 {
 		t.Errorf("opts = %d, want 1 (withUnsignedPayload)", len(opts))
@@ -192,11 +192,11 @@ func TestPreparePutBody_SignedSeekablePassthrough(t *testing.T) {
 	b := &S3Backend{unsignedPayload: false}
 	seekable := bytes.NewReader(payload)
 
-	got, opts, cleanup, err := b.preparePutBody(seekable, int64(len(payload)))
+	got, opts, materialized, err := b.preparePutBody(seekable, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("preparePutBody: %v", err)
 	}
-	defer cleanup()
+	defer materialized.Cleanup()
 
 	if opts != nil {
 		t.Errorf("signed mode should add no API options, got %d", len(opts))
@@ -214,11 +214,11 @@ func TestPreparePutBody_SignedNonSeekableMaterializes(t *testing.T) {
 	payload := []byte("prepare-put-body-payload")
 	b := &S3Backend{unsignedPayload: false}
 
-	got, opts, cleanup, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
+	got, opts, materialized, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("preparePutBody: %v", err)
 	}
-	defer cleanup()
+	defer materialized.Cleanup()
 
 	if opts != nil {
 		t.Errorf("signed mode should add no API options, got %d", len(opts))

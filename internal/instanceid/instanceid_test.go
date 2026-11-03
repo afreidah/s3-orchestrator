@@ -17,23 +17,13 @@ import (
 func TestNew_FormatAndUniqueness(t *testing.T) {
 	t.Parallel()
 
-	id1 := mustNew(t)
-	id2 := mustNew(t)
+	id1 := New()
+	id2 := New()
 	if id1 == id2 {
 		t.Fatalf("two consecutive New() calls returned identical IDs: %q", id1)
 	}
 	checkIDFormat(t, id1)
 	checkIDFormat(t, id2)
-}
-
-// mustNew calls New and fails the test on error.
-func mustNew(t *testing.T) ID {
-	t.Helper()
-	id, err := New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return id
 }
 
 // checkIDFormat asserts an identifier follows the hostname-XXXXXXXX shape

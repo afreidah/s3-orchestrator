@@ -86,22 +86,6 @@ func New(deps *CollectorDeps) *Collector {
 }
 
 // -------------------------------------------------------------------------
-// PER-OPERATION RECORDING
-// -------------------------------------------------------------------------
-
-// RecordOperation updates Prometheus request count and duration metrics
-// for a single manager operation.
-func (mc *Collector) RecordOperation(operation, backend string, start time.Time, err error) {
-	status := "success"
-	if err != nil {
-		status = "error"
-	}
-
-	telemetry.ManagerRequestsTotal.WithLabelValues(operation, backend, status).Inc()
-	telemetry.ManagerDuration.WithLabelValues(operation, backend).Observe(time.Since(start).Seconds())
-}
-
-// -------------------------------------------------------------------------
 // PERIODIC REFRESH
 // -------------------------------------------------------------------------
 

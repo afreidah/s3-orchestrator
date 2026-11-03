@@ -8,27 +8,14 @@
 // JSON-handler behaviour: passing a raw error value yields {} for any error
 // type whose underlying struct lacks JSON tags, which downstream JS log
 // viewers render as "[object Object]" and operators cannot grep. Using
-// err.Error() guarantees a printable string in every handler.
-//
-// Outcome / Component / RequestID enforce the canonical attribute keys
-// documented in docs/contributing/logging.md so dashboards can aggregate
-// without text-matching message strings.
+// err.Error() guarantees a printable string in every handler. Component pins
+// the canonical key documented in docs/contributing/logging.md.
 // -------------------------------------------------------------------------------
 
 package logfmt
 
 import (
 	"log/slog"
-)
-
-// Outcome values for the canonical "outcome" attribute. Use these constants
-// rather than ad-hoc strings so dashboards can rely on a closed value set.
-const (
-	OutcomeOK       = "ok"
-	OutcomeError    = "error"
-	OutcomeSkipped  = "skipped" // a no-op: precondition false, already done
-	OutcomeTimeout  = "timeout" // deadline exceeded
-	OutcomeNotFound = "not_found"
 )
 
 // Err returns a slog.Attr carrying err.Error() under the canonical "error"
@@ -39,12 +26,6 @@ func Err(err error) slog.Attr {
 		return slog.Attr{}
 	}
 	return slog.String("error", err.Error())
-}
-
-// Outcome returns a slog.Attr under the canonical "outcome" key. Use one
-// of the Outcome* constants for the value.
-func Outcome(value string) slog.Attr {
-	return slog.String("outcome", value)
 }
 
 // Component returns a slog.Attr under the canonical "component" key. Use

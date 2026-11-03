@@ -21,7 +21,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
 // -------------------------------------------------------------------------
@@ -176,16 +175,11 @@ func TestPutObject_RecordedEnvelopeDescribesStoredBytes(t *testing.T) {
 	if form == nil || !form.Encrypted {
 		t.Fatalf("recorded form does not describe an encrypted object: %+v", form)
 	}
-	_, wrappedDEK, err := encryption.UnpackKeyData(form.EncryptionKey)
-	if err != nil {
-		t.Fatalf("unpack key data: %v", err)
-	}
-
 	stored, ok := b2.CopyOf("enc-key")
 	if !ok {
 		t.Fatal("object should be on the backend that accepted it")
 	}
-	plainReader, err := enc.Decrypt(context.Background(), bytes.NewReader(stored.Data), wrappedDEK, form.KeyID)
+	plainReader, _, err := enc.DecryptStored(context.Background(), bytes.NewReader(stored.Data), form.EncryptionKey, form.KeyID, form.LogicalSize, nil)
 	if err != nil {
 		t.Fatalf("decrypt stored bytes with the recorded key data: %v", err)
 	}

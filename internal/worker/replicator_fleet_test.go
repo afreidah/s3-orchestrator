@@ -487,7 +487,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 // newTrippedCBBackend wraps a mock backend in a CircuitBreakerBackend
 // and immediately trips the circuit with a failure that reaches no backend.
 func newTrippedCBBackend(b *backendtest.InMemory, name string) *backend.CircuitBreakerBackend {
-	cbb := backend.NewCircuitBreakerBackend(b, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
+	cbb := backend.NewCircuitBreakerBackend(b, name, config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour})
 	b.HeadErr = errors.New("forced failure")
 	_, _ = cbb.HeadObject(context.Background(), "tripwire")
 	b.HeadErr = nil
@@ -690,7 +690,7 @@ func TestServesReads_UnknownBackend(t *testing.T) {
 // TestServesReads_CBClosed asserts a closed-circuit backend serves reads.
 func TestServesReads_CBClosed(t *testing.T) {
 	t.Parallel()
-	cbb := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: time.Minute})
+	cbb := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), "b1", config.BackendCircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Minute})
 	store := newPermissiveStore(t)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})
 	if !w.servesReads("b1") {
@@ -716,7 +716,7 @@ func TestServesReads_OnlyWritesRefused(t *testing.T) {
 	t.Parallel()
 	inner := backendtest.NewInMemory()
 	inner.PutErr = &backendtest.StatusError{Code: 403}
-	cbb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
+	cbb := backend.NewCircuitBreakerBackend(inner, "b1", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 	_, _ = cbb.PutObject(context.Background(), "k", bytes.NewReader([]byte("x")), 1, "", nil)
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})
 

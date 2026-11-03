@@ -130,7 +130,7 @@ func BenchmarkDecryptReader_StreamingAllocs(b *testing.B) {
 	}
 	hdr := full[:HeaderSize]
 	body := full[HeaderSize:]
-	chunkSizeOut, baseNonce, err := ParseHeader(bytes.NewReader(hdr))
+	chunkSizeOut, baseNonce, err := parseHeader(bytes.NewReader(hdr))
 	if err != nil {
 		b.Fatalf("parse header: %v", err)
 	}

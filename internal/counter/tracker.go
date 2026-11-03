@@ -8,13 +8,8 @@
 // the store. Counters are keyed by hourly bucket, independent of any backend's
 // cycle; a backend's usage is the sum of its buckets from its cycle's start.
 //
-// The limits map and baseline map are held behind atomic.Pointer snapshots
-// (copy-on-write): read paths do a single atomic load with zero locking and
-// then operate on the immutable map; write paths take a small mutex,
-// allocate a new map with the change, and atomically swap. This removes
-// the RWMutex pair from every WithinLimits call (which fires on every
-// backend operation) and lets NearLimit observe a consistent snapshot across
-// the loop instead of re-locking per backend.
+// The limits and baseline maps are copy-on-write snapshots, so WithinLimits,
+// which runs on every backend operation, reads them without a lock.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -86,7 +81,7 @@ func (u *UsageTracker) Record(ctx context.Context, backendName string, op s3op.O
 	}
 	u.backend.Charge(backendName, core.UsageBucket(time.Now()), c)
 	if t := audit.TallyOf(ctx); t != nil {
-		t.Add(backendName, audit.BackendUsage{APIRequests: c.APIRequests, EgressBytes: c.EgressBytes, IngressBytes: c.IngressBytes})
+		t.Add(backendName, c.UsageStat)
 	}
 }
 

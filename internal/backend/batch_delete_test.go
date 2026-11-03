@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/smithy-go"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -219,7 +220,7 @@ func TestDeleteObjects_FailedRequestFailsItsKeys(t *testing.T) {
 func TestCBBackend_DeleteObjects(t *testing.T) {
 	t.Parallel()
 	srv := &batchDeleteServer{}
-	supported := NewCircuitBreakerBackend(newTestBackend(t, srv.handle), CircuitBreakerConfig{Name: "s3", Threshold: 1, Timeout: time.Minute})
+	supported := NewCircuitBreakerBackend(newTestBackend(t, srv.handle), "s3", config.BackendCircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Minute})
 	if failed, err := supported.DeleteObjects(t.Context(), keys(2)); err != nil || len(failed) != 0 {
 		t.Errorf("supported: failed = %v, err = %v; want all deleted", failed, err)
 	}

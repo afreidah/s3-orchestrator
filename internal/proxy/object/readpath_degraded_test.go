@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -101,7 +102,7 @@ func TestHeadObject_DBUnavailable_ReadsTheNewestCopy(t *testing.T) {
 // and returns a manager configured with that codec whose database is down.
 func compressedFleet(t *testing.T, key string, data []byte) *fleet {
 	t.Helper()
-	codec, err := compression.NewCodec(compression.DefaultLevel, 64*1024)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, 64*1024)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestHeadObject_DBUnavailable_ReportsTheLogicalSize(t *testing.T) {
 // client uploaded, which has no seek table, is served as the bytes it is.
 func TestGetObject_DBUnavailable_ServesAPlainZstdFileAsIs(t *testing.T) {
 	t.Parallel()
-	codec, err := compression.NewCodec(compression.DefaultLevel, 64*1024)
+	codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, 64*1024)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}

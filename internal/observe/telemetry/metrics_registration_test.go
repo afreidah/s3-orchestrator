@@ -15,6 +15,7 @@ package telemetry
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -33,13 +34,13 @@ func TestMetricsRegistration_KeyFamiliesPresent(t *testing.T) {
 	}
 	touches := []touch{
 		{"s3o_requests_total", func() { RequestsTotal.WithLabelValues("GET", "200").Inc() }},
-		{"s3o_backend_requests_total", func() { BackendRequestsTotal.WithLabelValues("b", "GET", "ok").Inc() }},
+		{"s3o_backend_requests_total", func() { BackendOps.Record("GET", "b", time.Now(), nil) }},
 		{"s3o_backend_range_ignored_total", func() { BackendRangeIgnoredTotal.WithLabelValues("b").Inc() }},
 		{"s3o_quota_bytes_used", func() { QuotaBytesUsed.WithLabelValues("b").Set(0) }},
 		{"s3o_rebalance_skipped_total", func() { RebalanceSkipped.WithLabelValues("test").Inc() }},
 		{"s3o_replication_copies_created_total", func() { ReplicationCopiesCreatedTotal.Add(0) }},
 		{"s3o_worker_cycles_total", func() { WorkerCyclesTotal.WithLabelValues("test", "empty").Inc() }},
-		{"s3o_circuit_breaker_state", func() { CircuitBreakerState.WithLabelValues("test-reg").Set(0) }},
+		{"s3o_circuit_breaker_state", func() { circuitBreakerState.WithLabelValues("test-reg").Set(0) }},
 		{"s3o_backend_call_refused", func() { BackendCallRefused.WithLabelValues("test-reg", "GetObject").Set(0) }},
 		{"s3o_cleanup_queue_depth", func() { CleanupQueueDepth.Set(0) }},
 		{"s3o_pending_intents_depth", func() { PendingIntentsDepth.Set(0) }},

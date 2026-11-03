@@ -17,7 +17,6 @@ package backend
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -74,9 +73,5 @@ func (e *batchKeyError) HTTPStatusCode() int {
 // is how a provider that wants a checksum the SDK does not send answers.
 // Single deletes can still succeed.
 func isBatchRejected(err error) bool {
-	if isUnsupported(err) {
-		return true
-	}
-	respErr, ok := errors.AsType[httpStatusError](err)
-	return ok && respErr.HTTPStatusCode() == http.StatusBadRequest
+	return isUnsupported(err) || statusOf(err) == http.StatusBadRequest
 }

@@ -307,9 +307,7 @@ func TestVaultKeyProvider_TokenFile(t *testing.T) {
 	t.Cleanup(p.Close)
 
 	// Verify the initial token was loaded
-	p.mu.RLock()
 	initialToken := p.client.Token()
-	p.mu.RUnlock()
 	if initialToken != "initial-file-token" {
 		t.Errorf("initial token = %q, want %q", initialToken, "initial-file-token")
 	}
@@ -320,9 +318,7 @@ func TestVaultKeyProvider_TokenFile(t *testing.T) {
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	p.mu.RLock()
 	updatedToken := p.client.Token()
-	p.mu.RUnlock()
 	if updatedToken != "updated-token" {
 		t.Errorf("updated token = %q, want %q", updatedToken, "updated-token")
 	}

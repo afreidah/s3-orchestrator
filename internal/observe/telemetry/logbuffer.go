@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Thread-safe circular buffer that captures slog output for the operator
-// dashboard. A TeeHandler fans out log records to both the standard JSON
+// dashboard. A tee handler fans out log records to both the standard JSON
 // handler (stdout) and this buffer. The buffer holds the most recent 5,000
 // entries (~5 MB worst case) and supports filtered queries by level, time,
 // and component.
@@ -16,8 +16,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -142,26 +142,28 @@ func filterEntries(snapshot []LogEntry, opts *LogQueryOpts) []LogEntry {
 // TEE HANDLER
 // -------------------------------------------------------------------------
 
-// TeeHandler is an slog.Handler that writes each log record to a primary
+// teeHandler is an slog.Handler that writes each log record to a primary
 // handler (typically JSON to stdout) and also captures it in a LogBuffer.
-type TeeHandler struct {
+// attrs holds the logger's own attributes, flattened under the group prefix
+// they were added at; it is never written after the handler is built.
+type teeHandler struct {
 	primary slog.Handler
 	buf     *LogBuffer
-	attrs   []slog.Attr
-	groups  []string
+	prefix  string
+	attrs   map[string]any
 }
 
 // NewLogHandler builds the daemon's handler chain: each record at or above
 // level is captured in buf and written to w as JSON, carrying the trace and
 // span IDs from its context.
 func NewLogHandler(w io.Writer, level slog.Leveler, buf *LogBuffer) slog.Handler {
-	return NewTeeHandler(NewTraceHandler(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})), buf)
+	return newTeeHandler(newTraceHandler(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})), buf)
 }
 
-// NewTeeHandler creates a handler that fans out to both the primary handler
+// newTeeHandler creates a handler that fans out to both the primary handler
 // and the ring buffer.
-func NewTeeHandler(primary slog.Handler, buf *LogBuffer) *TeeHandler {
-	return &TeeHandler{
+func newTeeHandler(primary slog.Handler, buf *LogBuffer) *teeHandler {
+	return &teeHandler{
 		primary: primary,
 		buf:     buf,
 	}
@@ -169,24 +171,21 @@ func NewTeeHandler(primary slog.Handler, buf *LogBuffer) *TeeHandler {
 
 // Enabled reports whether the handler handles records at the given level.
 // Delegates to the primary handler.
-func (h *TeeHandler) Enabled(ctx context.Context, level slog.Level) bool {
+func (h *teeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.primary.Enabled(ctx, level)
 }
 
 // Handle renders the record's error attributes as strings once, then writes
 // the result to the primary handler and captures it in the buffer. JSON
 // encoding would otherwise render many errors as "{}".
-func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
+func (h *teeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
 	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
-	attrs := make(map[string]any)
-	prefix := groupPrefix(h.groups)
-	for _, a := range h.attrs {
-		attrs[prefix+a.Key] = a.Value.Any()
-	}
+	attrs := make(map[string]any, len(h.attrs)+r.NumAttrs())
+	maps.Copy(attrs, h.attrs)
 	r.Attrs(func(a slog.Attr) bool {
 		a = logfmt.TransformAttr(a)
 		out.AddAttrs(a)
-		attrs[prefix+a.Key] = a.Value.Any()
+		flatten(attrs, h.prefix, a)
 		return true
 	})
 
@@ -201,38 +200,45 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint
 	return err
 }
 
-// WithAttrs returns a new TeeHandler with the given attributes added, their
-// errors rendered as strings for both the primary handler and the buffer.
-func (h *TeeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+// WithAttrs returns a new handler with the given attributes added under the
+// current group, their errors rendered as strings for both the primary
+// handler and the buffer.
+func (h *teeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	out := make([]slog.Attr, len(attrs))
+	fixed := make(map[string]any, len(h.attrs)+len(attrs))
+	maps.Copy(fixed, h.attrs)
 	for i, a := range attrs {
 		out[i] = logfmt.TransformAttr(a)
+		flatten(fixed, h.prefix, out[i])
 	}
-	return &TeeHandler{
-		primary: h.primary.WithAttrs(out),
-		buf:     h.buf,
-		attrs:   append(slices.Clone(h.attrs), out...),
-		groups:  slices.Clone(h.groups),
-	}
+	return &teeHandler{primary: h.primary.WithAttrs(out), buf: h.buf, prefix: h.prefix, attrs: fixed}
 }
 
-// WithGroup returns a new TeeHandler with the given group name.
-func (h *TeeHandler) WithGroup(name string) slog.Handler {
+// WithGroup returns a new handler that files later attributes under name.
+// Attributes already added keep the prefix they were added at.
+func (h *teeHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	return &TeeHandler{
-		primary: h.primary.WithGroup(name),
-		buf:     h.buf,
-		attrs:   slices.Clone(h.attrs),
-		groups:  append(slices.Clone(h.groups), name),
-	}
+	return &teeHandler{primary: h.primary.WithGroup(name), buf: h.buf, prefix: h.prefix + name + ".", attrs: h.attrs}
 }
 
-// groupPrefix builds a dotted prefix from the current group stack.
-func groupPrefix(groups []string) string {
-	if len(groups) == 0 {
-		return ""
+// flatten stores a in dst under prefix as a plain value, spreading a group's
+// members into dotted keys the way slog inlines a group with no key. An empty
+// attribute is dropped, as slog drops it.
+func flatten(dst map[string]any, prefix string, a slog.Attr) {
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindGroup {
+		if a.Key != "" {
+			prefix += a.Key + "."
+		}
+		for _, member := range a.Value.Group() {
+			flatten(dst, prefix, member)
+		}
+		return
 	}
-	return strings.Join(groups, ".") + "."
+	if a.Equal(slog.Attr{}) {
+		return
+	}
+	dst[prefix+a.Key] = a.Value.Any()
 }
