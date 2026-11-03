@@ -13,90 +13,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"slices"
 	"testing"
 
-	"go.uber.org/mock/gomock"
-
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
 // FIXTURES
 // -------------------------------------------------------------------------
 
-// backlog is an UnhashedLister over an in-memory set of unhashed copies on one
-// backend. Hashing a copy removes it, as a stored hash takes a row out of the
-// real listing.
-type backlog struct {
-	keys []string
-}
-
-// newBacklog builds a backlog of n copies with keys in cursor order.
-func newBacklog(n int) *backlog {
-	b := &backlog{}
-	for i := range n {
-		b.keys = append(b.keys, fmt.Sprintf("k-%03d", i))
-	}
-	return b
-}
-
-// ListCopiesByForm lists up to limit unhashed copies after the cursor. It
-// serves only the backfill's filter, managed copies without a hash, so a pass
-// that asked for anything else finds nothing to do.
-func (b *backlog) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	if !f.Without.Has(core.StoredHashed) || !f.ManagedOnly {
-		return nil, nil
-	}
-	var out []core.ObjectLocation
-	for _, k := range b.keys {
-		if len(out) == limit {
-			break
-		}
-		if cursorAfter(k, "b1", after) {
-			out = append(out, core.ObjectLocation{ObjectKey: k, BackendName: "b1"})
-		}
-	}
-	return out, nil
-}
-
-// hash takes a copy out of the backlog.
-func (b *backlog) hash(key string) {
-	b.keys = slices.DeleteFunc(b.keys, func(k string) bool { return k == key })
-}
-
 // cursorAfter reports whether (key, backend) sorts after the cursor.
 func cursorAfter(key, backend string, after core.Cursor) bool {
 	return key > after.ObjectKey || (key == after.ObjectKey && backend > after.BackendName)
-}
-
-// backlogHasher is a scrubber whose HashCopies hashes every copy in the page
-// except the ones unreadable names, which it skips and leaves in the backlog.
-func backlogHasher(t *testing.T, b *backlog, unreadable func(key string) bool) *opstest.MockScrubberOps {
-	t.Helper()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-			var sum batch.Summary
-			for i := range locs {
-				key := locs[i].ObjectKey
-				sum.Attempted++
-				if unreadable != nil && unreadable(key) {
-					sum.Skipped++
-					progress.Track(observer, key, func() string { return progress.StatusUnreadable })
-					continue
-				}
-				b.hash(key)
-				sum.Succeeded++
-				progress.Track(observer, key, func() string { return progress.StatusOK })
-			}
-			return sum
-		}).AnyTimes()
-	return scrubber
 }
 
 // rotatingStore is an EncryptionStore over in-memory encrypted copies. A
@@ -206,26 +135,6 @@ func (s *rotatingStore) UpdateCopyMetadata(_ context.Context, loc *core.ObjectLo
 // -------------------------------------------------------------------------
 // PASSES OVER A SHRINKING LISTING
 // -------------------------------------------------------------------------
-
-// TestBackfillChecksums_HashesEveryRowAcrossPages verifies a backfill over a
-// backlog several pages long hashes every copy, even though each hashed copy
-// leaves the listing it was read from.
-func TestBackfillChecksums_HashesEveryRowAcrossPages(t *testing.T) {
-	t.Parallel()
-	b := newBacklog(25)
-	svc := integrityWithBacklog(t, backlogHasher(t, b, nil), b)
-
-	res, err := svc.BackfillChecksums(context.Background(), 10, 0, 0, "", nil)
-	if err != nil {
-		t.Fatalf("BackfillChecksums: %v", err)
-	}
-	if res.Succeeded != 25 || !res.Done {
-		t.Errorf("res = %+v, want all 25 processed and the backlog drained", res)
-	}
-	if len(b.keys) != 0 {
-		t.Errorf("unhashed = %v, want none left", b.keys)
-	}
-}
 
 // TestRotateKey_RotatesEveryRowAcrossPages verifies rotations over more than
 // one page re-wrap every copy, even though each rotated copy leaves the

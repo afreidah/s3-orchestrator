@@ -213,11 +213,7 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 			if err != nil {
 				return nil, err
 			}
-			keys := make([]string, len(page.Objects))
-			for i := range page.Objects {
-				keys[i] = page.Objects[i].ObjectKey
-			}
-			return keys, nil
+			return core.KeysOf(page.Objects), nil
 		},
 		CursorOf: func(key string) string { return key },
 	}

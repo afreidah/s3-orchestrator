@@ -97,13 +97,11 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		EncStore:   store,
 		CompStore:  store,
 		Locker:     store,
-		Runtime:    st.Runtime,
 		Mover:      st.Coord,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
-		Unhashed:   store,
 		Declared:   declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 		Config:     st.Config,
 	})
@@ -320,13 +318,9 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 			CopiesRemoved: removed,
 		}, nil).AnyTimes()
 
-	runtime := opstest.NewMockRuntimeOps(ctrl)
-	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
-
 	return ops.NewReplication(ops.ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,
-		Runtime:    runtime,
 		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2, BatchSize: 10}}),
 	})
 }

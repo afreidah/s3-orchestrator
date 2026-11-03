@@ -74,7 +74,7 @@ func TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce(t *testing.T) {
 			// batch (up to 50 with the default), and 40 rows fits in a
 			// single sweep. SKIP LOCKED makes the per-call disjointness
 			// the load-bearing assertion here, not the loop.
-			cleanSum := w.ProcessCleanupQueue(ctx)
+			cleanSum, _ := w.ProcessCleanupQueue(ctx)
 			resolved, failed := cleanSum.Succeeded, cleanSum.Failed
 			resolvedTotal.Add(int64(resolved))
 			failedTotal.Add(int64(failed))

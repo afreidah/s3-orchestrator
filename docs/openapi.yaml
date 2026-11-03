@@ -2242,6 +2242,9 @@ components:
             type: object
         ReconcileResponse:
             properties:
+                backends_failed:
+                    format: int64
+                    type: integer
                 backends_scanned:
                     format: int64
                     type: integer
@@ -2260,6 +2263,7 @@ components:
                 - imported
                 - removed
                 - backends_scanned
+                - backends_failed
             type: object
         ReloadHookOutcome:
             properties:

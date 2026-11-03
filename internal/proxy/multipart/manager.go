@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -538,16 +539,13 @@ const (
 )
 
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
-// duration. Run periodically to prevent quota leaks from abandoned uploads.
-func (mp *Manager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
-	ctx = audit.WithWorkload(ctx, audit.WorkloadMultipartCleanup)
-	sum := mp.abortMatching(ctx, core.MultipartUploadFilter{CreatedBefore: time.Now().Add(-olderThan)})
-	if sum.Succeeded > 0 {
-		audit.Log(ctx, "storage.MultipartCleanup",
-			slog.Int("cleaned", sum.Succeeded),
-			slog.Int("total_stale", sum.Planned),
-		)
-	}
+// duration, as one multipart_cleanup pass. Run periodically to prevent quota
+// leaks from abandoned uploads.
+func (mp *Manager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) batch.Summary {
+	sum, _ := cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadMultipartCleanup}, func(ctx context.Context) (batch.Summary, error) {
+		return mp.abortMatching(ctx, core.MultipartUploadFilter{CreatedBefore: time.Now().Add(-olderThan)}), nil
+	})
+	return sum
 }
 
 // AbortMultipartUploadsOnBackend aborts all in-progress multipart uploads
@@ -567,7 +565,7 @@ func (mp *Manager) abortMatching(ctx context.Context, filter core.MultipartUploa
 		},
 		CursorOf: func(mu core.MultipartUpload) string { return mu.UploadID },
 	}
-	runner := batch.Runner[core.MultipartUpload]{Name: "multipart-abort", Concurrency: 1}
+	runner := batch.Runner[core.MultipartUpload]{Concurrency: 1}
 	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, mu core.MultipartUpload) batch.ItemResult {
 		mp.log.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey, "backend", mu.BackendName)
 		if err := mp.abortByMultipartRow(ctx, &mu); err != nil {
@@ -641,23 +639,15 @@ func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, comp
 	renewed := make(chan struct{})
 	go func() {
 		defer close(renewed)
-		ticker := time.NewTicker(completionRenewEvery)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-workCtx.Done():
-				return
-			case <-ticker.C:
-			}
-			held, err := mp.stores.RenewMultipartCompletion(workCtx, uploadID)
+		syncutil.Every(workCtx, completionRenewEvery, func(ctx context.Context) {
+			held, err := mp.stores.RenewMultipartCompletion(ctx, uploadID)
 			if err == nil && !held {
 				err = errCompletionMarkLost
 			}
 			if err != nil {
 				cancel(fmt.Errorf("renew completion mark: %w", err))
-				return
 			}
-		}
+		})
 	}()
 
 	etag, err := complete(workCtx)

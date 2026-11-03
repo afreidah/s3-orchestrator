@@ -600,6 +600,48 @@ func TestDiscard_ErrorLeavesTheBytes(t *testing.T) {
 	}
 }
 
+// TestDropCopy_SettlesWhatTheRemovalQueued verifies a dropped copy's row is
+// removed keeping the floor the caller asked for, and the bytes the removal
+// queued are deleted at the copy's own path.
+func TestDropCopy_SettlesWhatTheRemovalQueued(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewInMemory()
+	loc := &core.ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!copy", SizeBytes: 4}
+	be.Objects[loc.StorageKey] = backendtest.Object{}
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 1, "drop_reason").
+		Return([]core.CleanupItem{cleanupRow(5, "b1", loc.StorageKey, "drop_reason", 4)}, nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(5)).DoAndReturn(retireAll)
+
+	if err := newCoordinatorWithBackend("b1", be, store).DropCopy(context.Background(), loc, 1, "drop_reason"); err != nil {
+		t.Fatalf("DropCopy: %v", err)
+	}
+	if be.Has(loc.StorageKey) {
+		t.Error("the dropped copy's bytes are still on the backend")
+	}
+}
+
+// TestDropCopy_PassesTheStoreErrorThrough verifies a removal the store refused
+// deletes nothing and returns the store's error as it came, so a caller can
+// tell a copy that was not surplus from a failure.
+func TestDropCopy_PassesTheStoreErrorThrough(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewInMemory()
+	loc := &core.ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!copy"}
+	be.Objects[loc.StorageKey] = backendtest.Object{}
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 1, "drop_reason").Return(nil, core.ErrCopyNotExcess)
+
+	err := newCoordinatorWithBackend("b1", be, store).DropCopy(context.Background(), loc, 1, "drop_reason")
+	if !errors.Is(err, core.ErrCopyNotExcess) || !be.Has(loc.StorageKey) {
+		t.Errorf("DropCopy = %v with bytes kept %v; want ErrCopyNotExcess and the bytes kept", err, be.Has(loc.StorageKey))
+	}
+}
+
 // TestNewCopyIntent_IsACompanionOnTheTarget verifies a copy intent names its
 // target, is never promoted, and carries a path of its own.
 func TestNewCopyIntent_IsACompanionOnTheTarget(t *testing.T) {

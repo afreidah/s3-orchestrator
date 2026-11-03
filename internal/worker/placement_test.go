@@ -19,7 +19,7 @@ import (
 // report true, absent keys or backends report false (including a missing key).
 func TestPlacementSet_Has(t *testing.T) {
 	t.Parallel()
-	ps := NewPlacementSet(map[string][]string{
+	ps := newPlacementSet(map[string][]string{
 		"k1": {"b1", "b2"},
 		"k2": {"b3"},
 	})
@@ -45,7 +45,7 @@ func TestPlacementSet_Has(t *testing.T) {
 // reports no membership rather than panicking.
 func TestNewPlacementSet_Empty(t *testing.T) {
 	t.Parallel()
-	ps := NewPlacementSet(nil)
+	ps := newPlacementSet(nil)
 	if ps.Has("k", "b") {
 		t.Error("empty PlacementSet reported membership")
 	}

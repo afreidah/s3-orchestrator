@@ -198,11 +198,11 @@ func TestPlanCopySets_PreservesCopyMembership(t *testing.T) {
 // it sits outside the sum.
 func TestReplicationOutcome_FailedCountsAllFailureKinds(t *testing.T) {
 	t.Parallel()
-	o := ReplicationOutcome{CopyErrors: 2, RecordErrors: 1, Superseded: 3}
+	o := replicationOutcome{CopyErrors: 2, RecordErrors: 1, Superseded: 3}
 	if got := o.Failed(); got != 6 {
 		t.Errorf("Failed() = %d, want 6", got)
 	}
-	o = ReplicationOutcome{Created: 5}
+	o = replicationOutcome{Created: 5}
 	if got := o.Failed(); got != 0 {
 		t.Errorf("Failed() = %d on clean outcome, want 0", got)
 	}
@@ -229,7 +229,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1", StorageKey: "key1!on-b1", SizeBytes: 4096}}
 
-	src, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
+	src, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestCopyToReplica_SkipsOpenBreakerSource(t *testing.T) {
 		{BackendName: "b1", StorageKey: "key1!on-b1", SizeBytes: 4096},
 	}
 
-	src, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
+	src, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestCopyToReplica_FallsBackWhenAllSourcesUnhealthy(t *testing.T) {
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b0", SizeBytes: 7}}
 
-	src, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
+	src, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
 
-	_, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
+	_, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when source returns 404")
 	}
@@ -394,7 +394,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
 
-	_, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
+	_, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all sources fail")
 	}
@@ -431,7 +431,7 @@ func TestCopyToReplica_WriteErrorShortCircuits(t *testing.T) {
 		{BackendName: "src1"},
 		{BackendName: "src2"},
 	}
-	if _, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "dst"); err == nil {
+	if _, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "dst"); err == nil {
 		t.Fatal("expected write-phase error to surface, got nil")
 	}
 }
@@ -471,7 +471,7 @@ func TestCopyToReplica_UntypedErrorRetriesNextSource(t *testing.T) {
 		{BackendName: "src1"},
 		{BackendName: "src2"},
 	}
-	source, err := r.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "dst")
+	source, err := r.copyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "dst")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestReplicateObject_ClaimRefusedExcludesTarget(t *testing.T) {
 	r := declinedClaimReplicator(t, core.ErrTargetRefused)
 	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
 
-	out := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	out := r.replicateObject(context.Background(), "key1", copies, 1)
 	if out.Created != 0 || out.RecordErrors != 0 || out.CopyErrors != 0 {
 		t.Errorf("outcome = %+v, want nothing created and no errors", out)
 	}
@@ -524,7 +524,7 @@ func TestReplicateObject_ClaimErrorCountsARecordError(t *testing.T) {
 	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
 
 	before := promtest.ToFloat64(telemetry.ReplicationErrorsTotal)
-	out := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	out := r.replicateObject(context.Background(), "key1", copies, 1)
 	if out.Created != 0 || out.RecordErrors != 1 {
 		t.Errorf("outcome = %+v, want one record error", out)
 	}
@@ -598,7 +598,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1", StorageKey: "key1!on-b1", SizeBytes: 50}}
 
-	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	outcome := r.replicateObject(context.Background(), "key1", copies, 1)
 	if outcome.Created != 1 {
 		t.Errorf("created = %d, want 1", outcome.Created)
 	}
@@ -680,7 +680,7 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 
 	// Request 2 replicas: first attempt hits "fail" and should fall through
 	// to "ok" on the second iteration with "fail" excluded.
-	outcome := r.ReplicateObject(context.Background(), "key1", copies, 2)
+	outcome := r.replicateObject(context.Background(), "key1", copies, 2)
 	if outcome.Created != 1 {
 		t.Errorf("created = %d, want 1", outcome.Created)
 	}
@@ -728,7 +728,7 @@ func TestReplicateObject_PlaceCopyErrorExcludesTarget(t *testing.T) {
 
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	outcome := r.replicateObject(context.Background(), "key1", copies, 1)
 	if outcome.Created != 0 {
 		t.Errorf("created = %d, want 0", outcome.Created)
 	}
@@ -778,7 +778,7 @@ func TestReplicateObject_DeclinedPlacementExcludesTarget(t *testing.T) {
 
 			r := newTestReplicator(ops, pl, ms)
 			copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-			outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+			outcome := r.replicateObject(context.Background(), "key1", copies, 1)
 			if outcome.Created != 0 {
 				t.Errorf("created = %d, want 0", outcome.Created)
 			}

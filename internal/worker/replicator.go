@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -114,7 +115,8 @@ type ReplicationSummary struct {
 // start and end step per object replicated. A cycle that attempted anything
 // publishes ReplicationCompleted, whether a tick or an operator ran it.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	sum, err := runOpsCycle(ctx, audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
+	pass := cycle.Pass{Workload: audit.WorkloadReplication, Refresh: r.ops}
+	sum, err := cycle.Run(ctx, pass, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
 	if err == nil && sum.Attempted > 0 {
@@ -131,6 +133,12 @@ func (s ReplicationSummary) AuditAttrs() []slog.Attr {
 	return append(s.Summary.AuditAttrs(), slog.Int("copies_created", s.CopiesCreated))
 }
 
+// Changed says the cycle created a copy. An object can succeed without one,
+// when its copies reached the factor some other way.
+func (s ReplicationSummary) Changed() bool {
+	return s.CopiesCreated > 0
+}
+
 // replicate is the body of Replicate after observe.Run sets up the span.
 func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
 	if cfg.Factor <= 1 {
@@ -142,7 +150,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	excluded := r.UnhealthyBackends(cfg.UnhealthyThreshold)
+	excluded := r.unhealthyBackends(cfg.UnhealthyThreshold)
 	locations, err := r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	if err != nil {
 		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
@@ -154,9 +162,9 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 
 	// The pending gauge comes from the fleet snapshot's ledger count, not this
 	// batch, so every instance serves the same figure.
-	pass := copySetPass{log: r.log, concurrency: cfg.Concurrency, observer: observer}
+	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
 	sum, created := pass.run(ctx, r.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
-		outcome := r.ReplicateObject(ctx, set.key, set.copies, set.off)
+		outcome := r.replicateObject(ctx, set.key, set.copies, set.off)
 		r.reportObjectOutcome(ctx, &outcome)
 		return outcome.Created, replicaOutcomeResult(&outcome)
 	})
@@ -172,10 +180,10 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// ReplicationOutcome captures the per-object result of one ReplicateObject
+// replicationOutcome captures the per-object result of one replicateObject
 // call. NoTarget means the loop exited because target selection ran out, not
 // that an individual attempt failed.
-type ReplicationOutcome struct {
+type replicationOutcome struct {
 	Key             string // object key
 	Created         int    // copies successfully recorded
 	CopyErrors      int    // source -> target stream copies that errored
@@ -189,7 +197,7 @@ type ReplicationOutcome struct {
 // Failed reports the total number of failed copy attempts for this
 // object, irrespective of failure stage. VerifyUnchecked is not a failure: the
 // copy was written and recorded, it simply could not be checked.
-func (o ReplicationOutcome) Failed() int {
+func (o replicationOutcome) Failed() int {
 	return o.CopyErrors + o.RecordErrors + o.Superseded + o.VerifyMismatch
 }
 
@@ -197,7 +205,7 @@ func (o ReplicationOutcome) Failed() int {
 // Any failed attempt makes the item failed even when other copies of the same
 // object landed, because the object did not reach its factor: reporting it as
 // succeeded would let a cycle that left objects under-replicated read as clean.
-func replicaOutcomeResult(o *ReplicationOutcome) batch.ItemResult {
+func replicaOutcomeResult(o *replicationOutcome) batch.ItemResult {
 	switch {
 	case o.Failed() > 0:
 		return batch.Failed()
@@ -205,15 +213,15 @@ func replicaOutcomeResult(o *ReplicationOutcome) batch.ItemResult {
 		return batch.Succeeded()
 	default:
 		// No copy was attempted: target selection found nowhere to put one.
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
+		return batch.Skipped(progress.StatusSkipped)
 	}
 }
 
-// ReplicateObject creates up to `needed` additional copies of a single
-// object. It logs each failed attempt and returns a ReplicationOutcome
+// replicateObject creates up to `needed` additional copies of a single
+// object. It logs each failed attempt and returns a replicationOutcome
 // summarizing them for metrics, audit, and reporting.
-func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) ReplicationOutcome {
-	out := ReplicationOutcome{Key: key}
+func (r *Replicator) replicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) replicationOutcome {
+	out := replicationOutcome{Key: key}
 
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
@@ -248,14 +256,16 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			out.NoTarget = true
 			break
 		}
+		// Every attempt rules its target out of the next one, whether it
+		// placed a copy there or failed to.
 		target := ranked[0]
+		exclusion[target] = true
 
 		intent, claimed := r.claimReplicaTarget(ctx, key, target, sizeEstimate, &out)
 		if !claimed {
-			exclusion[target] = true
 			continue
 		}
-		sourceLoc, err := r.CopyToReplica(ctx, key, intent.StorageKey, existingCopies, target)
+		sourceLoc, err := r.copyToReplica(ctx, key, intent.StorageKey, existingCopies, target)
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
@@ -264,7 +274,6 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			// removing it cannot touch anything else.
 			r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 			telemetry.ReplicationErrorsTotal.Inc()
-			exclusion[target] = true
 			out.CopyErrors++
 			continue
 		}
@@ -273,7 +282,6 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// Checked before the row exists, so a copy that disagrees with its
 		// source never counts toward the replication factor.
 		if !r.admitVerifiedReplica(ctx, intent, sourceLoc, &out) {
-			exclusion[target] = true
 			continue
 		}
 
@@ -291,14 +299,12 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			// this target is out of the running.
 			r.log.InfoContext(ctx, "replica not recorded, its bytes queued for cleanup",
 				"key", key, "target", target, "reason", err)
-			exclusion[target] = true
 			out.Superseded++
 			continue
 		case err != nil:
 			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
-			exclusion[target] = true
 			out.RecordErrors++
 			continue
 		}
@@ -317,8 +323,6 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			slog.String("target_backend", target),
 			slog.Int64("size", recordedSize),
 		)
-
-		exclusion[target] = true
 		out.Created++
 	}
 
@@ -331,7 +335,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 // intent to resolve. The intent's path is what the verify read, the record,
 // and every cleanup address. A refused claim is a full target, not an error;
 // anything else is tallied as a record error on out.
-func (r *Replicator) claimReplicaTarget(ctx context.Context, key, target string, size int64, out *ReplicationOutcome) (*core.PendingObject, bool) {
+func (r *Replicator) claimReplicaTarget(ctx context.Context, key, target string, size int64, out *replicationOutcome) (*core.PendingObject, bool) {
 	intent := writepath.NewCopyIntent(key, target, size, nil)
 	err := r.placement.ClaimCopyTarget(ctx, intent, core.AcceptForWrite)
 	if err == nil {
@@ -348,7 +352,7 @@ func (r *Replicator) claimReplicaTarget(ctx context.Context, key, target string,
 
 // reportObjectOutcome logs one warning for an object that did not reach the
 // replication factor. Outcomes with no failures log nothing.
-func (r *Replicator) reportObjectOutcome(ctx context.Context, o *ReplicationOutcome) {
+func (r *Replicator) reportObjectOutcome(ctx context.Context, o *replicationOutcome) {
 	if o.Failed() == 0 && !o.NoTarget {
 		return
 	}
@@ -376,12 +380,12 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 	return m
 }
 
-// CopyToReplica reads the object from an existing copy and writes it to the
+// copyToReplica reads the object from an existing copy and writes it to the
 // target backend at targetStorageKey, trying each existing copy in turn. It
 // returns the source row that answered; its SizeBytes is the bytes
 // transferred, and its stored-form columns describe the target too, since
 // StreamCopy moves bytes verbatim. The caller's slice is not reordered.
-func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
+func (r *Replicator) copyToReplica(ctx context.Context, key, targetStorageKey string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
 		return nil, err
@@ -390,7 +394,7 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey st
 	// Drop sources refusing reads so a copy never starts against a backend
 	// known to refuse it. Fall back to every copy when none serves reads, so
 	// the object still gets an attempt. Both work on a clone, since
-	// ReplicateObject reuses the caller's slice across attempts.
+	// replicateObject reuses the caller's slice across attempts.
 	candidates := slices.DeleteFunc(slices.Clone(copies), func(c core.ObjectLocation) bool {
 		return !r.servesReads(c.BackendName)
 	})
@@ -464,10 +468,10 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocat
 		"key", loc.ObjectKey, "backend", loc.BackendName)
 }
 
-// UnhealthyBackends returns the backends that have refused reads for at least
+// unhealthyBackends returns the backends that have refused reads for at least
 // threshold, whose copies no longer count toward the replica count. Returns
 // nil when every backend is serving reads.
-func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
+func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
 	var names []string
 	for name := range r.ops.Backends() {
 		if d := r.ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {

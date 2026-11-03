@@ -69,7 +69,7 @@ func TestReplicateObject_SupersededCopyLeavesTheWritesCopy(t *testing.T) {
 	placeWritesCopy(t, store, key, "b2", key+"!w2", int64(len(data)))
 
 	r := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
-	out := r.ReplicateObject(ctx, key, stale, 1)
+	out := r.replicateObject(ctx, key, stale, 1)
 	if out.Superseded != 1 {
 		t.Fatalf("outcome = %+v, want the replica superseded by the write's row", out)
 	}

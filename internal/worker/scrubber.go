@@ -30,7 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -110,39 +110,6 @@ type CopyVerification struct {
 	Outcome CopyOutcome
 }
 
-// CopyOutcome is what verifying one copy established. The zero value is
-// deliberately not a valid outcome, so an unset field cannot read as verified.
-type CopyOutcome int
-
-// Outcomes reported by ScrubKey.
-const (
-	CopyVerified CopyOutcome = iota + 1
-	CopyMismatch
-	CopyUnreadable
-	CopyNotHashed
-	CopyDeclined
-)
-
-// String names the outcome for logs and test failures. It is not the wire
-// value: how a verdict reads to an operator is the admin transport's business,
-// and it words each one there.
-func (o CopyOutcome) String() string {
-	switch o {
-	case CopyVerified:
-		return "verified"
-	case CopyMismatch:
-		return "mismatch"
-	case CopyUnreadable:
-		return "unreadable"
-	case CopyNotHashed:
-		return "not hashed"
-	case CopyDeclined:
-		return "declined"
-	default:
-		return "unknown"
-	}
-}
-
 // ScrubKey verifies every copy of one key immediately and reports each
 // separately. Unlike the sweep, it holds no scrub reserve back: a read is
 // admitted as a client read is, against the backend's whole egress limit, and
@@ -151,57 +118,36 @@ func (o CopyOutcome) String() string {
 // A mismatch is handled as the sweep handles one: the bytes are discarded and
 // the ledger row dropped, so the replicator rebuilds from a healthy copy.
 func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
-	return runOps(ctx, audit.WorkloadScrub, "scrub_key", func(ctx context.Context) ([]CopyVerification, error) {
-		locations, err := s.store.GetAllObjectLocations(ctx, key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
-		}
+	ctx = audit.WithWorkload(ctx, audit.WorkloadScrub)
+	ctx, span := telemetry.StartSpan(ctx, "scrub_key", telemetry.AttrOperation.String("scrub_key"))
+	defer span.End()
 
-		results := make([]CopyVerification, 0, len(locations))
-		for i := range locations {
-			results = append(results, s.verifyCopy(ctx, &locations[i]))
-		}
-
-		audit.Log(ctx, "integrity.scrub_key",
-			slog.String("key", key),
-			slog.Int("copies", len(results)),
-		)
-		return results, nil
-	})
+	locations, err := s.store.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
+	}
+	results := make([]CopyVerification, 0, len(locations))
+	for i := range locations {
+		outcome := s.checkCopy(ctx, &locations[i], s.hasher.admitsRead)
+		results = append(results, CopyVerification{Backend: locations[i].BackendName, Outcome: outcome})
+	}
+	audit.Log(ctx, "integrity.scrub_key",
+		slog.String("key", key),
+		slog.Int("copies", len(results)),
+	)
+	return results, nil
 }
 
-// verifyCopy maps one copy's verification onto the reported outcome. A copy
-// with no stored hash short-circuits: reading it would spend egress to compare
-// against nothing.
-func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) CopyVerification {
-	if !loc.Form().Has(core.StoredHashed) {
-		return CopyVerification{Backend: loc.BackendName, Outcome: CopyNotHashed}
-	}
-
-	res := s.verifyOne(ctx, loc, s.admitsRead)
-	switch {
-	case res.Outcome == batch.ItemSucceeded:
-		return CopyVerification{Backend: loc.BackendName, Outcome: CopyVerified}
-	case res.Outcome == batch.ItemFailed:
-		return CopyVerification{Backend: loc.BackendName, Outcome: CopyMismatch}
-	case res.Status == progress.StatusSkipped:
-		return CopyVerification{Backend: loc.BackendName, Outcome: CopyDeclined}
-	default:
-		return CopyVerification{Backend: loc.BackendName, Outcome: CopyUnreadable}
-	}
-}
-
-// Scrub verifies a batch of objects with stored content hashes. Returns the
-// number of objects checked and the number of hash mismatches found.
-func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return runTickCycle(ctx, audit.WorkloadScrub, func(ctx context.Context) batch.Summary {
+// Scrub verifies a batch of copies with stored content hashes, as one scrub
+// pass. backend, when set, limits the pass to that backend's copies.
+func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
+	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadScrub}, func(ctx context.Context) (batch.Summary, error) {
 		return s.scrub(ctx, batchSize, backend, observer)
 	})
 }
 
 // scrub is the body of Scrub after the span is open.
-func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary {
+func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
 	affordable, declined := s.affordableBackends()
 	affordable = restrictToBackend(affordable, backend)
 
@@ -211,8 +157,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 
 	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable, scrubbedBefore)
 	if err != nil {
-		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
-		return batch.Summary{}
+		return batch.Summary{}, fmt.Errorf("fetch copies to scrub: %w", err)
 	}
 
 	deferred := s.countDeferred(ctx, declined, scrubbedBefore)
@@ -226,7 +171,6 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
 	// object body, so a wider window can hammer the backends.
 	runner := batch.Runner[core.ObjectLocation]{
-		Log:         s.log,
 		Concurrency: 1,
 		Observer:    observer,
 		// Copies are verified per (key, backend), so a replicated object is
@@ -235,16 +179,26 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 		Key: func(l core.ObjectLocation) string { return l.ObjectKey + " [" + l.BackendName + "]" },
 	}
 	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-		res := s.verifyOne(ctx, &loc, s.admits)
-		// "checked" = an object we actually verified (matched or mismatched); a
-		// verify error is skipped, not checked.
-		if res.Outcome != batch.ItemSkipped {
-			telemetry.IntegrityChecksTotal.WithLabelValues("scrub").Inc()
-		}
-		return res
+		return scrubResult(s.checkCopy(ctx, &loc, s.admits))
 	})
 	sum.Deferred = deferred
-	return sum
+	return sum, nil
+}
+
+// scrubResult folds a copy's verification into the sweep's tally: a verified
+// copy succeeds, a mismatch fails, and a copy that could not be checked is
+// skipped with the reason on the progress stream.
+func scrubResult(outcome CopyOutcome) batch.ItemResult {
+	switch outcome {
+	case CopyVerified:
+		return batch.Succeeded()
+	case CopyMismatch:
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: "mismatch"}
+	case CopyDeclined:
+		return batch.Skipped(progress.StatusSkipped)
+	default:
+		return batch.Skipped(progress.StatusUnreadable)
+	}
 }
 
 // scrubbedBefore returns the re-verification cutoff for this cycle. A missing
@@ -282,13 +236,6 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 func (s *Scrubber) admits(backend string, egress int64) bool {
 	reserve := s.Config().ScrubReserve(s.deps.Usage().GetLimits()[backend].EgressByteLimit)
 	return s.deps.Acct().Allow(backend, s3op.GetObject, egress+reserve, 0)
-}
-
-// admitsRead reports whether an operator's check of one key may read egress
-// bytes from a backend: the whole limit, as a client read gets, with no scrub
-// reserve held back.
-func (s *Scrubber) admitsRead(backend string, egress int64) bool {
-	return s.deps.Acct().Allow(backend, s3op.GetObject, egress, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -340,23 +287,15 @@ func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
 	})
 }
 
-// verifyOne verifies one object's stored hash and classifies the result for the
-// batch tally: a matched hash succeeds, a mismatch fails, and a verify error is
-// skipped (not counted as checked). A read admit refuses is skipped with
-// StatusSkipped, a failed read with StatusUnreadable. The returned Status feeds
-// the progress stream the batch.Runner brackets each item with.
-func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation, admit func(backend string, egress int64) bool) batch.ItemResult {
-	// Admit the object's own size, since the batch-level split only checked
-	// for any headroom. This must run before the scrub stamp below, so an
-	// unread copy is not recorded as verified.
-	if !admit(loc.BackendName, loc.SizeBytes) {
-		telemetry.IntegrityUsageDeclinedTotal.Inc()
-		s.log.WarnContext(ctx, "scrub declined by usage limits",
-			"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusSkipped}
+// checkCopy verifies one copy against its own stored hash, admitting the read
+// through admit, and acts on what it found. A copy that was read is stamped
+// as scrubbed whatever the outcome, and a mismatch is discarded so the
+// replicator rebuilds from a healthy copy.
+func (s *Scrubber) checkCopy(ctx context.Context, loc *core.ObjectLocation, admit func(backend string, egress int64) bool) CopyOutcome {
+	outcome := s.hasher.verify(ctx, loc, loc, integrityOpScrub, admit)
+	if outcome == CopyNotHashed || outcome == CopyDeclined {
+		return outcome
 	}
-
-	match, verifyErr := s.verifyObject(ctx, loc)
 
 	// Stamped even when the read failed: a copy that always fails would
 	// otherwise sit at the head of the queue and starve the rest of the sweep.
@@ -367,46 +306,13 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation, admi
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	}
 
-	if verifyErr != nil {
-		s.log.WarnContext(ctx, "failed to verify object",
-			"key", loc.ObjectKey, "backend", loc.BackendName, "error", verifyErr)
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusUnreadable}
-	}
-	if match {
-		return batch.Succeeded()
-	}
-	return batch.ItemResult{Outcome: batch.ItemFailed, Status: "mismatch"}
-}
-
-// verifyObject reads a single object, computes its hash, and compares to
-// the stored content hash. On mismatch the corrupted copy is enqueued for
-// cleanup. Returns true if the hash matches.
-func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
-	actual, err := s.hasher.hashStored(ctx, loc)
-	if err != nil {
-		return false, err
-	}
-
-	if actual.SHA256 != loc.ContentHash {
-		s.log.ErrorContext(ctx, "integrity check failed",
-			"key", loc.ObjectKey, "backend", loc.BackendName,
-			"expected_hash", loc.ContentHash, "actual_hash", actual.SHA256)
-		telemetry.IntegrityErrorsTotal.WithLabelValues("scrub").Inc()
-		event.Publish(event.IntegrityCorruptionFound, loc.ObjectKey, map[string]any{
-			"key":           loc.ObjectKey,
-			"backend":       loc.BackendName,
-			"expected_hash": loc.ContentHash,
-			"actual_hash":   actual.SHA256,
-			"size_bytes":    loc.SizeBytes,
-		})
+	if outcome == CopyMismatch {
 		if err := s.discardCopy(ctx, loc, "integrity_scrub_failed"); err != nil {
 			s.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		}
-		return false, nil
 	}
-
-	return true, nil
+	return outcome
 }
 
 // discardCopy removes a copy's ledger row and quota and queues its bytes in
@@ -415,14 +321,13 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 // client overwrite or delete replaced since it was read is left alone: that
 // write already queued the discarded bytes.
 func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, reason string) error {
-	removed, err := s.store.DeleteObjectLocation(ctx, loc, 0, reason)
+	err := s.placement.DropCopy(ctx, loc, 0, reason)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return nil
 	case err != nil:
 		return err
 	}
-	s.placement.Settle(ctx, removed)
 	audit.Log(ctx, "integrity.copy_discarded",
 		slog.String("key", loc.ObjectKey),
 		slog.String("backend", loc.BackendName),
@@ -454,64 +359,123 @@ func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.Object
 }
 
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
-// at a time. Nothing can decrypt them, so they only hold quota. The listing is
-// walked by cursor, so a copy that fails to discard is tried once per purge.
-func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary {
-	ctx = audit.WithWorkload(ctx, audit.WorkloadPurge)
-	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
-		PageSize: batch.FixedPage(batchSize),
-		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+// at a time, as one purge pass. Nothing can decrypt them, so they only hold
+// quota. The listing is walked by cursor, so a copy that fails to discard is
+// tried once per purge.
+func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error) {
+	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadPurge}, func(ctx context.Context) (batch.Summary, error) {
+		pager := copyPager(batchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return s.store.ListCopiesByForm(ctx, &unreadableCopies, limit, after)
-		},
-		CursorOf: func(loc core.ObjectLocation) core.Cursor {
-			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
-		},
-	}
-	runner := batch.Runner[core.ObjectLocation]{
-		Log:         s.log,
-		Concurrency: 1,
-		Observer:    observer,
-		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
-	}
-	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-		if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
-			s.log.WarnContext(ctx, "failed to purge unreadable copy",
-				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
-			return batch.Failed()
+		})
+		runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
+		total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
+			if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
+				s.log.WarnContext(ctx, "failed to purge unreadable copy",
+					"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				return batch.Failed()
+			}
+			return batch.Succeeded()
+		})
+		if stop == batch.Errored {
+			return total, fmt.Errorf("list unreadable copies: %w", err)
 		}
-		return batch.Succeeded()
+		return total, nil
 	})
-	if stop == batch.Errored {
-		s.log.ErrorContext(ctx, "failed to list unreadable copies", "error", err)
-	}
-	return total
 }
+
+// copyPager walks a listing of copies by key, batchSize at a time.
+func copyPager(batchSize int, list func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error)) batch.Pager[core.ObjectLocation, core.Cursor] {
+	return batch.Pager[core.ObjectLocation, core.Cursor]{
+		PageSize: batch.FixedPage(batchSize),
+		List:     list,
+		CursorOf: func(loc core.ObjectLocation) core.Cursor { return loc.Cursor() },
+	}
+}
+
+// locationKey labels a copy on the progress stream by its object key. A
+// runner hands each item by value, which is why this takes the copy whole.
+var locationKey = func(loc core.ObjectLocation) string { return loc.ObjectKey }
 
 // -------------------------------------------------------------------------
 // BACKFILL  -  compute hashes for objects that don't have one
 // -------------------------------------------------------------------------
 
-// HashCopies computes and stores the SHA-256 digest of each copy, for a
-// backfill of copies that have none. observer, when non-nil, receives a start
-// step before each copy is hashed and an end step after, carrying its outcome.
-func (s *Scrubber) HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-	ctx = audit.WithWorkload(audit.WithRequestID(ctx, audit.NewID()), audit.WorkloadBackfill)
-	ctx, span := telemetry.StartSpan(ctx, "Backfill")
-	defer span.End()
+// BackfillRequest bounds one backfill run. BatchSize copies are hashed per
+// page, with Pause between pages to rate-limit backend reads. MaxObjects
+// caps the copies hashed, and zero drains the whole backlog. Backend, when
+// set, limits the run to that backend's copies.
+type BackfillRequest struct {
+	BatchSize  int
+	MaxObjects int
+	Pause      time.Duration
+	Backend    string
+}
 
-	s.log.InfoContext(ctx, "backfill batch starting", "objects", len(locs))
+// BackfillResult reports one backfill run: Succeeded counts the copies hashed
+// and Skipped the ones that could not be decoded. Done is true only when the
+// backlog drained; a run stopped by the object cap or a cancelled context
+// reports false so the caller knows more work remains.
+type BackfillResult struct {
+	batch.Summary
+	Done bool
+}
 
-	// Sequential (Concurrency 1) like Scrub: each item reads and hashes a full
-	// object body.
-	runner := batch.Runner[core.ObjectLocation]{
-		Log:         s.log,
-		Concurrency: 1,
-		Observer:    observer,
-		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
+// Backfill computes and stores the SHA-256 digest of every copy that has
+// none, a page at a time, as one backfill pass. It stops when the backlog
+// drains, the object cap is hit, or ctx is cancelled. observer, when non-nil,
+// receives a start and end step per copy hashed.
+func (s *Scrubber) Backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
+	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadBackfill}, func(ctx context.Context) (BackfillResult, error) {
+		return s.backfill(ctx, req, observer)
+	})
+}
+
+// backfill is the body of Backfill after the span is open. The cap and the
+// pause sit between pages, so stopping on them leaves the page that was just
+// hashed complete.
+func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
+	unhashed := core.FormFilter{Without: core.StoredHashed, Backend: req.Backend, ManagedOnly: true}
+	pager := copyPager(req.BatchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+		return s.store.ListCopiesByForm(ctx, &unhashed, limit, after)
+	})
+	var res BackfillResult
+	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
+		res.Summary = res.Plus(s.hashPage(ctx, locs, observer))
+		if req.MaxObjects > 0 && res.Succeeded >= req.MaxObjects {
+			return batch.Step{Stop: true}, nil
+		}
+		if len(locs) < req.BatchSize {
+			return batch.Step{}, nil // the last page, so there is nothing to pause before
+		}
+		return batch.Step{Stop: req.Pause > 0 && !sleepOrCancel(ctx, req.Pause)}, nil
+	})
+	res.Done = stop == batch.Exhausted
+	if stop == batch.Errored {
+		return res, fmt.Errorf("list unhashed copies: %w", err)
 	}
+	return res, nil
+}
+
+// hashPage hashes one page of copies, one at a time like Scrub, since each
+// reads and hashes a full object body.
+func (s *Scrubber) hashPage(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
+	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
 	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 		return s.hashOne(ctx, &loc)
 	})
+}
+
+// sleepOrCancel waits for d or for ctx to be cancelled, returning false when
+// cancellation wins so the caller stops early.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // hashOne computes and stores the hash for one object, returning the outcome
@@ -522,7 +486,7 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 		// No later pass could hash it either, so it is not a failure.
 		s.log.WarnContext(ctx, "skipping object that cannot be decoded",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusUnreadable}
+		return batch.Skipped(progress.StatusUnreadable)
 	}
 	if hashErr != nil {
 		s.log.WarnContext(ctx, "failed to hash object",
@@ -534,7 +498,7 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 	err := s.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{ContentHash: digests.SHA256, Scrubbed: true})
 	if errors.Is(err, core.ErrCopyChanged) {
 		// A newer write replaced the copy mid-hash; its own write recorded a hash.
-		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusSkipped}
+		return batch.Skipped(progress.StatusSkipped)
 	}
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to store hash",

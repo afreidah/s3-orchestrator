@@ -54,16 +54,14 @@ type Store interface {
 }
 
 // Deps groups the settler's constructor parameters. Concurrency bounds the
-// backends deleted from at once. Admit, when set, wraps each backend's delete
-// so a background caller can take an admission slot; a backend it declines is
-// left unsettled for a later attempt. Name labels the cycle log line; an empty
-// Name settles without one.
+// backends deleted from at once. Admission, when set, runs each backend's
+// delete under one of its slots, so a background caller competes for backend
+// capacity; a backend refused a slot is left unsettled for a later attempt.
 type Deps struct {
 	Deleter     Deleter
 	Store       Store
 	Concurrency int
-	Admit       func(ctx context.Context, fn func())
-	Name        string
+	Admission   batch.Admission
 }
 
 // Settler deletes queued bytes and settles their cleanup rows.
@@ -71,8 +69,7 @@ type Settler struct {
 	deleter     Deleter
 	store       Store
 	concurrency int
-	admit       func(ctx context.Context, fn func())
-	name        string
+	admission   batch.Admission
 	log         *slog.Logger
 }
 
@@ -84,8 +81,7 @@ func New(d Deps) *Settler {
 		deleter:     d.Deleter,
 		store:       d.Store,
 		concurrency: max(d.Concurrency, 1),
-		admit:       d.Admit,
-		name:        d.Name,
+		admission:   d.Admission,
 		log:         slog.Default().With(logfmt.Component("cleanup")),
 	}
 }
@@ -147,12 +143,7 @@ func (s *Settler) Settle(ctx context.Context, items []core.CleanupItem) batch.Su
 		}
 	}
 	s.retire(ctx, items, gone, deleted, results)
-
-	sum := batch.Tally(results, start)
-	if s.name != "" {
-		batch.LogCycle(ctx, s.log, s.name, sum)
-	}
-	return sum
+	return batch.Tally(results, start)
 }
 
 // -------------------------------------------------------------------------
@@ -221,11 +212,11 @@ func (s *Settler) deleteAll(ctx context.Context, items []core.CleanupItem) map[i
 				record(group[i].ID, deletion{err: failed[paths[i]]})
 			}
 		}
-		if s.admit == nil {
+		if s.admission == nil {
 			run()
 			return
 		}
-		s.admit(ctx, run)
+		batch.Admit(ctx, s.admission, run)
 	})
 	return deleted
 }
@@ -294,7 +285,7 @@ func (s *Settler) lost(ctx context.Context, item *core.CleanupItem) batch.ItemRe
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusClaimLost).Inc()
 	s.log.InfoContext(ctx, "cleanup row claimed by another instance, leaving it",
 		slog.Int64("cleanup_id", item.ID), slog.String("backend", item.BackendName))
-	return batch.ItemResult{Outcome: batch.ItemSkipped, Status: statusClaimLost}
+	return batch.Skipped(statusClaimLost)
 }
 
 // exhaust moves a row whose retries are spent into the dead-letter queue, with

@@ -126,7 +126,7 @@ func TestProcessCleanupQueue_DeletesTheBytesAndRetiresTheRow(t *testing.T) {
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
-	sum := cw.ProcessCleanupQueue(context.Background())
+	sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 	if sum.Succeeded != 1 || sum.Failed != 0 {
 		t.Fatalf("summary = %+v, want 1 settled", sum)
 	}
@@ -156,7 +156,7 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
-	sum := cw.ProcessCleanupQueue(context.Background())
+	sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 	if sum.Succeeded != 0 || sum.Failed != 1 {
 		t.Errorf("summary = %+v, want 1 failed", sum)
 	}
@@ -184,7 +184,7 @@ func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
-	sum := cw.ProcessCleanupQueue(context.Background())
+	sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 	if sum.Failed != 1 {
 		t.Errorf("failed = %d, want 1", sum.Failed)
 	}
@@ -208,7 +208,7 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	sum := cw.ProcessCleanupQueue(context.Background())
+	sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 	if sum.Succeeded != 1 || sum.Failed != 0 {
 		t.Errorf("summary = %+v, want 1 settled", sum)
 	}
@@ -250,7 +250,7 @@ func TestProcessCleanupQueue_OutcomeWriteErrors(t *testing.T) {
 			storetest.Permissive(store)
 
 			cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
-			sum := cw.ProcessCleanupQueue(context.Background())
+			sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 			if sum.Succeeded != tc.succeeded || sum.Failed != tc.failed {
 				t.Errorf("summary = %+v, want %d settled and %d failed", sum, tc.succeeded, tc.failed)
 			}
@@ -265,23 +265,25 @@ func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	store := newPermissiveStore(t)
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if sum := cw.ProcessCleanupQueue(context.Background()); sum.Succeeded != 0 || sum.Failed != 0 {
+	if sum := passOf(t)(cw.ProcessCleanupQueue(context.Background())); sum.Succeeded != 0 || sum.Failed != 0 {
 		t.Errorf("summary = %+v, want nothing settled", sum)
 	}
 }
 
-// TestProcessCleanupQueue_FetchError verifies a failed claim ends the tick
+// TestProcessCleanupQueue_FetchError verifies a failed claim fails the pass
 // without settling anything.
 func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	dbErr := errors.New("db error")
 	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db error")).AnyTimes()
+		Return(nil, dbErr).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	if sum := cw.ProcessCleanupQueue(context.Background()); sum.Succeeded != 0 || sum.Failed != 0 {
-		t.Errorf("summary = %+v, want nothing settled on a claim error", sum)
+	sum, err := cw.ProcessCleanupQueue(context.Background())
+	if !errors.Is(err, dbErr) || sum.Succeeded != 0 || sum.Failed != 0 {
+		t.Errorf("summary, err = %+v, %v; want nothing settled and the claim error", sum, err)
 	}
 }
 
@@ -295,7 +297,7 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	if sum := cw.ProcessCleanupQueue(context.Background()); sum.Succeeded != 0 || sum.Failed != 0 {
+	if sum := passOf(t)(cw.ProcessCleanupQueue(context.Background())); sum.Succeeded != 0 || sum.Failed != 0 {
 		t.Errorf("summary = %+v, want nothing settled", sum)
 	}
 }
@@ -321,7 +323,7 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 	start := time.Now()
-	sum := cw.ProcessCleanupQueue(context.Background())
+	sum := passOf(t)(cw.ProcessCleanupQueue(context.Background()))
 	elapsed := time.Since(start)
 
 	if sum.Succeeded != 10 || sum.Failed != 0 {

@@ -14,11 +14,13 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/cleanup"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -63,13 +65,7 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 			Deleter:     deps.Ops,
 			Store:       deps.Store,
 			Concurrency: deps.Concurrency,
-			Name:        string(audit.WorkloadCleanup),
-			Admit: func(ctx context.Context, fn func()) {
-				WithAdmission(ctx, deps.Ops, func() struct{} {
-					fn()
-					return struct{}{}
-				})
-			},
+			Admission:   deps.Ops,
 		}),
 		instanceID:       deps.InstanceID,
 		claimGracePeriod: deps.ClaimGracePeriod,
@@ -92,9 +88,10 @@ const cleanupMaxBatchesPerTick = 20
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ProcessCleanupQueue claims pending cleanup rows and settles them.
-func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) batch.Summary {
-	return runTickCycle(ctx, audit.WorkloadCleanup, w.processCleanupQueue)
+// ProcessCleanupQueue claims pending cleanup rows and settles them, as one
+// cleanup pass.
+func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (batch.Summary, error) {
+	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadCleanup}, w.processCleanupQueue)
 }
 
 // -------------------------------------------------------------------------
@@ -106,8 +103,9 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) batch.Summary {
 // so a backlog drains faster than one batch a tick. Claimed rows leave the
 // claimable set, and a retried row's next_retry moves past now, so each claim
 // takes new rows; a batch that settles nothing ends the tick, so a down backend
-// cannot churn through the whole queue.
-func (w *CleanupWorker) processCleanupQueue(ctx context.Context) batch.Summary {
+// cannot churn through the whole queue. A failed claim ends the pass with what
+// it settled so far.
+func (w *CleanupWorker) processCleanupQueue(ctx context.Context) (batch.Summary, error) {
 	pager := batch.Pager[core.CleanupItem, struct{}]{
 		PageSize: batch.FixedPage(cleanupClaimBatch),
 		List: func(ctx context.Context, limit int, _ struct{}) ([]core.CleanupItem, error) {
@@ -124,11 +122,11 @@ func (w *CleanupWorker) processCleanupQueue(ctx context.Context) batch.Summary {
 		batches++
 		return batch.Step{Progress: sum.Succeeded, Stop: batches == cleanupMaxBatchesPerTick}, nil
 	})
-	if stop == batch.Errored {
-		w.log.ErrorContext(ctx, "failed to claim pending cleanups", "error", err)
-	}
 	w.recordCleanupDepths(ctx)
-	return total
+	if stop == batch.Errored {
+		return total, fmt.Errorf("claim pending cleanups: %w", err)
+	}
+	return total, nil
 }
 
 // reportReclaimed records each row this claim took over from a claim that

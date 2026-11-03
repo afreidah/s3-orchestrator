@@ -136,10 +136,10 @@ func (m *MockReconciler) EXPECT() *MockReconcilerMockRecorder {
 }
 
 // Reconcile mocks base method.
-func (m *MockReconciler) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error) {
+func (m *MockReconciler) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (worker.ReconcileResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Reconcile", ctx, backendName, observer)
-	ret0, _ := ret[0].(*worker.ReconcileResult)
+	ret0, _ := ret[0].(worker.ReconcileResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

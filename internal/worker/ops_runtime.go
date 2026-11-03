@@ -42,6 +42,7 @@ type Ops interface {
 	Usage() *counter.UsageTracker
 	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
+	UpdateQuotaMetrics(ctx context.Context) error
 }
 
 // Placement is the store-coupled write-path facet (target selection, claim,
@@ -54,5 +55,6 @@ type Placement interface {
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 	Place(ctx context.Context, p *core.Placement) (int64, error)
 	Discard(ctx context.Context, p *core.PendingObject, reason string)
+	DropCopy(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) error
 	Settle(ctx context.Context, items []core.CleanupItem)
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"testing"
 	"time"
 
 	"go.uber.org/mock/gomock"
@@ -28,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -106,12 +108,26 @@ func intentOn(backendName, objectKey string) gomock.Matcher {
 // -------------------------------------------------------------------------
 
 // newMockOps builds an Ops mock that already answers Quota() with a real
-// tracker. Every fixture needs it, because an unanswered call inside a worker
-// pool deadlocks the dispatcher instead of failing the test.
+// tracker and accepts the quota refresh a pass that changed something makes.
+// Every fixture needs both, because an unanswered call inside a worker pool
+// deadlocks the dispatcher instead of failing the test.
 func newMockOps(ctrl *gomock.Controller) *MockOps {
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().Quota().Return(counter.NewQuotaTracker()).AnyTimes()
+	ops.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
 	return ops
+}
+
+// passOf returns a pass's tally, failing the test when the pass errored, so a
+// call site reads passOf(t)(w.Pass(ctx)).
+func passOf(t *testing.T) func(batch.Summary, error) batch.Summary {
+	return func(sum batch.Summary, err error) batch.Summary {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("pass: %v", err)
+		}
+		return sum
+	}
 }
 
 // expectBackendOrder has ops list order as its backends and name targets as
@@ -183,6 +199,21 @@ func placeThroughStore(pl *MockPlacement, ms *mockMetadataStore) {
 		}).AnyTimes()
 }
 
+// dropThroughStore has pl drop copies through del, the way the coordinator
+// drops them through the store, and settle what a removal queued through pl
+// itself, so a test's Settle expectations see each drop.
+func dropThroughStore(pl *MockPlacement, del func(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)) {
+	pl.EXPECT().DropCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) error {
+			queued, err := del(ctx, loc, keepAtLeast, reason)
+			if err != nil {
+				return err
+			}
+			pl.Settle(ctx, queued)
+			return nil
+		}).AnyTimes()
+}
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -218,6 +249,7 @@ type mockMetadataStore struct {
 	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	unreadable          []core.ObjectLocation
+	unhashed            []core.ObjectLocation
 	allLocations        []core.ObjectLocation
 	allLocationsErr     error
 	scrubbed            []string
@@ -383,6 +415,9 @@ func (m *mockMetadataStore) UpdateCopyMetadata(_ context.Context, loc *core.Obje
 			return m.hashPatchErr
 		}
 		m.lastUpdatedHash = p.ContentHash
+		m.unhashed = slices.DeleteFunc(m.unhashed, func(r core.ObjectLocation) bool {
+			return r.ObjectKey == loc.ObjectKey && r.BackendName == loc.BackendName
+		})
 		return nil
 	}
 	m.scrubbed = append(m.scrubbed, loc.ObjectKey+"@"+loc.BackendName)
@@ -400,14 +435,25 @@ func isUnreadableQuery(with, without core.StoredFlags) bool {
 	return with == core.StoredEncrypted && without == core.StoredKeyed
 }
 
-// ListCopiesByForm returns up to limit rows of the unreadable fixture that sort
-// after the cursor, in (object_key, backend_name) order, and nothing for any
-// other filter.
+// isUnhashedQuery reports whether a form query asks for the managed copies a
+// backfill still has to hash.
+func isUnhashedQuery(f *core.FormFilter) bool {
+	return f.Without == core.StoredHashed && f.ManagedOnly
+}
+
+// ListCopiesByForm returns up to limit rows of the unreadable or the unhashed
+// fixture that sort after the cursor, in (object_key, backend_name) order,
+// and nothing for any other filter.
 func (m *mockMetadataStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	if !isUnreadableQuery(f.With, f.Without) {
+	var rows []core.ObjectLocation
+	switch {
+	case isUnreadableQuery(f.With, f.Without):
+		rows = slices.Clone(m.unreadable)
+	case isUnhashedQuery(f):
+		rows = slices.Clone(m.unhashed)
+	default:
 		return nil, nil
 	}
-	rows := slices.Clone(m.unreadable)
 	slices.SortFunc(rows, func(a, b core.ObjectLocation) int {
 		return cmp.Or(cmp.Compare(a.ObjectKey, b.ObjectKey), cmp.Compare(a.BackendName, b.BackendName))
 	})

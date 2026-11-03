@@ -69,9 +69,6 @@ var (
 	// LifecycleFailedTotal counts objects that failed lifecycle deletion.
 	LifecycleFailedTotal = counter("s3o_lifecycle_failed_total", "Objects that failed lifecycle deletion")
 
-	// LifecycleRunsTotal counts lifecycle worker executions.
-	LifecycleRunsTotal = counterVec("s3o_lifecycle_runs_total", "Lifecycle worker executions", "status")
-
 	// DrainObjectsMoved counts objects moved during backend drain operations.
 	DrainObjectsMoved = counter("s3o_drain_objects_moved_total",
 		"Total number of objects moved during backend drain operations")

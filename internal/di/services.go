@@ -7,8 +7,8 @@
 // read state from several collaborators at once, through the consumer
 // interfaces declared in service_interfaces.go:
 //
-//   - usageFlushService: adapts its tick interval at runtime based on
-//     observed load; does not fit the plain tickrunner.Service shape.
+//   - usageFlushService: runs on every instance with no lock, and adapts
+//     its tick interval at runtime based on observed load.
 //   - fleetSnapshotService: recomputes the fleet-wide gauges on the
 //     telemetry.metrics.fleet_interval cadence through the runtime.
 //   - lifecycleService: a small tickrunner wrapper that needs the
@@ -26,6 +26,7 @@ package di
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -34,15 +35,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// defaultLifecycleTick is the lifecycle service's tick cadence.
-const defaultLifecycleTick = 1 * time.Hour
+// lifecycleTick is the lifecycle service's tick cadence.
+const lifecycleTick = 1 * time.Hour
 
 // -------------------------------------------------------------------------
 // USAGE FLUSH
@@ -54,7 +54,8 @@ const defaultLifecycleTick = 1 * time.Hour
 // instance finds it.
 type usageFlushService struct {
 	UsageFlushDeps
-	log *slog.Logger
+	log     *slog.Logger
+	current time.Duration
 }
 
 // UsageFlushDeps groups what the flush tick draws on: the usage service that
@@ -70,51 +71,52 @@ type UsageFlushDeps struct {
 	Config  syncutil.Section[config.UsageFlushConfig]
 }
 
-// NewUsageFlushService constructs the usage flush background service.
+// NewUsageFlushService constructs the usage flush background service, which
+// runs on every instance with no lock. Its interval adapts toward
+// FastInterval when a backend nears its limits.
 func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
+	s := newUsageFlush(d)
+	return tickrunner.New(tickrunner.Config{
+		Name:     usageFlushSlug,
+		Log:      s.log,
+		Interval: s.current,
+		Next:     s.nextInterval,
+		Work:     s.flushTick,
+	})
+}
+
+// usageFlushSlug names the usage flush service and its log component.
+const usageFlushSlug = "usage_flush"
+
+// newUsageFlush builds the flush the service ticks, starting on the
+// configured interval.
+func newUsageFlush(d *UsageFlushDeps) *usageFlushService {
 	must.NotNil("d", d)
 	must.NotNil("d.Flusher", d.Flusher)
 	must.NotNil("d.Tracker", d.Tracker)
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.States", d.States)
 	must.NotNil("d.Config", d.Config)
-	return &usageFlushService{UsageFlushDeps: *d, log: tickrunner.ComponentLogger("usage_flush")}
-}
-
-// Run periodically flushes in-memory usage counters and adapts the tick
-// interval toward FastInterval when a backend nears its limits.
-func (s *usageFlushService) Run(ctx context.Context) error {
-	interval := s.Config.Config().Interval
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	currentInterval := interval
-
-	for {
-		select {
-		case <-ticker.C:
-			tickCtx := audit.WithRequestID(ctx, audit.NewID())
-			s.flushTick(tickCtx)
-			currentInterval = s.adjustInterval(ctx, ticker, currentInterval)
-		case <-ctx.Done():
-			return nil
-		}
+	return &usageFlushService{
+		UsageFlushDeps: *d,
+		log:            tickrunner.ComponentLogger(usageFlushSlug),
+		current:        d.Config.Config().Interval,
 	}
 }
 
-// adjustInterval reconfigures the flush ticker when the reloaded config or the
-// adaptive fast-path changes the target interval, and returns the interval now
-// in effect (unchanged when nothing moved).
-func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Ticker, current time.Duration) time.Duration {
+// nextInterval returns the wait before the next flush: the configured
+// interval, or the fast one while a backend nears its limits. A change is
+// logged once, when it happens.
+func (s *usageFlushService) nextInterval() time.Duration {
 	cfg := s.Config.Config()
 	target := cfg.Interval
 	if cfg.AdaptiveEnabled && s.Tracker.NearLimit(cfg.AdaptiveThreshold) {
 		target = cfg.FastInterval
 	}
-	if target == current {
-		return current
+	if target != s.current {
+		s.current = target
+		s.log.InfoContext(context.Background(), "interval adjusted", "interval", target)
 	}
-	ticker.Reset(target)
-	s.log.InfoContext(ctx, "interval adjusted", "interval", target)
 	return target
 }
 
@@ -123,29 +125,31 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 // published. Every instance then reloads its own usage baselines, or its limit
 // checks would keep admitting work against budget already spent. The fleet
 // snapshot itself is computed by the fleet snapshot service on its own
-// cadence.
-func (s *usageFlushService) flushTick(ctx context.Context) {
-	s.logUnlessDBDown(ctx, "quota baseline refresh failed", s.Flusher.RefreshQuotaBaselines(ctx))
-	s.logUnlessDBDown(ctx, "counter flush failed", s.Flusher.FlushUsage(ctx))
+// cadence. Every step runs whatever the others did, and their failures are
+// returned together.
+func (s *usageFlushService) flushTick(ctx context.Context) error {
+	quotaErr := wrapStep("refresh quota baselines", s.Flusher.RefreshQuotaBaselines(ctx))
+	flushErr := wrapStep("flush counters", s.Flusher.FlushUsage(ctx))
 	if s.Flusher.RedisCounterConfigured() {
 		s.loadFleetState(ctx)
 	}
 
 	// After the flush, so the baseline includes what it wrote.
-	s.logUnlessDBDown(ctx, "usage baseline refresh failed", s.Fleet.RefreshUsageBaselines(ctx))
+	usageErr := wrapStep("refresh usage baselines", s.Fleet.RefreshUsageBaselines(ctx))
 
 	// This service runs on every instance in every mode, while the drain
 	// worker that also refreshes the cache runs on one instance at a time.
 	// A stale cache only costs ranking: admission reads the records itself.
-	s.logUnlessDBDown(ctx, "backend state refresh failed", s.States.Refresh(ctx))
+	statesErr := wrapStep("refresh backend states", s.States.Refresh(ctx))
+	return errors.Join(quotaErr, flushErr, usageErr, statesErr)
 }
 
-// logUnlessDBDown logs a failed tick step. A database outage is skipped: the
-// breaker already reports it, and every step would repeat it each tick.
-func (s *usageFlushService) logUnlessDBDown(ctx context.Context, msg string, err error) {
-	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, msg, "error", err)
+// wrapStep names a failed tick step in its error, and passes nil through.
+func wrapStep(step string, err error) error {
+	if err == nil {
+		return nil
 	}
+	return fmt.Errorf("%s: %w", step, err)
 }
 
 // loadFleetState loads the fleet snapshot and the worker gauges, which their
@@ -168,19 +172,12 @@ func (s *usageFlushService) loadFleetState(ctx context.Context) {
 // mode under its own advisory lock; an instance that finds a fresh snapshot
 // already published applies it instead of scanning the ledger again.
 func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker tickrunner.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
-	const slug = "fleet_snapshot"
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: interval,
 		LockID:   core.LockFleetSnapshot,
-		Name:     slug,
-		Log:      tickrunner.ComponentLogger(slug),
-		Work: func(ctx context.Context) error {
-			if err := fleet.RefreshFleetIfStale(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				return err
-			}
-			return nil
-		},
+		Name:     "fleet_snapshot",
+		Work:     fleet.RefreshFleetIfStale,
 	})
 }
 
@@ -193,30 +190,18 @@ func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker tickrunner.Adv
 // surface is on *expiry.Manager via the lifecycleOps consumer interface -
 // there is no dedicated worker type.
 func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
-	const slug = "lifecycle"
-	log := tickrunner.ComponentLogger(slug)
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
-		Interval: defaultLifecycleTick,
+		Interval: lifecycleTick,
 		LockID:   core.LockLifecycle,
-		Name:     slug,
-		Log:      log,
+		Name:     string(audit.WorkloadLifecycle),
 		ShouldRun: func() bool {
 			return len(manager.Config().Rules) > 0
 		},
 		Work: func(ctx context.Context) error {
 			// No observer: nothing is watching a scheduled tick.
-			sum := manager.ProcessRules(ctx, manager.Config().Rules, nil)
-			if sum.Failed > 0 {
-				telemetry.LifecycleRunsTotal.WithLabelValues("partial").Inc()
-			} else {
-				telemetry.LifecycleRunsTotal.WithLabelValues("success").Inc()
-			}
+			manager.ProcessRules(ctx, manager.Config().Rules, nil)
 			return nil
-		},
-		OnError: func(err error) {
-			log.ErrorContext(context.Background(), "expiration failed", "error", err)
-			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	})
 }

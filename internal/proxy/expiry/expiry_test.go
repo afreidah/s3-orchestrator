@@ -126,7 +126,7 @@ func newManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *storetest.Moc
 	t.Helper()
 	lister := storetest.NewMockExpiredObjectsLister(ctrl)
 	deleter := NewMockObjectDeleter(ctrl)
-	return New(lister, deleter, syncutil.Fixed(&config.LifecycleConfig{}), nil), lister, deleter
+	return New(lister, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100}), nil), lister, deleter
 }
 
 // -------------------------------------------------------------------------
@@ -375,29 +375,5 @@ func TestProcessRules_ReportsProgress(t *testing.T) {
 		if steps[i].Label != w.Label || steps[i].Phase != w.Phase || steps[i].Status != w.Status {
 			t.Errorf("step %d = %+v, want %+v", i, steps[i], w)
 		}
-	}
-}
-
-// TestBatchSizeFor covers the configured/unset/non-positive cases of the
-// per-tick batch bound.
-func TestBatchSizeFor(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		cfg  *config.LifecycleConfig
-		want int
-	}{
-		{"nil config", nil, defaultBatchSize},
-		{"unset", &config.LifecycleConfig{}, defaultBatchSize},
-		{"non-positive", &config.LifecycleConfig{BatchSize: -1}, defaultBatchSize},
-		{"configured", &config.LifecycleConfig{BatchSize: 25}, 25},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := batchSizeFor(c.cfg); got != c.want {
-				t.Errorf("batchSizeFor(%+v) = %d, want %d", c.cfg, got, c.want)
-			}
-		})
 	}
 }

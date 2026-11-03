@@ -20,6 +20,8 @@ import (
 	"maps"
 	"slices"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // rosterTTLBeats is how many heartbeats a report outlives the last one that
@@ -55,18 +57,13 @@ func (r *Roster[T]) Run(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
-	ticker := time.NewTicker(r.cfg.Interval)
-	defer ticker.Stop()
-	for {
+	beat := syncutil.Schedule{Interval: r.cfg.Interval, Immediately: true}
+	beat.Run(ctx, func(ctx context.Context) {
 		if data, err := json.Marshal(r.cfg.Report(ctx)); err == nil {
 			_ = store.PutShared(ctx, r.key(), data, rosterTTLBeats*r.cfg.Interval)
 		}
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			return nil
-		}
-	}
+	})
+	return nil
 }
 
 // List returns every running instance's report: this instance's built now,

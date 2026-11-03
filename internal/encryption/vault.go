@@ -25,6 +25,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -90,7 +91,7 @@ func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, err
 		log:           slog.Default().With(logfmt.Component("vault_kms")),
 	}
 
-	go p.tokenRenewalLoop(ctx)
+	go syncutil.Every(ctx, p.renewInterval, p.refreshToken)
 	return p, nil
 }
 
@@ -161,29 +162,19 @@ func (p *VaultKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, _ s
 // TOKEN LIFECYCLE
 // -------------------------------------------------------------------------
 
-// tokenRenewalLoop runs in a background goroutine and keeps the Vault token
-// alive. For token_file configs it re-reads the file; for static tokens it
-// calls RenewSelf. Modeled on vault-cert-manager's renewal loop.
-func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
-	ticker := time.NewTicker(p.renewInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if p.tokenFile != "" {
-				if err := p.reloadTokenFile(ctx); err != nil {
-					p.log.ErrorContext(ctx, "failed to reload Vault token file",
-						slog.String("path", p.tokenFile), "error", err)
-				}
-			} else {
-				if err := p.renewToken(ctx); err != nil {
-					p.log.ErrorContext(ctx, "failed to renew Vault token", "error", err)
-				}
-			}
+// refreshToken keeps the Vault token alive, once per renewal interval. For
+// token_file configs it re-reads the file; for static tokens it calls
+// RenewSelf. Modeled on vault-cert-manager's renewal loop.
+func (p *VaultKeyProvider) refreshToken(ctx context.Context) {
+	if p.tokenFile != "" {
+		if err := p.reloadTokenFile(ctx); err != nil {
+			p.log.ErrorContext(ctx, "failed to reload Vault token file",
+				slog.String("path", p.tokenFile), "error", err)
 		}
+		return
+	}
+	if err := p.renewToken(ctx); err != nil {
+		p.log.ErrorContext(ctx, "failed to renew Vault token", "error", err)
 	}
 }
 

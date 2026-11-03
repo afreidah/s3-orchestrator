@@ -22,6 +22,7 @@ import (
 	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -109,7 +110,8 @@ func (s DrainSummary) AuditAttrs() []slog.Attr {
 // the drains whose backend ends up empty. observer, when non-nil, receives a
 // start and end step per object.
 func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainSummary, error) {
-	return runOpsCycle(ctx, audit.WorkloadDrain, func(ctx context.Context) (DrainSummary, error) {
+	pass := cycle.Pass{Workload: audit.WorkloadDrain, Refresh: d.ops}
+	return cycle.Run(ctx, pass, func(ctx context.Context) (DrainSummary, error) {
 		records, err := d.store.ListBackendStates(ctx)
 		if err != nil {
 			return DrainSummary{}, fmt.Errorf("list backend states: %w", err)
@@ -172,9 +174,7 @@ func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord
 			}
 			return page, nil
 		},
-		CursorOf: func(obj core.ObjectLocation) core.SizeCursor {
-			return core.SizeCursor{SizeBytes: obj.SizeBytes, ObjectKey: obj.ObjectKey}
-		},
+		CursorOf: func(obj core.ObjectLocation) core.SizeCursor { return obj.SizeCursor() },
 		// A cancel or a failure recorded elsewhere stops the pass here.
 		BeforePage: func(ctx context.Context) (bool, error) {
 			return d.stillDraining(ctx, name)
@@ -213,28 +213,23 @@ func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord
 // is dropped without a per-object lookup. A failed lookup ends the pass for the
 // next tick to retry.
 func (d *Drainer) movePage(ctx context.Context, srcName string, page []core.ObjectLocation, observer progress.Observer) (batch.Summary, error) {
-	keys := make([]string, len(page))
-	for i := range page {
-		keys[i] = page[i].ObjectKey
-	}
-	copies, err := d.store.GetObjectBackendsForKeys(ctx, keys)
+	copies, err := d.store.GetObjectBackendsForKeys(ctx, core.KeysOf(page))
 	if err != nil {
 		return batch.Summary{}, fmt.Errorf("look up copies: %w", err)
 	}
 	runner := batch.Runner[core.ObjectLocation]{
 		Concurrency: 1,
+		Admission:   d.ops,
 		Observer:    observer,
 		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
 	}
 	return runner.Run(ctx, page, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
-		return WithAdmission(ctx, d.ops, func() batch.ItemResult {
-			if !d.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey]) {
-				return batch.Failed()
-			}
-			telemetry.DrainObjectsMoved.Inc()
-			telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
-			return batch.Succeeded()
-		})
+		if !d.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey]) {
+			return batch.Failed()
+		}
+		telemetry.DrainObjectsMoved.Inc()
+		telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
+		return batch.Succeeded()
 	}), nil
 }
 
@@ -321,7 +316,7 @@ func otherCopyBackend(backends []string, srcName string) string {
 // off instead. A copy that holds the only usable encryption key is kept, and
 // one a client overwrote since the page was read is left for the next pass.
 func (d *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
-	removed, err := d.store.DeleteObjectLocation(ctx, obj, 1, writepath.DrainMove.Reasons.SourceDelete)
+	err := d.placement.DropCopy(ctx, obj, 1, writepath.DrainMove.Reasons.SourceDelete)
 	switch {
 	case errors.Is(err, core.ErrCopyNotExcess):
 		return d.moveOff(ctx, srcName, obj)
@@ -336,7 +331,6 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core
 			"key", obj.ObjectKey, "backend", srcName, "error", err)
 		return false
 	}
-	d.placement.Settle(ctx, removed)
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
 		slog.String("removed_from", srcName),

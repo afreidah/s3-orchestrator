@@ -104,7 +104,8 @@ func User(ctx context.Context) string {
 // -------------------------------------------------------------------------
 
 // Workload names what a backend call was made for, so usage can be split by
-// cause.
+// cause. A background pass is reported under its workload too, including one
+// that makes no backend calls, such as the notifier.
 type Workload string
 
 // The workloads. A charge with none is recorded as unknown.
@@ -126,6 +127,7 @@ const (
 	WorkloadCleanup          Workload = "cleanup"
 	WorkloadPurge            Workload = "purge"
 	WorkloadProbe            Workload = "probe"
+	WorkloadNotifier         Workload = "notifier"
 )
 
 // WithWorkload stores the workload on the context, replacing any outer one, so

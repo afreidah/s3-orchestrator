@@ -581,10 +581,10 @@ func TestDrain_DeliversAndCompletes(t *testing.T) {
 	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}}
 	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
 
-	succeeded, failed := n.drain(context.Background())
+	sum, err := n.drain(context.Background())
 
-	if succeeded != 1 || failed != 0 {
-		t.Errorf("drain = (%d, %d), want (1, 0)", succeeded, failed)
+	if err != nil || sum.Succeeded != 1 || sum.Failed != 0 {
+		t.Errorf("drain = %+v, %v; want 1 succeeded", sum, err)
 	}
 	if len(ms.completed()) != 1 || ms.completed()[0] != 1 {
 		t.Errorf("expected ID 1 completed, got %v", ms.completed())
@@ -615,7 +615,7 @@ func TestDrain_PublishesOutboxBacklog(t *testing.T) {
 	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
 	n.SetGaugePublisher(pub)
 
-	n.drain(context.Background())
+	_, _ = n.drain(context.Background())
 
 	pub.mu.Lock()
 	defer pub.mu.Unlock()
@@ -648,10 +648,10 @@ func TestDrain_RetriesWithBackoff(t *testing.T) {
 			ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, tc.attempts)}}
 			n := drainNotifier(ms, testEndpoint(srv.URL, tc.maxRetries))
 
-			succeeded, failed := n.drain(context.Background())
+			sum, err := n.drain(context.Background())
 
-			if succeeded != 0 || failed != 1 {
-				t.Errorf("drain = (%d, %d), want (0, 1)", succeeded, failed)
+			if err != nil || sum.Succeeded != 0 || sum.Failed != 1 {
+				t.Errorf("drain = %+v, %v; want 1 failed", sum, err)
 			}
 			assertRetriedOnly(t, ms, retryBackoff.For(tc.attempts))
 		})
@@ -683,7 +683,7 @@ func TestDrain_ExhaustedRowIsDropped(t *testing.T) {
 	n := drainNotifier(ms, testEndpoint(srv.URL, 12))
 	before := promtest.ToFloat64(telemetry.NotificationDroppedTotal)
 
-	n.drain(context.Background())
+	_, _ = n.drain(context.Background())
 
 	if got := ms.completed(); len(got) != 1 || got[0] != 1 {
 		t.Errorf("completed = %v, want [1]", got)
@@ -703,7 +703,7 @@ func TestDrain_UnknownEndpointCompleted(t *testing.T) {
 	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, "https://gone.example.com", 0)}}
 	n := drainNotifier(ms)
 
-	n.drain(context.Background())
+	_, _ = n.drain(context.Background())
 
 	if len(ms.completed()) != 1 {
 		t.Errorf("notification to unknown endpoint should be completed (dropped), got %v", ms.completed())
@@ -843,17 +843,18 @@ func TestDrain_CompleteFailure_DoesNotPanic(t *testing.T) {
 			t.Fatalf("drain panicked: %v", r)
 		}
 	}()
-	n.drain(context.Background())
+	_, _ = n.drain(context.Background())
 }
 
 // TestDrain_FetchFailure_ProcessesNothing verifies a failed outbox read ends
-// the drain with nothing delivered or failed.
+// the drain with nothing delivered or failed, and reports the read error.
 func TestDrain_FetchFailure_ProcessesNothing(t *testing.T) {
 	t.Parallel()
-	n := drainNotifier(&failingOutboxStore{pendingErr: errors.New("read failed")})
+	readErr := errors.New("read failed")
+	n := drainNotifier(&failingOutboxStore{pendingErr: readErr})
 
-	if succeeded, failed := n.drain(context.Background()); succeeded != 0 || failed != 0 {
-		t.Errorf("drain = (%d, %d), want (0, 0)", succeeded, failed)
+	if sum, err := n.drain(context.Background()); !errors.Is(err, readErr) || sum.Attempted != 0 {
+		t.Errorf("drain = %+v, %v; want nothing attempted and the read error", sum, err)
 	}
 }
 
@@ -873,5 +874,5 @@ func TestDrain_RetryFailure_DoesNotPanic(t *testing.T) {
 			t.Fatalf("drain panicked: %v", r)
 		}
 	}()
-	n.drain(context.Background())
+	_, _ = n.drain(context.Background())
 }

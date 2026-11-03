@@ -20,6 +20,7 @@ package di
 
 import (
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -36,26 +37,35 @@ import (
 )
 
 // allLockedTickerServices builds every locked-ticker background service
-// the lifecycle manager registers in worker/all mode. Used by the
-// lockID-uniqueness and interval-sanity assertions below.
+// the lifecycle manager registers in worker/all mode, over a lock another
+// instance holds. Used by the lockID-uniqueness and interval-sanity
+// assertions below.
 func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 	t.Helper()
+	return lockedTickerServices(t, testx.Locker{Busy: true})
+}
+
+// lockedTickerServices builds every locked-ticker background service over
+// locker.
+func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Service {
+	t.Helper()
 	f := newServicesFixture(t)
-	locker := testx.Locker{Busy: true}
+	declared := provisioning.NewDeclared()
+	declared.Set([]provisioning.Bucket{{Name: "photos", Source: provisioning.SourceConfig}})
 
 	runners := []lifecycle.Runner{
 		multipart.NewCleanupService(f.stack.Multipart, locker, 0),
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
-		worker.NewRebalancerService(f.stack.Runtime, f.rebalancer, locker),
+		worker.NewRebalancerService(f.rebalancer, locker),
 		NewLifecycleService(f.expirer, locker),
-		worker.NewOverReplicationService(f.stack.Runtime, f.overRep, locker),
-		worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker),
+		worker.NewOverReplicationService(f.overRep, locker),
+		worker.NewReplicatorService(f.replicator, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
-			Buckets: provisioning.NewDeclared(),
+			Buckets: declared,
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
-		worker.NewDrainerService(f.stack.Runtime, f.stack.Drainer, locker),
+		worker.NewDrainerService(f.stack.Drainer, locker),
 	}
 	out := make([]*tickrunner.Service, 0, len(runners))
 	for _, r := range runners {
@@ -66,6 +76,20 @@ func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 		out = append(out, ts)
 	}
 	return out
+}
+
+// TestPeriodicServiceSpecs_TickOverAnEmptyFleet runs one tick of every
+// service with the lock granted, over a store with nothing in it, and
+// asserts each records a tick rather than failing: a service whose pass
+// cannot run on an idle fleet would fail every tick of a new deployment.
+func TestPeriodicServiceSpecs_TickOverAnEmptyFleet(t *testing.T) {
+	t.Parallel()
+	for _, s := range lockedTickerServices(t, testx.Locker{}) {
+		s.Tick(t.Context())
+		if h := s.Health(); h.ConsecutiveFailures != 0 {
+			t.Errorf("service %q failed its tick: %s", s.Name(), h.LastError)
+		}
+	}
 }
 
 // TestPeriodicServiceSpecs_LockIDsUnique pins the operational invariant
@@ -111,7 +135,15 @@ func TestPeriodicServiceSpecs_IntervalsSane(t *testing.T) {
 // so the test body stays a flat sequence of subtests.
 func lifecycleManagerForMode(t *testing.T, mode config.Mode) *lifecycle.Manager {
 	t.Helper()
+	return lifecycleManagerFor(t, mode, time.Hour)
+}
+
+// lifecycleManagerFor resolves the lifecycle manager for mode with the
+// scrubber running every scrubEvery, where zero turns the sweep off.
+func lifecycleManagerFor(t *testing.T, mode config.Mode, scrubEvery time.Duration) *lifecycle.Manager {
+	t.Helper()
 	cfg := happyPathConfig(t.TempDir())
+	cfg.Integrity.ScrubberInterval = scrubEvery
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
@@ -182,6 +214,15 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 			mgr := lifecycleManagerForMode(t, tc.mode)
 			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, append(tc.mustNotHave, "provisioning_watch"))
 		})
+	}
+}
+
+// TestLifecycleManager_ZeroScrubIntervalRegistersNoScrub verifies a scrubber
+// interval of zero, which turns the sweep off, registers no scrub service.
+func TestLifecycleManager_ZeroScrubIntervalRegistersNoScrub(t *testing.T) {
+	t.Parallel()
+	if names := lifecycleManagerFor(t, config.ModeAll, 0).Names(); slices.Contains(names, "scrub") {
+		t.Errorf("registered %v, want no scrub service", names)
 	}
 }
 

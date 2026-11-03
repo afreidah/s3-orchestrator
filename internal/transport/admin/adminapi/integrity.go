@@ -88,10 +88,11 @@ type UnreadablePurgeResponse struct {
 
 // ReconcileResponse reports a reconcile pass: objects adopted from backend
 // storage into the ledger, ledger rows dropped for objects no longer present,
-// and how many backends were walked.
+// how many backends were walked, and how many of those failed partway.
 type ReconcileResponse struct {
 	Outcome
 	Imported        int `json:"imported"`
 	Removed         int `json:"removed"`
 	BackendsScanned int `json:"backends_scanned"`
+	BackendsFailed  int `json:"backends_failed"`
 }

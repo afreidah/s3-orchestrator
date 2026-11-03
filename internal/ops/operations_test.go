@@ -178,13 +178,11 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Store:      mock,
 		Encryptor:  enc,
 		EncStore:   store,
-		Runtime:    st.Runtime,
 		Mover:      mover,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
-		Unhashed:   mock,
 		Locker:     mock,
 		Declared:   declaredBuckets(testBucket),
 		Config:     st.Config,
@@ -285,12 +283,8 @@ func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.
 			return worker.RebalanceSummary{}, nil
 		}).Times(1)
 
-	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
-
 	return NewRebalance(RebalanceDeps{
 		Rebalancer: m,
-		Runtime:    runtime,
 		Config:     config.NewLive(&config.Config{Rebalance: configured}),
 	})
 }
@@ -317,32 +311,10 @@ func TestRebalance_RunsTheRunningConfig(t *testing.T) {
 // rebalancer as unavailable rather than panicking.
 func TestRebalance_NotWired(t *testing.T) {
 	t.Parallel()
-	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	svc := NewRebalance(RebalanceDeps{Runtime: runtime, Config: config.NewLive(&config.Config{})})
+	svc := NewRebalance(RebalanceDeps{Config: config.NewLive(&config.Config{})})
 
 	_, err := svc.Run(context.Background(), nil)
 	assertSkipped(t, err)
-}
-
-// TestRebalance_QuotaMetricsFailureStillReports asserts a failed metrics
-// refresh does not undo a cycle that already moved objects.
-func TestRebalance_QuotaMetricsFailureStillReports(t *testing.T) {
-	t.Parallel()
-	m := opstest.NewMockRebalancer(gomock.NewController(t))
-	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(worker.RebalanceSummary{Succeeded: 2}, nil).Times(1)
-	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(errors.New("metrics down")).Times(1)
-
-	svc := NewRebalance(RebalanceDeps{Rebalancer: m, Runtime: runtime, Config: config.NewLive(&config.Config{})})
-
-	res, err := svc.Run(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.Succeeded != 2 {
-		t.Errorf("moved = %d, want 2", res.Succeeded)
-	}
 }
 
 // TestScrub_SkippedWhenIntegrityDisabled asserts a scrub declines rather than
@@ -387,7 +359,7 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, nil)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if !errors.Is(err, ErrScrubInProgress) {
@@ -412,7 +384,7 @@ func TestScrub_LockErrorSurfaces(t *testing.T) {
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, wantErr)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
 
 	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
 		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
@@ -427,11 +399,11 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 	var locked bool
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, int, string, progress.Observer) batch.Summary {
+		DoAndReturn(func(context.Context, int, string, progress.Observer) (batch.Summary, error) {
 			if !locked {
 				t.Error("scrub ran outside the advisory lock")
 			}
-			return batch.Summary{Attempted: 3}
+			return batch.Summary{Attempted: 3}, nil
 		})
 
 	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
@@ -443,7 +415,7 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 			return true, err
 		})
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if err != nil {
@@ -925,14 +897,7 @@ func TestObjectsGet_NotFound(t *testing.T) {
 // verification enabled.
 func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	t.Helper()
-	return integrityWithBacklog(t, scrubber, newBacklog(0))
-}
-
-// integrityWithBacklog builds an Integrity over scrubber whose backfill lists
-// from store.
-func integrityWithBacklog(t *testing.T, scrubber ScrubberOps, store UnhashedLister) *Integrity {
-	t.Helper()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: store, Locker: grantingLocker(t), Config: integrityEnabled()})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: grantingLocker(t), Config: integrityEnabled()})
 }
 
 // integrityEnabled is a running config with verification on, so the integrity
@@ -986,40 +951,19 @@ func TestVerifyKey_NoCopiesIsNotFound(t *testing.T) {
 	}
 }
 
-// TestBackfillChecksums_StopsAtObjectCap asserts the cap bounds one request so
-// it fits a client timeout, and reports that the backlog is not drained.
-func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
+// TestBackfillChecksums_DefaultsTheBatchAndPassesTheRequest asserts a zero
+// batch size asks the scrubber for the default, the rest of the request
+// reaches it as given, and its result comes back unchanged.
+func TestBackfillChecksums_DefaultsTheBatchAndPassesTheRequest(t *testing.T) {
 	t.Parallel()
-	b := newBacklog(40)
+	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
+	want := worker.BackfillRequest{BatchSize: defaultBackfillBatchSize, MaxObjects: 25, Pause: time.Second, Backend: "b1"}
+	scrubber.EXPECT().Backfill(gomock.Any(), want, gomock.Any()).
+		Return(worker.BackfillResult{Summary: batch.Summary{Succeeded: 25}}, nil)
 
-	res, err := integrityWithBacklog(t, backlogHasher(t, b, nil), b).BackfillChecksums(context.Background(), 10, 25, 0, "", nil)
-	if err != nil {
-		t.Fatalf("BackfillChecksums: %v", err)
-	}
-	// The cap is checked between pages, so the page that crossed it completes.
-	if res.Succeeded != 30 || len(b.keys) != 10 {
-		t.Errorf("Processed = %d with %d left, want 30 processed and 10 left", res.Succeeded, len(b.keys))
-	}
-	if res.Done {
-		t.Error("Done = true, want false when the cap stopped the run short of the backlog")
-	}
-}
-
-// TestBackfillChecksums_ReportsUnreadable asserts the copies each pass skipped
-// as undecodable are summed across passes into the run's result.
-func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
-	t.Parallel()
-	// Unreadable copies stay unhashed, so the cursor has to step past them
-	// rather than list them again.
-	b := newBacklog(13)
-	unreadable := func(key string) bool { return key < "k-005" }
-
-	res, err := integrityWithBacklog(t, backlogHasher(t, b, unreadable), b).BackfillChecksums(context.Background(), 10, 0, 0, "", nil)
-	if err != nil {
-		t.Fatalf("BackfillChecksums: %v", err)
-	}
-	if res.Skipped != 5 || res.Succeeded != 8 || !res.Done {
-		t.Errorf("res = %+v, want 5 unreadable, 8 processed and the backlog drained", res)
+	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 0, 25, time.Second, "b1", nil)
+	if err != nil || res.Succeeded != 25 {
+		t.Errorf("res, err = %+v, %v; want the scrubber's 25", res, err)
 	}
 }
 
@@ -1028,11 +972,11 @@ func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
 func TestPurgeUnreadable_DefaultsTheBatchAndReportsTheTally(t *testing.T) {
 	t.Parallel()
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(batch.Summary{Succeeded: 103, Failed: 2})
+	scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(batch.Summary{Succeeded: 103, Failed: 2}, nil)
 
-	res := integrityOver(t, scrubber).PurgeUnreadable(context.Background(), 0, nil)
-	if res.Succeeded != 103 || res.Failed != 2 {
-		t.Errorf("res = %+v, want 103 purged and 2 failed", res)
+	res, err := integrityOver(t, scrubber).PurgeUnreadable(context.Background(), 0, nil)
+	if err != nil || res.Succeeded != 103 || res.Failed != 2 {
+		t.Errorf("res, err = %+v, %v; want 103 purged and 2 failed", res, err)
 	}
 }
 
@@ -1318,12 +1262,9 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 // running at factor 2.
 func replicationOver(t *testing.T, repl Replicator, over OverReplicationOps) *Replication {
 	t.Helper()
-	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
 	return NewReplication(ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,
-		Runtime:    runtime,
 		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 	})
 }
@@ -1521,7 +1462,6 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 			Return(worker.RebalanceSummary{}, errBackend).Times(1)
 		svc := NewRebalance(RebalanceDeps{
 			Rebalancer: m,
-			Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
 			Config:     config.NewLive(&config.Config{}),
 		})
 
@@ -1529,49 +1469,6 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 			t.Errorf("err = %v, want the worker failure", err)
 		}
 	})
-}
-
-// TestBackfillChecksums_StopsOnCancelledContext asserts an operator who
-// disconnects mid-run stops the pass rather than leaving it draining the
-// backlog, and that the inter-batch pause honours the same cancellation.
-func TestBackfillChecksums_StopsOnCancelledContext(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
-
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-			progress.Track(observer, "key", func() string { return progress.StatusOK })
-			cancel()
-			return batch.Summary{Attempted: len(locs), Succeeded: len(locs)}
-		}).Times(1)
-
-	res, err := integrityWithBacklog(t, scrubber, newBacklog(20)).BackfillChecksums(ctx, 10, 0, time.Millisecond, "", nil)
-	if err != nil {
-		t.Fatalf("BackfillChecksums: %v", err)
-	}
-	if res.Done {
-		t.Error("Done = true, want false for a run stopped by cancellation")
-	}
-}
-
-// TestBackfillChecksums_PausesBetweenPasses asserts the inter-batch pause runs
-// between passes, which is what rate-limits backend reads on a large backlog.
-func TestBackfillChecksums_PausesBetweenPasses(t *testing.T) {
-	t.Parallel()
-	b := newBacklog(15)
-
-	start := time.Now()
-	res, err := integrityWithBacklog(t, backlogHasher(t, b, nil), b).BackfillChecksums(context.Background(), 10, 0, 20*time.Millisecond, "", nil)
-	if err != nil {
-		t.Fatalf("BackfillChecksums: %v", err)
-	}
-	if !res.Done {
-		t.Error("Done = false, want true once the backlog drained")
-	}
-	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
-		t.Errorf("elapsed = %v, want at least the configured pause between passes", elapsed)
-	}
 }
 
 // TestDeletePrefix_CountsAndReports asserts a prefix delete pages the listing,

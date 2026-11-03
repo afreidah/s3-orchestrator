@@ -12,6 +12,7 @@
 package syncutil
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -25,11 +26,10 @@ type cacheEntry[V any] struct {
 // TTLCache is a generic in-memory cache with time-based expiry and background
 // eviction. The zero value is not usable; create instances with NewTTLCache.
 type TTLCache[K comparable, V any] struct {
-	entries   map[K]cacheEntry[V]
-	mu        sync.RWMutex
-	ttl       time.Duration
-	stop      chan struct{}
-	closeOnce sync.Once
+	entries map[K]cacheEntry[V]
+	mu      sync.RWMutex
+	ttl     time.Duration
+	stop    context.CancelFunc
 }
 
 // NewTTLCache creates a cache with the given default TTL. If ttl > 0, a
@@ -40,10 +40,11 @@ func NewTTLCache[K comparable, V any](ttl time.Duration) *TTLCache[K, V] {
 	c := &TTLCache[K, V]{
 		entries: make(map[K]cacheEntry[V]),
 		ttl:     ttl,
-		stop:    make(chan struct{}),
 	}
 	if ttl > 0 {
-		go c.evictLoop(ttl)
+		ctx, stop := context.WithCancel(context.Background()) //nolint:gosec // G118: Close calls stop.
+		c.stop = stop
+		go Every(ctx, ttl, func(context.Context) { c.evict() })
 	}
 	return c
 }
@@ -104,30 +105,17 @@ func (c *TTLCache[K, V]) Len() int {
 	return len(c.entries)
 }
 
-// Close stops the background eviction goroutine. Safe to call multiple times.
+// Close stops the background eviction goroutine, if one runs. Safe to call
+// multiple times.
 func (c *TTLCache[K, V]) Close() {
-	c.closeOnce.Do(func() {
-		close(c.stop)
-	})
+	if c.stop != nil {
+		c.stop()
+	}
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// evictLoop runs a ticker that sweeps expired entries at the given interval.
-func (c *TTLCache[K, V]) evictLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.evict()
-		case <-c.stop:
-			return
-		}
-	}
-}
 
 // evict removes every entry Get would no longer serve. It shares Get's
 // boundary so a swept cache and a read-through cache never disagree about

@@ -4,20 +4,17 @@
 // Author: Alex Freidah
 //
 // One on-demand rebalance cycle, moving objects between backends until their
-// utilisation converges. An operator who asks for a cycle gets one: when the
-// worker holds no configuration the running config supplies it, and defaults
-// fill whatever is still unset, so a manual run works on a fleet that never
-// configured scheduled rebalancing.
+// utilisation converges. An operator who asks for a cycle gets one under the
+// running config, whose defaults the config loader filled, so a manual run
+// works on a fleet that never enabled scheduled rebalancing.
 // -------------------------------------------------------------------------------
 
 package ops
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -30,28 +27,22 @@ import (
 // RebalanceDeps holds the collaborators Rebalance requires.
 type RebalanceDeps struct {
 	Rebalancer Rebalancer
-	Runtime    RuntimeOps
 	Config     *config.Live
 }
 
 // Rebalance serves the on-demand rebalance operation shared by the admin API
-// and the web UI.
+// and the web UI. The rebalancer reports its own passes.
 type Rebalance struct {
-	log        *slog.Logger
 	rebalancer Rebalancer
-	runtime    RuntimeOps
 	cfg        *config.Live
 }
 
 // NewRebalance is the explicit-deps constructor. Rebalancer is nil when the
 // worker pool is not wired, which Run reports as unavailable.
 func NewRebalance(d RebalanceDeps) *Rebalance {
-	must.NotNil("d.Runtime", d.Runtime)
 	must.NotNil("d.Config", d.Config)
 	return &Rebalance{
-		log:        slog.Default().With(logfmt.Component("ops")),
 		rebalancer: d.Rebalancer,
-		runtime:    d.Runtime,
 		cfg:        d.Config,
 	}
 }
@@ -72,11 +63,5 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.
 	if sum.SkipReason != "" {
 		return batch.Summary{}, Skip(sum.SkipReason)
 	}
-
-	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
-		r.log.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", mErr)
-	}
-
-	r.log.InfoContext(ctx, "rebalance completed", "moved", sum.Succeeded)
 	return sum.Summary, nil
 }

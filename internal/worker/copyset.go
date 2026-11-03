@@ -14,7 +14,6 @@ package worker
 
 import (
 	"context"
-	"log/slog"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -54,10 +53,9 @@ func overBy(factor int) func(int) int {
 	return func(copies int) int { return copies - factor }
 }
 
-// copySetPass is how a pass works through its copy sets: its log, how many
-// objects it works on at once, and who watches.
+// copySetPass is how a pass works through its copy sets: how many objects it
+// works on at once, and who watches.
 type copySetPass struct {
-	log         *slog.Logger
 	concurrency int
 	observer    progress.Observer
 }
@@ -67,17 +65,15 @@ type copySetPass struct {
 func (p copySetPass) run(ctx context.Context, ops Ops, sets []copySet, fn func(ctx context.Context, set *copySet) (int, batch.ItemResult)) (batch.Summary, int) {
 	var changed atomic.Int64
 	runner := batch.Runner[copySet]{
-		Log:         p.log,
 		Concurrency: p.concurrency,
+		Admission:   ops,
 		Observer:    p.observer,
 		Key:         func(s copySet) string { return s.key },
 	}
 	sum := runner.Run(ctx, sets, func(ctx context.Context, set copySet) batch.ItemResult {
-		return WithAdmission(ctx, ops, func() batch.ItemResult {
-			n, res := fn(ctx, &set)
-			changed.Add(int64(n))
-			return res
-		})
+		n, res := fn(ctx, &set)
+		changed.Add(int64(n))
+		return res
 	})
 	return sum, int(changed.Load())
 }

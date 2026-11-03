@@ -143,7 +143,14 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	})
 
 	rt, live := st.Runtime, st.Config
-	live.Update(func(c *config.Config) { c.Replication.Factor = 1 })
+	// The intervals the config loader fills by default, since this config is
+	// built by hand rather than loaded.
+	live.Update(func(c *config.Config) {
+		c.Replication.Factor = 1
+		c.Replication.WorkerInterval = 5 * time.Minute
+		c.Rebalance.Interval = 6 * time.Hour
+		c.Integrity.ScrubberInterval = 6 * time.Hour
+	})
 	coord := writepath.New(rt, mock)
 	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Rebalance()})
 	rp := worker.NewReplicator(&worker.ReplicatorDeps{
@@ -198,15 +205,17 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var calls []string
-			svc := NewUsageFlushService(&UsageFlushDeps{
+			svc := newUsageFlush(&UsageFlushDeps{
 				Flusher: recordingFlusher{redis: tt.redis, err: tt.err, calls: &calls},
 				Tracker: nearLimit(false),
 				Fleet:   recordingFleet{err: tt.err, calls: &calls},
 				States:  recordingStates{err: tt.err, calls: &calls},
 				Config:  defaultFlush,
-			}).(*usageFlushService)
+			})
 
-			svc.flushTick(t.Context())
+			if err := svc.flushTick(t.Context()); !errors.Is(err, tt.err) {
+				t.Errorf("flushTick = %v, want every step's error %v", err, tt.err)
+			}
 
 			if !slices.Equal(calls, tt.want) {
 				t.Errorf("calls = %v, want %v", calls, tt.want)
@@ -216,9 +225,9 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 }
 
 // TestUsageFlushService_RunFlushesEachInterval drives Run on a fake clock. It
-// flushes once per configured interval, and once a backend is near its limit
-// with adaptive flushing on, the ticks after the first come at the fast
-// interval.
+// flushes once per configured interval, and while a backend is near its limit
+// with adaptive flushing on, every flush, the first included, comes at the
+// fast interval.
 func TestUsageFlushService_RunFlushesEachInterval(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -231,7 +240,7 @@ func TestUsageFlushService_RunFlushesEachInterval(t *testing.T) {
 		{"adaptive off ignores the limit", &config.UsageFlushConfig{Interval: 30 * time.Second, FastInterval: 5 * time.Second}, true, 52 * time.Second, 1},
 		{"adaptive switches to the fast interval", &config.UsageFlushConfig{
 			Interval: 30 * time.Second, FastInterval: 5 * time.Second, AdaptiveEnabled: true, AdaptiveThreshold: 0.8,
-		}, true, 52 * time.Second, 5},
+		}, true, 52 * time.Second, 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

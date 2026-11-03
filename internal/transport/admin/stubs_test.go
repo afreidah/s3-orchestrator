@@ -91,7 +91,6 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	}
 	h.d.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber: newScrubber(t, sc),
-		Store:    backfillStore{cfg: sc},
 		Locker:   newGrantingLocker(t),
 		Config:   config.NewLive(running),
 	})
@@ -110,7 +109,6 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 	h.d.Replication = ops.NewReplication(ops.ReplicationDeps{
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
-		Runtime:    newRuntimeOps(t),
 		Config:     config.NewLive(running),
 	})
 }
@@ -120,10 +118,7 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 // deployment whose worker pool was never wired.
 func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 	t.Helper()
-	deps := ops.RebalanceDeps{
-		Runtime: newRuntimeOps(t),
-		Config:  config.NewLive(&config.Config{}),
-	}
+	deps := ops.RebalanceDeps{Config: config.NewLive(&config.Config{})}
 	if cfg != nil {
 		deps.Rebalancer = newRebalancer(t, cfg)
 	}
@@ -159,17 +154,6 @@ func newDashboardOps(t *testing.T, data *dashboard.Data, err error) *MockDashboa
 	t.Helper()
 	m := NewMockDashboardReader(gomock.NewController(t))
 	m.EXPECT().GetStatus(gomock.Any()).Return(data, err).AnyTimes()
-	return m
-}
-
-// newRuntimeOps builds a RuntimeOps mock whose GetBackend always misses, which
-// is the branch the rewrite tests exercise, and whose metrics update succeeds.
-func newRuntimeOps(t *testing.T) *opstest.MockRuntimeOps {
-	t.Helper()
-	m := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	m.EXPECT().GetBackend(gomock.Any()).
-		Return(nil, fmt.Errorf("no backend")).AnyTimes()
-	m.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
 	return m
 }
 
@@ -252,7 +236,8 @@ func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 }
 
 // scrubberStub configures the ScrubberOps mock. backfillBacklog is how many
-// copies the backfill listing holds; each hashed page drains it.
+// copies a backfill has to hash; a run hashes them up to its cap, and
+// backfillReq records the request it ran with.
 type scrubberStub struct {
 	scrubChecked    int
 	scrubFailed     int
@@ -261,20 +246,8 @@ type scrubberStub struct {
 	scrubKeyCopies  []worker.CopyVerification
 	scrubKeyErr     error
 	backfillBacklog int
-	backfillCalls   int
+	backfillReq     worker.BackfillRequest
 	unreadable      []core.ObjectLocation
-}
-
-// backfillStore lists the scrubber stub's unhashed backlog, a page at a time.
-type backfillStore struct{ cfg *scrubberStub }
-
-// ListCopiesByForm returns up to limit of the copies still unhashed.
-func (s backfillStore) ListCopiesByForm(_ context.Context, _ *core.FormFilter, limit int, _ core.Cursor) ([]core.ObjectLocation, error) {
-	locs := make([]core.ObjectLocation, min(limit, s.cfg.backfillBacklog))
-	for i := range locs {
-		locs[i] = core.ObjectLocation{ObjectKey: fmt.Sprintf("k-%d", i), BackendName: "b1"}
-	}
-	return locs, nil
 }
 
 // newGrantingLocker builds an advisory locker that always takes the lock and
@@ -295,7 +268,7 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	t.Helper()
 	m := opstest.NewMockScrubberOps(gomock.NewController(t))
 	m.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int, _ string, observer progress.Observer) batch.Summary {
+		DoAndReturn(func(_ context.Context, _ int, _ string, observer progress.Observer) (batch.Summary, error) {
 			trackN(observer, cfg.scrubChecked, fixedKey(""))
 			return batch.Summary{
 				Attempted: cfg.scrubChecked,
@@ -303,18 +276,25 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 				Failed:    cfg.scrubFailed,
 				Skipped:   cfg.scrubSkipped,
 				Deferred:  cfg.scrubDeferred,
-			}
+			}, nil
 		}).AnyTimes()
 	m.EXPECT().ScrubKey(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string) ([]worker.CopyVerification, error) {
 			return cfg.scrubKeyCopies, cfg.scrubKeyErr
 		}).AnyTimes()
-	m.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-			cfg.backfillCalls++
-			cfg.backfillBacklog -= len(locs)
-			trackN(observer, len(locs), fixedKey(""))
-			return batch.Summary{Attempted: len(locs), Succeeded: len(locs)}
+	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req worker.BackfillRequest, observer progress.Observer) (worker.BackfillResult, error) {
+			cfg.backfillReq = req
+			n := cfg.backfillBacklog
+			if req.MaxObjects > 0 {
+				n = min(n, req.MaxObjects)
+			}
+			cfg.backfillBacklog -= n
+			trackN(observer, n, fixedKey(""))
+			return worker.BackfillResult{
+				Summary: batch.Summary{Attempted: n, Succeeded: n},
+				Done:    cfg.backfillBacklog == 0,
+			}, nil
 		}).AnyTimes()
 	m.EXPECT().ListUnreadable(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, int) ([]core.ObjectLocation, int64, error) {
@@ -322,27 +302,38 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 		}).AnyTimes()
 	// Purges every unreadable copy in one pass, so the next pass finds none.
 	m.EXPECT().PurgeUnreadable(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) batch.Summary {
+		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) (batch.Summary, error) {
 			n := len(cfg.unreadable)
 			trackN(observer, n, fixedKey(""))
 			cfg.unreadable = nil
-			return batch.Summary{Attempted: n, Succeeded: n}
+			return batch.Summary{Attempted: n, Succeeded: n}, nil
 		}).AnyTimes()
 	return m
 }
 
+// reconciled is a reconcile result that imported and removed rows across
+// scanned backends, failed of them partway.
+func reconciled(imported, removed, scanned, failed int) *worker.ReconcileResult {
+	return &worker.ReconcileResult{
+		Summary:  batch.Summary{Planned: scanned, Attempted: scanned, Succeeded: scanned - failed, Failed: failed},
+		Imported: imported,
+		Removed:  removed,
+	}
+}
+
 // newReconciler builds a Reconciler mock returning result or err, reporting one
-// backend step to an observer when the caller streams.
+// backend step to an observer when the caller streams. result is nil when the
+// mock fails.
 func newReconciler(t *testing.T, result *worker.ReconcileResult, err error) *MockReconciler {
 	t.Helper()
 	m := NewMockReconciler(gomock.NewController(t))
 	m.EXPECT().Reconcile(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, observer progress.Observer) (*worker.ReconcileResult, error) {
+		DoAndReturn(func(_ context.Context, _ string, observer progress.Observer) (worker.ReconcileResult, error) {
 			if err != nil {
-				return nil, err
+				return worker.ReconcileResult{}, err
 			}
 			progress.Track(observer, "fake-backend", func() string { return progress.StatusOK })
-			return result, nil
+			return *result, nil
 		}).AnyTimes()
 	return m
 }

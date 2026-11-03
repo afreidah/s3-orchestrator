@@ -55,6 +55,12 @@ func Failed() ItemResult {
 	return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
 }
 
+// Skipped is the result of an item declined before any work, reported on the
+// progress stream as status, which says why.
+func Skipped(status string) ItemResult {
+	return ItemResult{Outcome: ItemSkipped, Status: status}
+}
+
 // Summary is the uniform result of one cycle of batch work.
 //
 // Deferred is not an item outcome: it counts work never selected because its
@@ -111,6 +117,19 @@ func (s Summary) AuditAttrs() []slog.Attr {
 		slog.Int("deferred", s.Deferred),
 		s.Usage.Attr(),
 	}
+}
+
+// Reported says the cycle had work worth a completion entry: it set out to
+// process something, or left work for later because a backend was over its
+// budget.
+func (s Summary) Reported() bool {
+	return s.Planned > 0 || s.Deferred > 0
+}
+
+// Changed says the cycle completed any item. A summary whose items do not all
+// change what backends hold overrides it.
+func (s Summary) Changed() bool {
+	return s.Succeeded > 0
 }
 
 // Outcome classifies the cycle for its cycle metric: success (work done,

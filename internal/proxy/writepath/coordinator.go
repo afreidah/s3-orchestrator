@@ -222,6 +222,19 @@ func (w *Coordinator) Settle(ctx context.Context, items []core.CleanupItem) {
 	w.settler.Settle(ctx, items)
 }
 
+// DropCopy removes one copy's row, keeping at least keepAtLeast copies of the
+// object, and settles the cleanup of its bytes that the removal queued. The
+// store's error is returned as it came, so a caller can tell a copy that was
+// not surplus or had changed from a failure.
+func (w *Coordinator) DropCopy(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) error {
+	queued, err := w.stores.DeleteObjectLocation(ctx, loc, keepAtLeast, reason)
+	if err != nil {
+		return err
+	}
+	w.Settle(ctx, queued)
+	return nil
+}
+
 // Discard drops an intent whose upload will not be recorded and settles the
 // cleanup of its bytes. When the discard itself fails the intent stays, and the
 // pending reaper resolves it on a later tick.

@@ -4,7 +4,8 @@
 // Author: Alex Freidah
 //
 // Pins what one tick records for each lock and work outcome, and drives Run on
-// a fake clock to pin the startup hook, the jittered first tick, one tick per
+// a fake clock to pin the startup tick, the jittered first tick of a locked
+// service and the unjittered one of an unlocked service, one tick per
 // interval, ShouldRun gating and cancellation.
 // -------------------------------------------------------------------------------
 
@@ -13,6 +14,7 @@ package tickrunner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -70,7 +72,8 @@ func TestTick_RecordsEachOutcome(t *testing.T) {
 		{"work fails", testx.Locker{}, workErr, true, 1, "work broke", 0},
 		{"lock held elsewhere", testx.Locker{Busy: true}, nil, false, 0, "", 1},
 		{"lock fails", testx.Locker{Err: lockErr}, nil, false, 1, "advisory lock: lock broke", 0},
-		{"database unavailable", testx.Locker{Err: core.ErrDBUnavailable}, nil, false, 0, "", 1},
+		{"database unavailable for the lock", testx.Locker{Err: core.ErrDBUnavailable}, nil, false, 0, "", 1},
+		{"database unavailable for the work", testx.Locker{}, fmt.Errorf("list: %w", core.ErrDBUnavailable), true, 0, "", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,84 +148,58 @@ func TestTick_SuccessResetsFailures(t *testing.T) {
 	}
 }
 
-// refresher counts quota metric refreshes and fails them with err.
-type refresher struct {
-	calls int
-	err   error
-}
-
-func (r *refresher) UpdateQuotaMetrics(context.Context) error {
-	r.calls++
-	return r.err
-}
-
-// TestHandlePassResult pins the pass workers' shared result handling: an
-// unavailable database is not a failure, any other error is, and only a pass
-// that did work refreshes the quota metrics, whose own failure is not the
-// pass's.
-func TestHandlePassResult(t *testing.T) {
-	boom := errors.New("worker broke")
-	tests := []struct {
-		name        string
-		count       int
-		err         error
-		refreshErr  error
-		wantErr     error
-		wantRefresh int
-	}{
-		{"no work", 0, nil, nil, nil, 0},
-		{"work done refreshes metrics", 7, nil, nil, nil, 1},
-		{"refresh failure is not the pass's", 7, nil, errors.New("refresh broke"), nil, 1},
-		{"database unavailable", 0, core.ErrDBUnavailable, nil, nil, 0},
-		{"worker error", 0, boom, nil, boom, 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := &refresher{err: tt.refreshErr}
-			err := HandlePassResult(t.Context(), slog.New(slog.DiscardHandler), r, tt.count, tt.err, "objects")
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("err = %v, want %v", err, tt.wantErr)
-			}
-			if r.calls != tt.wantRefresh {
-				t.Errorf("quota refreshes = %d, want %d", r.calls, tt.wantRefresh)
-			}
-		})
-	}
-}
-
-// TestRun_StartupThenOneTickPerInterval drives Run on a fake clock: the
-// startup hook runs once before anything else, the first tick lands after the
-// jitter and one interval, and each interval after that adds exactly one.
+// TestRun_StartupThenOneTickPerInterval drives Run on a fake clock: a service
+// that runs at startup ticks once before anything else, the next tick lands
+// after the jitter and one interval, and each interval after that adds
+// exactly one.
 func TestRun_StartupThenOneTickPerInterval(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var startups, works atomic.Int32
+		var works atomic.Int32
 		svc := newService(t, Config{
-			Locker:  testx.Locker{},
-			Startup: func(context.Context) error { startups.Add(1); return nil },
-			Work:    func(context.Context) error { works.Add(1); return nil },
+			Locker:       testx.Locker{},
+			RunAtStartup: true,
+			Work:         func(context.Context) error { works.Add(1); return nil },
 		})
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
 		go func() { done <- svc.Run(ctx) }()
 
 		synctest.Wait()
-		if startups.Load() != 1 || works.Load() != 0 {
-			t.Fatalf("before the first tick: startups=%d works=%d, want 1 and 0", startups.Load(), works.Load())
+		if works.Load() != 1 {
+			t.Fatalf("before the first interval: works=%d, want the startup tick", works.Load())
 		}
 
 		// The jitter is under interval/2, so three intervals past its upper
-		// bound hold exactly three ticks.
+		// bound hold exactly three more ticks.
 		synctest.Sleep(interval/2 + 3*interval)
-		if got := works.Load(); got != 3 {
-			t.Errorf("ticks after three intervals = %d, want 3", got)
+		if got := works.Load(); got != 4 {
+			t.Errorf("ticks after three intervals = %d, want 4", got)
 		}
 
 		cancel()
 		if err := <-done; err != nil {
 			t.Errorf("Run returned %v on cancel, want nil", err)
 		}
-		if startups.Load() != 1 {
-			t.Errorf("startup ran %d times, want once", startups.Load())
+	})
+}
+
+// TestRun_WithoutLockTicksOnTheInterval asserts a service with no locker runs
+// every tick, with no jitter: the first lands exactly one interval in.
+func TestRun_WithoutLockTicksOnTheInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var works atomic.Int32
+		svc := newService(t, Config{Work: func(context.Context) error { works.Add(1); return nil }})
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() { _ = svc.Run(ctx) }()
+
+		synctest.Sleep(interval - time.Millisecond)
+		if works.Load() != 0 {
+			t.Fatalf("ticks before one interval = %d, want 0", works.Load())
+		}
+		synctest.Sleep(time.Millisecond)
+		if works.Load() != 1 || svc.Health().LastSuccess.IsZero() {
+			t.Errorf("after one interval: ticks=%d health=%+v, want one recorded tick", works.Load(), svc.Health())
 		}
 	})
 }

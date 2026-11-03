@@ -179,7 +179,7 @@ func TestOrphanBytes_SettledRowStopsCounting(t *testing.T) {
 		t.Fatalf("orphan_bytes before cleanup = %d, want 100", orphanBefore)
 	}
 
-	cleanSum := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
+	cleanSum := passOf(t)(testWorkers.CleanupWorker.ProcessCleanupQueue(ctx))
 	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("processed = %d, want 1", processed)

@@ -29,8 +29,11 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -95,7 +98,7 @@ type Notifier struct {
 // notifications through the same mechanism. Endpoints carry the defaults
 // config validation fills in.
 func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
-	const slug = "notifier"
+	slug := string(audit.WorkloadNotifier)
 	log := tickrunner.ComponentLogger(slug)
 	n := &Notifier{
 		log:       log,
@@ -112,7 +115,10 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		LockID:   core.LockNotifier,
 		Name:     slug,
 		Log:      log,
-		Work:     tickrunner.QueueWork(log, "outbox drained", n.drain),
+		Work: func(ctx context.Context) error {
+			_, err := n.drain(ctx)
+			return err
+		},
 	})
 	event.SetEmitter(n.emit)
 	return n
@@ -220,24 +226,26 @@ func (n *Notifier) Close() {
 	}
 }
 
-// drain delivers one batch of pending notifications, one at a time, and
-// shares how many are still to be delivered: the whole outbox backlog, not
-// the batch just processed. A failed count leaves the gauge as it was.
-func (n *Notifier) drain(ctx context.Context) (succeeded, failed int) {
-	rows, err := n.store.GetPendingNotifications(ctx, pendingBatchSize)
-	if err != nil {
-		n.log.ErrorContext(ctx, "failed to fetch pending notifications", "error", err)
-		return 0, 0
-	}
-	runner := batch.Runner[core.NotificationRow]{Name: "notifier", Log: n.log, Concurrency: 1}
-	sum := runner.Run(ctx, rows, n.processPendingRow)
+// drain delivers one batch of pending notifications, one at a time, as one
+// notifier pass, and shares how many are still to be delivered: the whole
+// outbox backlog, not the batch just processed. A failed count leaves the
+// gauge as it was.
+func (n *Notifier) drain(ctx context.Context) (batch.Summary, error) {
+	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadNotifier}, func(ctx context.Context) (batch.Summary, error) {
+		rows, err := n.store.GetPendingNotifications(ctx, pendingBatchSize)
+		if err != nil {
+			return batch.Summary{}, fmt.Errorf("fetch pending notifications: %w", err)
+		}
+		runner := batch.Runner[core.NotificationRow]{Concurrency: 1}
+		sum := runner.Run(ctx, rows, n.processPendingRow)
 
-	if depth, err := n.store.NotificationQueueDepth(ctx); err != nil {
-		n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
-	} else {
-		n.PublishGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
-	}
-	return sum.Succeeded, sum.Failed
+		if depth, err := n.store.NotificationQueueDepth(ctx); err != nil {
+			n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
+		} else {
+			n.PublishGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
+		}
+		return sum, nil
+	})
 }
 
 // deliver sends a single notification to the endpoint via HTTP POST.
@@ -300,7 +308,7 @@ func (n *Notifier) processPendingRow(ctx context.Context, row core.NotificationR
 	ep := n.findEndpoint(row.EndpointURL)
 	if ep == nil {
 		n.completeOrLog(ctx, row.ID, "no_matching_endpoint")
-		return batch.ItemResult{Outcome: batch.ItemSkipped}
+		return batch.Skipped(progress.StatusSkipped)
 	}
 	start := time.Now()
 	if err := n.deliver(ctx, row, ep); err != nil {

@@ -155,15 +155,15 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.servePass(w, r, passEndpoint[ops.BackfillResult]{
+	h.servePass(w, r, passEndpoint[worker.BackfillResult]{
 		op:         "backfill-checksums",
 		verb:       "hashing",
 		sequential: true,
 		failMsg:    "backfill failed",
-		run: func(ctx context.Context, obs progress.Observer) (ops.BackfillResult, error) {
+		run: func(ctx context.Context, obs progress.Observer) (worker.BackfillResult, error) {
 			return h.d.Integrity.BackfillChecksums(ctx, batchSize, maxObjects, pause, backend, obs)
 		},
-		body: func(o adminapi.Outcome, res ops.BackfillResult) any {
+		body: func(o adminapi.Outcome, res worker.BackfillResult) any {
 			return adminapi.BackfillChecksumsResponse{
 				Outcome:    o,
 				Processed:  res.Succeeded,
@@ -171,7 +171,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 				Done:       res.Done,
 			}
 		},
-		summary: func(res ops.BackfillResult) (int, string) {
+		summary: func(res worker.BackfillResult) (int, string) {
 			return res.Succeeded, fmt.Sprintf("hashed %d, unreadable %d", res.Succeeded, res.Skipped)
 		},
 	})
@@ -215,8 +215,9 @@ func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) 
 		op:         "purge-unreadable",
 		verb:       "purging",
 		sequential: true,
+		failMsg:    "purge failed",
 		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
-			return h.d.Integrity.PurgeUnreadable(ctx, batchSize, obs), nil
+			return h.d.Integrity.PurgeUnreadable(ctx, batchSize, obs)
 		},
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.UnreadablePurgeResponse{Outcome: o, Purged: res.Succeeded, Failed: res.Failed}
@@ -247,24 +248,26 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 
 	h.log.InfoContext(r.Context(), "reconcile triggered", "backend", backendName)
 
-	h.servePass(w, r, passEndpoint[*worker.ReconcileResult]{
+	h.servePass(w, r, passEndpoint[worker.ReconcileResult]{
 		op:         "reconcile",
 		verb:       "reconciling",
 		sequential: true,
 		failMsg:    "reconcile failed",
-		run: func(ctx context.Context, obs progress.Observer) (*worker.ReconcileResult, error) {
+		run: func(ctx context.Context, obs progress.Observer) (worker.ReconcileResult, error) {
 			return h.d.Reconciler.Reconcile(ctx, backendName, obs)
 		},
-		body: func(o adminapi.Outcome, res *worker.ReconcileResult) any {
-			resp := adminapi.ReconcileResponse{Outcome: o}
-			if res != nil {
-				resp.Imported, resp.Removed, resp.BackendsScanned = res.Imported, res.Removed, res.BackendsScanned
+		body: func(o adminapi.Outcome, res worker.ReconcileResult) any {
+			return adminapi.ReconcileResponse{
+				Outcome:         o,
+				Imported:        res.Imported,
+				Removed:         res.Removed,
+				BackendsScanned: res.Attempted,
+				BackendsFailed:  res.Failed,
 			}
-			return resp
 		},
-		summary: func(res *worker.ReconcileResult) (int, string) {
-			return res.Imported, fmt.Sprintf("imported %d, removed %d across %d backend(s)",
-				res.Imported, res.Removed, res.BackendsScanned)
+		summary: func(res worker.ReconcileResult) (int, string) {
+			return res.Imported, fmt.Sprintf("imported %d, removed %d across %d backend(s), %d failed",
+				res.Imported, res.Removed, res.Attempted, res.Failed)
 		},
 	})
 }

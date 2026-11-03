@@ -3109,8 +3109,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (status) (rate(s3o_lifecycle_runs_total[5m]))",
-          "legendFormat": "{{status}}"
+          "expr": "sum by (outcome) (rate(s3o_worker_cycles_total{service=\"lifecycle\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
       ],
       "options": {

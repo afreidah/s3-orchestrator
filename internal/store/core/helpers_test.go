@@ -720,3 +720,24 @@ func TestLocationOn(t *testing.T) {
 		t.Errorf("LocationOn(b3) = %+v, want nil", got)
 	}
 }
+
+// TestLocationListingHelpers verifies the keys of a page keep its order and
+// repeat a key held twice, and each cursor resumes after the copy it is
+// taken from.
+func TestLocationListingHelpers(t *testing.T) {
+	t.Parallel()
+	locs := []ObjectLocation{
+		{ObjectKey: "a", BackendName: "b1", SizeBytes: 3},
+		{ObjectKey: "a", BackendName: "b2", SizeBytes: 3},
+		{ObjectKey: "c", BackendName: "b1", SizeBytes: 9},
+	}
+	if got := KeysOf(locs); !slices.Equal(got, []string{"a", "a", "c"}) {
+		t.Errorf("KeysOf = %v, want [a a c]", got)
+	}
+	if got := locs[1].Cursor(); got != (Cursor{ObjectKey: "a", BackendName: "b2"}) {
+		t.Errorf("Cursor = %+v, want after a on b2", got)
+	}
+	if got := locs[2].SizeCursor(); got != (SizeCursor{SizeBytes: 9, ObjectKey: "c"}) {
+		t.Errorf("SizeCursor = %+v, want after c at 9 bytes", got)
+	}
+}

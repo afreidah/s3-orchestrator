@@ -154,9 +154,7 @@ func (op bulkRewriteOp) run(ctx context.Context, env bulkRewriteEnv, obs progres
 			}
 			return rows, err
 		},
-		CursorOf: func(row core.ObjectLocation) core.Cursor {
-			return core.Cursor{ObjectKey: row.ObjectKey, BackendName: row.BackendName}
-		},
+		CursorOf: func(row core.ObjectLocation) core.Cursor { return row.Cursor() },
 	}
 	stop, err := pager.Walk(ctx, func(ctx context.Context, rows []core.ObjectLocation) (batch.Step, error) {
 		capped, err := op.runPage(ctx, env, obs, rows, &res)
@@ -185,7 +183,6 @@ func (op bulkRewriteOp) run(ctx context.Context, env bulkRewriteEnv, obs progres
 func (op bulkRewriteOp) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []core.ObjectLocation, res *BulkRewriteResult) (bool, error) {
 	changed := 0
 	runner := batch.Runner[core.ObjectLocation]{
-		Name:        op.opName,
 		Concurrency: 1,
 		Observer:    obs,
 		Key:         func(row core.ObjectLocation) string { return row.ObjectKey },

@@ -306,7 +306,14 @@ func (q QuotaStat) Unlimited() bool {
 // Occupied is the byte total a write is judged against: what the ledger has
 // recorded, plus what is on the backend but not yet recorded.
 func (q QuotaStat) Occupied() int64 {
-	return q.BytesUsed + q.OrphanBytes + q.InflightBytes
+	return q.BytesUsed + q.Unrecorded()
+}
+
+// Unrecorded is what is on the backend but not in the ledger: orphaned bytes
+// waiting for cleanup, and writes still in flight. No move can take it off
+// the backend, but it takes room a move onto the backend would need.
+func (q QuotaStat) Unrecorded() int64 {
+	return q.OrphanBytes + q.InflightBytes
 }
 
 // quotaDeltas is the signed per-backend byte change a mutation makes, keyed by

@@ -47,7 +47,7 @@ type lifecycleWorkerSet struct {
 	overRep       *worker.OverReplicationCleaner
 	scrubber      *worker.Scrubber
 	drainer       *worker.Drainer
-	pendingReaper *worker.PendingReaper // nil when its construction failed
+	pendingReaper *worker.PendingReaper
 }
 
 // -------------------------------------------------------------------------
@@ -75,17 +75,20 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 
 // registerWorkerServices registers the worker-mode lifecycle services
 // (multipart cleanup, cleanup queue, pending reaper, rebalancer,
-// replicator, over-replication, drain, lifecycle, scrubber) on sm.
-func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *infra.BackendRuntime, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
+// replicator, over-replication, drain, lifecycle, scrubber) on sm. The
+// scrubber is left out when its interval turns the sweep off.
+func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
 	sm.Register("multipart_cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup", worker.NewCleanupQueueService(ws.cleanup, locker))
 	sm.Register("pending_reaper", worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick))
-	sm.Register("rebalance", worker.NewRebalancerService(rt, ws.rebalancer, locker))
-	sm.Register("replication", worker.NewReplicatorService(rt, ws.replicator, locker))
-	sm.Register("over_replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
-	sm.Register("drain", worker.NewDrainerService(rt, ws.drainer, locker))
+	sm.Register("rebalance", worker.NewRebalancerService(ws.rebalancer, locker))
+	sm.Register("replication", worker.NewReplicatorService(ws.replicator, locker))
+	sm.Register("over_replication", worker.NewOverReplicationService(ws.overRep, locker))
+	sm.Register("drain", worker.NewDrainerService(ws.drainer, locker))
 	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
-	sm.Register("scrub", worker.NewScrubberService(ws.scrubber, locker))
+	if cfg.Integrity.ScrubberInterval > 0 {
+		sm.Register("scrub", worker.NewScrubberService(ws.scrubber, locker))
+	}
 }
 
 // registerSharedStateWatchers registers the services that apply what other
@@ -162,7 +165,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerWorkerServices(sm, multipartManager, rt, expirer, ws, locker, cfg)
+	registerWorkerServices(sm, multipartManager, expirer, ws, locker, cfg)
 
 	if cfg.Reconcile.Enabled {
 		reconciler, err := do.Invoke[*worker.Reconciler](i)

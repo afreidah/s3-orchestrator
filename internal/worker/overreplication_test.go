@@ -59,7 +59,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	ops.EXPECT().BackendFlags("b1").Return(core.FlagDraining)
 
 	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
-	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil)
+	score := c.scoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil)
 	if score != 0 {
 		t.Errorf("draining backend should score 0, got %f", score)
 	}
@@ -83,7 +83,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 200, BytesLimit: 1000}, // 20% utilized
 	}
-	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, stats)
+	score := c.scoreCopy(&core.ObjectLocation{BackendName: "b1"}, stats)
 	// Score should be 2 + (1 - 0.2) = 2.8
 	if score < 2.7 || score > 2.9 {
 		t.Errorf("healthy backend at 20%% should score ~2.8, got %f", score)
@@ -120,7 +120,7 @@ func TestScoreCopy_RefusedCalls(t *testing.T) {
 			expectFleet(ops, map[string]backend.ObjectBackend{"b1": cb})
 
 			c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}, Config: defaultReplication})
-			if score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil); score < tc.minimum || score >= tc.minimum+1 {
+			if score := c.scoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil); score < tc.minimum || score >= tc.minimum+1 {
 				t.Errorf("score = %f, want in [%v, %v)", score, tc.minimum, tc.minimum+1)
 			}
 		})
@@ -140,7 +140,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{})
 
 	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
-	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "gone"}, nil)
+	score := c.scoreCopy(&core.ObjectLocation{BackendName: "gone"}, nil)
 	if score != 0 {
 		t.Errorf("unknown backend should score 0, got %f", score)
 	}
@@ -156,6 +156,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	// The cleanup is enqueued at the size and path the removal transaction
 	// reported, not at the caller's scan values, so the stub has to report them.
 	ms := &mockMetadataStore{removedCopySize: 100}
+	dropThroughStore(pl, ms.DeleteObjectLocation)
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
@@ -196,6 +197,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	// The cleanup is enqueued at the size and path the removal transaction
 	// reported, not at the caller's scan values, so the stub has to report them.
 	ms := &mockMetadataStore{removedCopySize: 100}
+	dropThroughStore(pl, ms.DeleteObjectLocation)
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
@@ -231,6 +233,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{removeExcessNoOp: true}
+	dropThroughStore(pl, ms.DeleteObjectLocation)
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
@@ -302,6 +305,7 @@ func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{removeExcessErr: core.ErrCopyHoldsOnlyDEK}
+	dropThroughStore(pl, ms.DeleteObjectLocation)
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
