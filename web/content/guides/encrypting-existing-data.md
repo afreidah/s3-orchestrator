@@ -72,7 +72,7 @@ The CLI signs the request with the keypair from `-access-key`/`-secret-key` or `
 This processes copies in batches of 100: each copy is downloaded from its backend, encrypted, and written to a new path on the same backend. The new row replaces the plaintext one in one transaction, then the plaintext bytes are deleted, so a reader sees either the old copy or the new one. A compressed copy keeps its encoding. The response shows progress:
 
 ```json
-{"status": "complete", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
+{"status": "ok", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
 ```
 
 `skipped` counts copies on a backend with no usage headroom, no room for the larger ciphertext, or a drain in progress. `changed` counts copies a client wrote while the pass was converting them: the client's write stands and the pass deletes the bytes it wrote. See [When a conversion meets a live write](../../docs/admin-api/#when-a-conversion-meets-a-live-write).

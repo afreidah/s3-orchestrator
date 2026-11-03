@@ -89,7 +89,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	if be.integrity != nil {
 		running.Integrity = *be.integrity
 	}
-	h.d.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
+	h.d.Ops.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber: newScrubber(t, sc),
 		Locker:   newGrantingLocker(t),
 		Config:   config.NewLive(running),
@@ -106,11 +106,32 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 	if cfg := cmp.Or(repl.cfg, over.cfg); cfg != nil {
 		running.Replication = *cfg
 	}
-	h.d.Replication = ops.NewReplication(ops.ReplicationDeps{
+	h.d.Ops.Replication = ops.NewReplication(ops.ReplicationDeps{
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
+		Backlog:    backlogStub{over: over.count, err: over.countErr},
 		Config:     config.NewLive(running),
 	})
+}
+
+// backendsConfig is a running config declaring a backend under each name.
+func backendsConfig(names ...string) *config.Live {
+	cfg := &config.Config{}
+	for _, name := range names {
+		cfg.Backends = append(cfg.Backends, config.BackendConfig{Name: name})
+	}
+	return config.NewLive(cfg)
+}
+
+// backlogStub reports a fixed over-replicated count, or err.
+type backlogStub struct {
+	over int64
+	err  error
+}
+
+// CountReplicationBacklog returns the stub's count.
+func (b backlogStub) CountReplicationBacklog(context.Context, int) (core.ReplicationBacklog, error) {
+	return core.ReplicationBacklog{Over: b.over}, b.err
 }
 
 // rebalanceWith installs rebalance operations built from cfg, so a test can
@@ -122,14 +143,14 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 	if cfg != nil {
 		deps.Rebalancer = newRebalancer(t, cfg)
 	}
-	h.d.Rebalance = ops.NewRebalance(deps)
+	h.d.Ops.Rebalance = ops.NewRebalance(deps)
 }
 
 // encryptionWith installs encryption operations over one store, for the tests
 // that drive the bulk rewrite and key rotation endpoints.
 func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.RewriteStore) {
 	t.Helper()
-	h.d.Encryption = ops.NewEncryption(ops.EncryptionDeps{
+	h.d.Ops.Encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
 		Mover:     newOpsMover(t),
@@ -141,7 +162,7 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 // rest of the operations layer.
 func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.RewriteStore) {
 	t.Helper()
-	h.d.Compression = ops.NewCompression(&ops.CompressionDeps{
+	h.d.Ops.Compression = ops.NewCompression(&ops.CompressionDeps{
 		Codec:  codec,
 		Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:  store,
@@ -207,7 +228,7 @@ func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancer {
 	return m
 }
 
-// overRepStub configures the OverReplicationOps mock. failed stands for the
+// overRepStub configures the OverReplicationCleaner mock. failed stands for the
 // objects whose surplus the cycle could not remove.
 type overRepStub struct {
 	cfg      *config.ReplicationConfig
@@ -218,12 +239,11 @@ type overRepStub struct {
 	cleanErr error
 }
 
-// newOverRep builds an OverReplicationOps mock reporting cfg.count pending and
+// newOverRep builds an OverReplicationCleaner mock reporting cfg.count pending and
 // cleaning cfg.cleaned copies.
-func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
+func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationCleaner {
 	t.Helper()
-	m := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	m.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(cfg.count, cfg.countErr).AnyTimes()
+	m := opstest.NewMockOverReplicationCleaner(gomock.NewController(t))
 	m.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error) {
 			trackN(observer, cfg.cleaned, fixedKey(""))

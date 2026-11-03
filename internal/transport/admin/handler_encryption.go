@@ -12,7 +12,6 @@
 package admin
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -29,24 +28,20 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	res, err := h.d.Encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
-	if errors.Is(err, ops.ErrKeyIDRequired) {
-		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	res, err := h.d.Ops.Encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
 		return
 	}
 	if err != nil {
-		httputil.InternalError(r.Context(), h.log, w, "failed to list encrypted objects", err)
+		httputil.WriteOpError(w, r, h.log, err, "failed to list encrypted objects")
 		return
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.RotateEncryptionKeyResponse{
-		Status:  statusComplete,
+		Outcome: adminapi.Outcome{Status: adminapi.StatusOK},
 		Failed:  res.Failed,
-		Total:   res.Total,
-		Rotated: res.Rotated,
+		Total:   res.Attempted + res.Skipped,
+		Rotated: res.Succeeded,
 	})
 }

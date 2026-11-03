@@ -2465,8 +2465,8 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	}
 }
 
-// TestOverReplicationCountPending verifies the over replication count pending contract.
-// Asserts that PutObject:.
+// TestOverReplicationCountPending verifies the over-replication count follows
+// the copies through replication and cleanup.
 func TestOverReplicationCountPending(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2487,11 +2487,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 
 	// No over-replication with factor=3
-	count, err := workers.OverReplicationCleaner.CountPending(ctx, 3)
-	if err != nil {
-		t.Fatalf("CountPending: %v", err)
-	}
-	if count != 0 {
+	if count := overPending(t, 3); count != 0 {
 		t.Errorf("expected 0 pending with 1 copy and factor 3, got %d", count)
 	}
 
@@ -2507,20 +2503,12 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 
 	// 3 copies with factor=3 -> not over-replicated
-	count, err = workers.OverReplicationCleaner.CountPending(ctx, 3)
-	if err != nil {
-		t.Fatalf("CountPending factor=3: %v", err)
-	}
-	if count != 0 {
+	if count := overPending(t, 3); count != 0 {
 		t.Errorf("expected 0 pending at factor, got %d", count)
 	}
 
 	// 3 copies with factor=2 -> over-replicated
-	count, err = workers.OverReplicationCleaner.CountPending(ctx, 2)
-	if err != nil {
-		t.Fatalf("CountPending factor=2: %v", err)
-	}
-	if count != 1 {
+	if count := overPending(t, 2); count != 1 {
 		t.Errorf("expected 1 pending when over factor, got %d", count)
 	}
 
@@ -2534,13 +2522,19 @@ func TestOverReplicationCountPending(t *testing.T) {
 		t.Fatalf("Clean: %v", err)
 	}
 
-	count, err = workers.OverReplicationCleaner.CountPending(ctx, 2)
-	if err != nil {
-		t.Fatalf("CountPending after clean: %v", err)
-	}
-	if count != 0 {
+	if count := overPending(t, 2); count != 0 {
 		t.Errorf("expected 0 pending after cleanup, got %d", count)
 	}
+}
+
+// overPending counts the objects holding more copies than factor.
+func overPending(t *testing.T, factor int) int64 {
+	t.Helper()
+	backlog, err := testStore.CountReplicationBacklog(context.Background(), factor)
+	if err != nil {
+		t.Fatalf("CountReplicationBacklog factor=%d: %v", factor, err)
+	}
+	return backlog.Over
 }
 
 // -------------------------------------------------------------------------

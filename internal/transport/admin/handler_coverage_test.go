@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Hand-rolled fakes for the narrow consumer interfaces (BackendOps,
-// Replicator, OverReplicationOps, ScrubberOps, Reconciler) so the
+// Replicator, OverReplicationCleaner, ScrubberOps, Reconciler) so the
 // success branches of handlers that otherwise required a full
 // backend runtime + worker fleet stay exercised. Pairs with the existing
 // handler_manager_test.go which covers the empty/skip paths via a real
@@ -30,6 +30,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -50,6 +51,8 @@ func newCoverageHandler(t *testing.T) *Handler {
 		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		LogLevel:  &lv,
 		DBHealthy: func() bool { return true },
+		Ops:       &ops.Services{},
+		Config:    backendsConfig(),
 	}}
 }
 
@@ -277,8 +280,8 @@ func TestHandleReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 	if resp.CopiesCreated != 1 || resp.Failed != 3 {
 		t.Errorf("got copies_created=%d failed=%d, want 1/3", resp.CopiesCreated, resp.Failed)
 	}
-	if resp.Status != statusOK {
-		t.Errorf("status = %q, want %q - a partial pass still ran", resp.Status, statusOK)
+	if resp.Status != adminapi.StatusOK {
+		t.Errorf("status = %q, want %q - a partial pass still ran", resp.Status, adminapi.StatusOK)
 	}
 }
 
@@ -399,7 +402,7 @@ func TestHandlePurgeUnreadable_ReportsPurged(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != statusOK || resp.Purged != 2 {
+	if resp.Status != adminapi.StatusOK || resp.Purged != 2 {
 		t.Errorf("resp = %+v, want ok with 2 purged", resp)
 	}
 
@@ -456,7 +459,7 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.d.BackendNames = func() []string { return []string{"b1"} }
+	h.d.Config = backendsConfig("b1")
 	h.d.Reconciler = newReconciler(t, reconciled(4, 1, 2, 1), nil)
 
 	w := httptest.NewRecorder()
@@ -563,7 +566,7 @@ func emptyEncryptionStore(t *testing.T) *opstest.MockRewriteStore {
 
 // TestHandleDecryptExisting_HappyEmpty wires an encryptor + a stub
 // admin so handleDecryptExisting walks the bulk-rewrite loop, sees an
-// empty list on the first batch, and returns "complete" with zero
+// empty list on the first batch, and returns "ok" with zero
 // counts. Drives the lines around runBulkRewriteCounts that the
 // nil-encryptor test cannot reach.
 func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
@@ -578,8 +581,8 @@ func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["status"].(string) != "complete" {
-		t.Errorf("status = %q, want complete", resp["status"])
+	if resp["status"].(string) != adminapi.StatusOK {
+		t.Errorf("status = %q, want %q", resp["status"], adminapi.StatusOK)
 	}
 	if resp["total"].(float64) != 0 {
 		t.Errorf("total = %v, want 0", resp["total"])

@@ -212,15 +212,17 @@
       }, 30000)
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
-          return resp.json();
+          return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
         })
-        .then(function (data) {
-          if (!data) return;
-          if (data.ok) {
+        .then(function (res) {
+          if (!res) return;
+          if (res.ok) {
             dialog.close();
             location.reload();
+          } else if (res.data.failed) {
+            deleteOkBtn.textContent = res.data.failed + ' of ' + res.data.total + ' deletes failed';
           } else {
-            deleteOkBtn.textContent = data.error || 'Failed';
+            deleteOkBtn.textContent = res.data.error || 'Failed';
           }
         })
         .catch(function (err) {
@@ -317,11 +319,11 @@
     fetchWithTimeout('api/upload', { method: 'POST', body: formData }, 120000)
       .then(function (resp) {
         if (resp.status === 401) { location.href = 'login'; return; }
-        return resp.json();
+        return resp.ok;
       })
-      .then(function (data) {
-        if (!data) return;
-        if (data.ok) {
+      .then(function (ok) {
+        if (ok === undefined) return;
+        if (ok) {
           uploadNext(index + 1, successCount + 1, failCount);
         } else {
           let rows = uploadFileList.querySelectorAll('.upload-file-row');
@@ -475,12 +477,13 @@
       resetButton(ctx.btn, ctx.label, 3000);
       return;
     }
-    if (data.ok) {
+    if (data.status === 'ok') {
+      let result = data.result || {};
       let extra = '';
-      if (typeof data.failed === 'number' && data.failed > 0) {
-        extra = ', ' + data.failed + ' failed';
+      if (typeof result.failed === 'number' && result.failed > 0) {
+        extra = ', ' + result.failed + ' failed';
       }
-      ctx.btn.textContent = data[ctx.countKey] + ctx.suffix + extra;
+      ctx.btn.textContent = result[ctx.countKey] + ctx.suffix + extra;
       if (ctx.skipReload) {
         resetButton(ctx.btn, ctx.label, 3000);
       } else {
@@ -488,7 +491,7 @@
       }
       return;
     }
-    if (data.status === 'error') {
+    if (data.status === 'failed') {
       ctx.btn.textContent = data.error || 'Failed';
       setStatusBanner(data.error || 'failed', 'error');
       resetButton(ctx.btn, ctx.label, 3000);
@@ -542,7 +545,7 @@
   // rewrite every object in the fleet.
   let adminActions = [
     { id: 'rebalance-btn', path: 'api/rebalance', label: 'Rebalance', countKey: 'moved', noun: 'moved', reload: true },
-    { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'removed', noun: 'removed', reload: true },
+    { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'copies_removed', noun: 'removed', reload: true },
     { id: 'replicate-btn', path: 'api/replicate', label: 'Replicate Now', countKey: 'copies_created', noun: 'copies created', reload: true },
     { id: 'lifecycle-btn', path: 'api/lifecycle', label: 'Expire Now', countKey: 'deleted', noun: 'deleted', reload: true },
     { id: 'scrub-btn', path: 'api/scrub', label: 'Scrub', countKey: 'checked', noun: 'checked' },

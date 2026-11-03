@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -470,7 +469,7 @@ func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) e
 		if r.IsWildcard() {
 			return nil
 		}
-		if slices.ContainsFunc(p.config.Load().Backends, func(b config.BackendConfig) bool { return b.Name == r.Name }) {
+		if p.config.Load().HasBackend(r.Name) {
 			return nil
 		}
 		return fmt.Errorf("%w: %q", ErrBackendNotFound, r.Name)

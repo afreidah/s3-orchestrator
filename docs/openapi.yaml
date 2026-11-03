@@ -1635,6 +1635,8 @@ components:
                 failed:
                     format: int64
                     type: integer
+                reason:
+                    type: string
                 skipped:
                     format: int64
                     type: integer
@@ -1767,6 +1769,8 @@ components:
                 failed:
                     format: int64
                     type: integer
+                reason:
+                    type: string
                 skipped:
                     format: int64
                     type: integer
@@ -1794,6 +1798,8 @@ components:
                 failed:
                     format: int64
                     type: integer
+                reason:
+                    type: string
                 skipped:
                     format: int64
                     type: integer
@@ -1844,6 +1850,8 @@ components:
                 failed:
                     format: int64
                     type: integer
+                reason:
+                    type: string
                 skipped:
                     format: int64
                     type: integer
@@ -2383,6 +2391,8 @@ components:
                 failed:
                     format: int64
                     type: integer
+                reason:
+                    type: string
                 rotated:
                     format: int64
                     type: integer

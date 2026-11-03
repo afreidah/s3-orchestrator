@@ -39,14 +39,6 @@ const rotateBatchSize = 500
 // TYPES
 // -------------------------------------------------------------------------
 
-// RotateKeyResult reports one key-rotation pass. Total - Rotated - Failed
-// counts copies a newer write replaced during the pass.
-type RotateKeyResult struct {
-	Rotated int
-	Failed  int
-	Total   int
-}
-
 // EncryptionDeps holds the collaborators Encryption requires.
 type EncryptionDeps struct {
 	Encryptor *encryption.Encryptor
@@ -88,16 +80,16 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return bulkRewriteOp{
+	op := bulkRewriteOp{
 		opName:      "encrypt-existing",
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
+		layer:       core.StoredEncrypted,
+		add:         true,
+		filter:      core.FormFilter{Backend: backend},
 		maxRewrites: maxRewrites,
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredEncrypted, Backend: backend}, batchSize, after)
-		},
-		want: func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() | core.StoredEncrypted },
-	}.run(ctx, e.rewriteEnv(), obs)
+	}
+	return op.run(ctx, e.rewriteEnv(), obs)
 }
 
 // DecryptExisting rewrites every encrypted copy as plaintext and clears the
@@ -110,16 +102,15 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return bulkRewriteOp{
+	op := bulkRewriteOp{
 		opName:      "decrypt-existing",
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
+		layer:       core.StoredEncrypted,
+		filter:      core.FormFilter{Backend: backend},
 		maxRewrites: maxRewrites,
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredEncrypted, Backend: backend}, batchSize, after)
-		},
-		want: func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() &^ core.StoredEncrypted },
-	}.run(ctx, e.rewriteEnv(), obs)
+	}
+	return op.run(ctx, e.rewriteEnv(), obs)
 }
 
 // RotateKey re-wraps DEKs under the current primary key: every DEK sealed with
@@ -127,53 +118,41 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 // moves rows still carrying an earlier release's positional IDs onto the
 // key's fingerprint. Exactly one of the two must be given. The old keys must
 // remain configured, since unwrapping happens with them. Object bytes are
-// untouched.
-func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bool) (RotateKeyResult, error) {
+// untouched. A copy a newer write replaced mid-pass counts as skipped.
+func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bool) (batch.Summary, error) {
 	if e.encryptor == nil || e.store == nil {
-		return RotateKeyResult{}, ErrEncryptionDisabled
+		return batch.Summary{}, ErrEncryptionDisabled
 	}
 	if (oldKeyID != "") == allStale {
-		return RotateKeyResult{}, ErrKeyIDRequired
+		return batch.Summary{}, ErrKeyIDRequired
 	}
 	filter := core.FormFilter{With: core.StoredEncrypted, KeyID: oldKeyID}
 	if allStale {
 		filter.ExceptKeyID = e.encryptor.Provider().KeyID()
 	}
 
-	var res RotateKeyResult
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(rotateBatchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return e.store.ListCopiesByForm(ctx, &filter, limit, after)
 		},
-		CursorOf: func(loc core.ObjectLocation) core.Cursor { return loc.Cursor() },
+		CursorOf: core.CursorOf,
 	}
-	_, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
-		e.rotateBatch(ctx, locs, &res)
-		return batch.Step{}, nil
-	})
+	res, _, err := pager.RunPages(ctx, batch.Runner[core.ObjectLocation]{Concurrency: 1},
+		func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
+			return e.rotateOneLocation(ctx, &loc)
+		})
 	if err != nil {
 		return res, err
 	}
 
-	e.log.InfoContext(ctx, "key rotation complete", "rotated", res.Rotated, "failed", res.Failed, "total", res.Total)
+	e.log.InfoContext(ctx, "key rotation complete", "rotated", res.Succeeded, "failed", res.Failed, "skipped", res.Skipped)
 	return res, nil
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// rotateBatch re-wraps one page of locations and folds the outcomes into res.
-func (e *Encryption) rotateBatch(ctx context.Context, locs []core.ObjectLocation, res *RotateKeyResult) {
-	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1}
-	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-		return e.rotateOneLocation(ctx, &loc)
-	})
-	res.Rotated += sum.Succeeded
-	res.Failed += sum.Failed
-	res.Total += sum.Attempted + sum.Skipped
-}
 
 // rotateOneLocation re-wraps the DEK for a single encrypted location. Every
 // failure mode is non-fatal so the pass continues. A copy a newer write
@@ -223,5 +202,5 @@ func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err erro
 // pass changes only the envelope, so an encoding is carried through rather
 // than decoded and no codec is needed.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
+	return bulkRewriteEnv{log: e.log, store: e.store, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
 }

@@ -14,11 +14,9 @@ package ui
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -58,8 +56,12 @@ func canUseDashboard(u *auth.User) bool {
 // Backend operations run over every backend, so they require the backend
 // wildcard grant.
 func (h *Handler) authorizeRoute(w http.ResponseWriter, r *http.Request, rt *uiAPIRoute) bool {
+	user := userFrom(r.Context())
 	if rt.perm == 0 {
-		h.refuse(w, r, rt.suffix, "route declares no permission", "")
+		h.refuse(w, r, &auth.Denial{
+			User: user, Operation: rt.suffix, Resource: core.Resource{Kind: rt.kind},
+			Reason: auth.ReasonNoRoutePermission,
+		})
 		return false
 	}
 	if rt.kind == core.ResourceBucket {
@@ -69,8 +71,11 @@ func (h *Handler) authorizeRoute(w http.ResponseWriter, r *http.Request, rt *uiA
 	if rt.kind == core.ResourceBackend {
 		resource.Name = core.ResourceWildcard
 	}
-	if !userFrom(r.Context()).CanAdmin(resource, rt.perm) {
-		h.refuse(w, r, rt.suffix, "grant does not carry the permission", resource.String())
+	if !user.CanAdmin(resource, rt.perm) {
+		h.refuse(w, r, &auth.Denial{
+			User: user, Operation: rt.suffix, Resource: resource, Required: rt.perm,
+			Reason: auth.ReasonPermission,
+		})
 		return false
 	}
 	return true
@@ -79,9 +84,13 @@ func (h *Handler) authorizeRoute(w http.ResponseWriter, r *http.Request, rt *uiA
 // authorizeKey refuses a request whose key names a bucket the user may not
 // exercise want on. Reports whether it may proceed.
 func (h *Handler) authorizeKey(w http.ResponseWriter, r *http.Request, key string, want core.PermissionSet) bool {
-	bucket, reason, ok := auth.AuthorizeKey(userFrom(r.Context()), key, want)
+	user := userFrom(r.Context())
+	bucket, reason, ok := auth.AuthorizeKey(user, key, want)
 	if !ok {
-		h.refuse(w, r, strings.TrimPrefix(r.URL.Path, h.prefix), reason, bucket)
+		h.refuse(w, r, &auth.Denial{
+			User: user, Operation: strings.TrimPrefix(r.URL.Path, h.prefix),
+			Resource: core.Resource{Kind: core.ResourceBucket, Name: bucket}, Required: want, Reason: reason,
+		})
 	}
 	return ok
 }
@@ -92,26 +101,11 @@ func canList(ctx context.Context, bucket string) bool {
 	return userFrom(ctx).Can(bucket, core.PermList)
 }
 
-// refuse writes the 403 and records it as ui.ActionDenied, named to match the
-// admin API's admin.ActionDenied so one query finds a refusal on either surface.
-func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, route, reason, resource string) {
-	user := "unknown"
-	if u := userFrom(r.Context()); u != nil {
-		user = u.ID
-	}
-	h.log.WarnContext(r.Context(), "dashboard request not permitted by grant",
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-		"user", user,
-		"resource", resource,
-		"reason", reason,
-	)
-	audit.Log(r.Context(), "ui.ActionDenied",
-		slog.String("route", route),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.String("resource", resource),
-		slog.String("reason", reason),
-		slog.Int("status", http.StatusForbidden),
-	)
+// refuse records d as ui.ActionDenied, named to match the admin API's
+// admin.ActionDenied so one query finds a refusal on either surface, and
+// writes the 403.
+func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, d *auth.Denial) {
+	d.Event = "ui.ActionDenied"
+	d.Record(r, h.log)
 	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)
 }

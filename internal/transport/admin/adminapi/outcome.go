@@ -10,9 +10,15 @@
 
 package adminapi
 
-// Outcome is the part every pass reports the same way. Status is "ok" when the
-// pass ran and "skipped" when it had nothing to run against, such as a feature
-// that is not configured; Reason accompanies "skipped" only.
+// The status words an operation response reports.
+const (
+	StatusOK      = "ok"
+	StatusSkipped = "skipped"
+)
+
+// Outcome is the part every pass reports the same way. Status is StatusOK when
+// the pass ran and StatusSkipped when it had nothing to run against, such as a
+// feature that is not configured; Reason accompanies a skip only.
 type Outcome struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`

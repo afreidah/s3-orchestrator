@@ -116,13 +116,16 @@ type RuleProcessor interface {
 	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) batch.Summary
 }
 
-// OverReplicationOps is the slice of *worker.OverReplicationCleaner the
-// surplus-copy operations use. Clean reports the copies it removed alongside
-// the per-item tally, so an object it could not clean is visible rather than
-// hidden behind a smaller count.
-type OverReplicationOps interface {
-	CountPending(ctx context.Context, factor int) (int64, error)
+// OverReplicationCleaner removes surplus copies. Clean reports the copies it
+// removed alongside the per-item tally, so an object it could not clean is
+// visible rather than hidden behind a smaller count.
+type OverReplicationCleaner interface {
 	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error)
+}
+
+// BacklogCounter counts the keys under and over a replication factor.
+type BacklogCounter interface {
+	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
 }
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.
@@ -147,10 +150,10 @@ type AdvisoryLocker interface {
 
 // Compile-time assertions.
 var (
-	_ ObjectAPI          = (*object.Manager)(nil)
-	_ Mover              = (*writepath.Coordinator)(nil)
-	_ Replicator         = (*worker.Replicator)(nil)
-	_ Rebalancer         = (*worker.Rebalancer)(nil)
-	_ OverReplicationOps = (*worker.OverReplicationCleaner)(nil)
-	_ ScrubberOps        = (*worker.Scrubber)(nil)
+	_ ObjectAPI              = (*object.Manager)(nil)
+	_ Mover                  = (*writepath.Coordinator)(nil)
+	_ Replicator             = (*worker.Replicator)(nil)
+	_ Rebalancer             = (*worker.Rebalancer)(nil)
+	_ OverReplicationCleaner = (*worker.OverReplicationCleaner)(nil)
+	_ ScrubberOps            = (*worker.Scrubber)(nil)
 )

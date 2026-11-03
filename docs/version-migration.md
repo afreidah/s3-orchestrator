@@ -64,6 +64,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**One pass definition for the admin API and the dashboard ([#1855](https://github.com/afreidah/s3-orchestrator/issues/1855), v0.179.6)**
+
+Scripts that read admin API or dashboard responses need updating.
+
+- The four bulk rewrites and key rotation report `"status": "ok"` like every other pass. They used to report `"complete"`. A bulk rewrite that skips carries its `reason`.
+- A confirmed backend purge answers `{"status": "ok", "backend": ..., "purged": N}` in JSON mode too, as the stream's result does. It used to answer `{"status": "backend purged", "backend": ...}`.
+- A `/admin/api/cache/*` request with caching off answers 503 with the standard `{"error": ...}` body. It used to answer `{"status": "disabled", "reason": ...}`.
+- A request naming a missing object, user, bucket or backend answers 404 with its own message, such as `object not found`, where some routes used to say `not found`. A tag set of the wrong shape on the tag routes is a 400 as before.
+- Dashboard status polls report `running`, `idle`, `ok`, `skipped` or `failed`, with the admin API's response for the same pass under `result`. They used to report `done` or `error` with the counts at the top level under dashboard-only names: the over-replication count is now `copies_removed`. A bulk rewrite with its encryptor or codec missing reports `failed` with the reason, as the admin API answers 400.
+- The dashboard's delete, prefix delete and upload answer with the admin API's object responses: `{"deleted": N}`, `{"deleted", "failed", "total"}` with a 500 on a partial prefix delete, and `{"etag": ...}`.
+- Every dashboard API route refuses methods other than its own with 405. GET routes used to accept any method.
+- `admin.ActionDenied`, `admin.ControlPlaneDenied` and `ui.ActionDenied` audit entries carry the same attributes: `method`, `path`, `client_addr`, `operation`, `resource`, `required`, `held` and `reason`. The object-route entry's `bucket` attribute is now `resource` (as `bucket:<name>`), and the dashboard entry gains `required`, `held` and `method`.
+- The backend name a pass is limited to is checked against the configured backends, as grants and dashboard syncs check it.
+
 **Shared helpers for backends, counters, encryption, compression and logging ([#1861](https://github.com/afreidah/s3-orchestrator/issues/1861), v0.179.5)**
 
 - `/admin/api/logs` shows a group-valued attribute as dotted keys with plain values. It used to show `[{"Key":..,"Value":{}}]`. A logger's own attribute keeps the group it was added under, and an empty attribute no longer appears under an empty key.

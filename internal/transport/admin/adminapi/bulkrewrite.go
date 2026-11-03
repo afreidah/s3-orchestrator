@@ -13,10 +13,10 @@
 package adminapi
 
 // BulkRewriteOutcome is the part every bulk rewrite pass reports identically:
-// the terminal status and the counts that partition what the pass saw.
+// the pass outcome and the counts that partition what the pass saw.
 // The per-operation responses embed it and add their own success count.
 type BulkRewriteOutcome struct {
-	Status string `json:"status"`
+	Outcome
 	BulkRewriteTally
 }
 

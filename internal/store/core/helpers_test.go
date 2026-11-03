@@ -734,10 +734,10 @@ func TestLocationListingHelpers(t *testing.T) {
 	if got := KeysOf(locs); !slices.Equal(got, []string{"a", "a", "c"}) {
 		t.Errorf("KeysOf = %v, want [a a c]", got)
 	}
-	if got := locs[1].Cursor(); got != (Cursor{ObjectKey: "a", BackendName: "b2"}) {
-		t.Errorf("Cursor = %+v, want after a on b2", got)
+	if got := CursorOf(locs[1]); got != (Cursor{ObjectKey: "a", BackendName: "b2"}) {
+		t.Errorf("CursorOf = %+v, want after a on b2", got)
 	}
-	if got := locs[2].SizeCursor(); got != (SizeCursor{SizeBytes: 9, ObjectKey: "c"}) {
-		t.Errorf("SizeCursor = %+v, want after c at 9 bytes", got)
+	if got := SizeCursorOf(locs[2]); got != (SizeCursor{SizeBytes: 9, ObjectKey: "c"}) {
+		t.Errorf("SizeCursorOf = %+v, want after c at 9 bytes", got)
 	}
 }

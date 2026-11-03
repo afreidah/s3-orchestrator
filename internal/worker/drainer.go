@@ -174,7 +174,7 @@ func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord
 			}
 			return page, nil
 		},
-		CursorOf: func(obj core.ObjectLocation) core.SizeCursor { return obj.SizeCursor() },
+		CursorOf: core.SizeCursorOf,
 		// A cancel or a failure recorded elsewhere stops the pass here.
 		BeforePage: func(ctx context.Context) (bool, error) {
 			return d.stillDraining(ctx, name)

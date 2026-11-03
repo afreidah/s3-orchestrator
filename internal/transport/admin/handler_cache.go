@@ -4,10 +4,10 @@
 // Author: Alex Freidah
 //
 // /admin/api/cache/* endpoints: full flush, per-key invalidate, prefix
-// invalidate, and a stats snapshot. Every endpoint reports a 503 with a
-// uniform "disabled" body when the orchestrator was started without the
-// object data cache configured, so callers can distinguish "no cache" from
-// "cache empty." Each instance holds its own cache, so a flush or invalidation
+// invalidate, and a stats snapshot. Every endpoint answers 503 when the
+// orchestrator was started without the object data cache configured, so
+// callers can distinguish "no cache" from "cache empty." Each instance holds
+// its own cache, so a flush or invalidation
 // is applied here and announced to the others; the counts in a response, and
 // the stats, are the answering instance's.
 // -------------------------------------------------------------------------------
@@ -48,14 +48,10 @@ func (h *Handler) invalidateCache(ctx context.Context, inv cache.Invalidation) i
 	return dropped
 }
 
-// writeCacheDisabled emits the standard 503 response used by every
-// /admin/api/cache/* handler when h.d.ObjectCache is nil. Centralised so
-// the shape ("status: disabled", reason) cannot drift between routes.
+// writeCacheDisabled answers every /admin/api/cache/* request with a 503 when
+// h.d.ObjectCache is nil, the way every other absent subsystem answers.
 func (h *Handler) writeCacheDisabled(w http.ResponseWriter) {
-	httputil.WriteJSON(w, http.StatusServiceUnavailable, adminapi.CacheDisabledResponse{
-		Status: "disabled",
-		Reason: cacheDisabledReason,
-	})
+	httputil.WriteJSONError(w, http.StatusServiceUnavailable, cacheDisabledReason)
 }
 
 // handleCacheFlush drops every entry from the in-memory object data

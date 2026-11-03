@@ -172,12 +172,6 @@ func cleanupItemResult(removed, failures int) batch.ItemResult {
 	}
 }
 
-// CountPending returns the number of objects exceeding the replication factor.
-func (c *OverReplicationCleaner) CountPending(ctx context.Context, factor int) (int64, error) {
-	backlog, err := c.store.CountReplicationBacklog(ctx, factor)
-	return backlog.Over, err
-}
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------

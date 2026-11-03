@@ -3,35 +3,29 @@
 //
 // Author: Alex Freidah
 //
-// Thread-safe tracker for long-running UI operations (rebalance, cleanup) that
-// run in background goroutines. Prevents duplicate runs and provides status
-// polling for the frontend.
+// Thread-safe tracker for the passes the dashboard runs in background
+// goroutines. Prevents duplicate runs and keeps each pass's last report for
+// status polling.
 // -------------------------------------------------------------------------------
 
 package ui
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+)
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// asyncResult holds the outcome of a completed async operation: Error is set
-// when it failed. Counts carries what the operation reported; the action's own
-// response type decides which of them it publishes and what it calls them.
-// Skipped, when set, surfaces a reason instead of a hard success.
-type asyncResult struct {
-	Error   string
-	Skipped string
-	Counts  adminActionCounts
-}
-
 // asyncOpTracker manages named async operations. Each operation can be running
-// or idle, with the last result available for polling after completion.
+// or idle, with the last report available for polling after completion.
 type asyncOpTracker struct {
 	mu      sync.Mutex
 	running map[string]bool
-	results map[string]*asyncResult
+	results map[string]*admin.Report
 }
 
 // -------------------------------------------------------------------------
@@ -45,7 +39,7 @@ func (t *asyncOpTracker) TryStart(name string) bool {
 	defer t.mu.Unlock()
 	if t.running == nil {
 		t.running = make(map[string]bool)
-		t.results = make(map[string]*asyncResult)
+		t.results = make(map[string]*admin.Report)
 	}
 	if t.running[name] {
 		return false
@@ -55,16 +49,17 @@ func (t *asyncOpTracker) TryStart(name string) bool {
 	return true
 }
 
-// Complete records the result and marks the operation as no longer running.
-func (t *asyncOpTracker) Complete(name string, result *asyncResult) {
+// Complete records the report and marks the operation as no longer running.
+func (t *asyncOpTracker) Complete(name string, rep *admin.Report) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.running[name] = false
-	t.results[name] = result
+	t.results[name] = rep
 }
 
-// Status returns the last result and whether the operation is currently running.
-func (t *asyncOpTracker) Status(name string) (result *asyncResult, running bool) {
+// Status returns the last report and whether the operation is currently
+// running.
+func (t *asyncOpTracker) Status(name string) (rep *admin.Report, running bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.running == nil {

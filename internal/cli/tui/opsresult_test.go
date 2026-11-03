@@ -79,14 +79,6 @@ func TestDecodeOneShot(t *testing.T) {
 			outcome: adminstream.OutcomeOK,
 			message: "cache was already empty",
 		},
-		{
-			// The cache endpoints carry no reason, so the status is the message.
-			name:    "cache flush on a disabled cache",
-			decode:  decodeOneShot[cacheFlushResult],
-			body:    `{"status":"disabled","entries_dropped":0}`,
-			outcome: adminstream.OutcomeSkipped,
-			message: "disabled",
-		},
 	}
 
 	for _, tc := range cases {
@@ -222,9 +214,9 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 func TestNewOneShotResults_ReportSkips(t *testing.T) {
 	t.Parallel()
 	res := usageReconcileResult{adminapi.UsageReconcileResponse{
-		Status: statusSkipped,
+		Status: adminapi.StatusSkipped,
 	}}
-	if got := res.skipReason(); got != statusSkipped {
-		t.Errorf("skipReason = %q, want %q", got, statusSkipped)
+	if got := res.skipReason(); got != adminapi.StatusSkipped {
+		t.Errorf("skipReason = %q, want %q", got, adminapi.StatusSkipped)
 	}
 }

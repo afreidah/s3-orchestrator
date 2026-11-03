@@ -28,16 +28,6 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// The two status values a worker reports when the pass did not run.
-const (
-	statusSkipped  = "skipped"
-	statusDisabled = "disabled"
-)
-
-// -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
@@ -165,11 +155,11 @@ func rewriteSummary(verb string, succeeded, failed, total int) string {
 	return summary
 }
 
-// skippedBecause reports why a pass did not run, or "" when it did. Neither
-// one-shot response carries a reason field, so the status is the whole of the
+// skippedBecause reports why a pass did not run, or "" when it did. These
+// responses carry no reason field, so the status is the whole of the
 // explanation the endpoint offers.
 func skippedBecause(status string) string {
-	if status == statusSkipped || status == statusDisabled {
+	if status == adminapi.StatusSkipped {
 		return status
 	}
 	return ""

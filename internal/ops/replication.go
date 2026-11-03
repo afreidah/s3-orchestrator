@@ -42,7 +42,8 @@ type SurplusCount struct {
 // ReplicationDeps holds the collaborators Replication requires.
 type ReplicationDeps struct {
 	Replicator Replicator
-	OverRep    OverReplicationOps
+	OverRep    OverReplicationCleaner
+	Backlog    BacklogCounter
 	Config     *config.Live
 }
 
@@ -51,7 +52,8 @@ type ReplicationDeps struct {
 // running config and passes the request on.
 type Replication struct {
 	replicator Replicator
-	overRep    OverReplicationOps
+	overRep    OverReplicationCleaner
+	backlog    BacklogCounter
 	cfg        *config.Live
 }
 
@@ -59,10 +61,12 @@ type Replication struct {
 func NewReplication(d ReplicationDeps) *Replication {
 	must.NotNil("d.Replicator", d.Replicator)
 	must.NotNil("d.OverRep", d.OverRep)
+	must.NotNil("d.Backlog", d.Backlog)
 	must.NotNil("d.Config", d.Config)
 	return &Replication{
 		replicator: d.Replicator,
 		overRep:    d.OverRep,
+		backlog:    d.Backlog,
 		cfg:        d.Config,
 	}
 }
@@ -90,11 +94,11 @@ func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 		return SurplusCount{}, err
 	}
 
-	pending, err := r.overRep.CountPending(ctx, runCfg.Factor)
+	backlog, err := r.backlog.CountReplicationBacklog(ctx, runCfg.Factor)
 	if err != nil {
 		return SurplusCount{}, err
 	}
-	return SurplusCount{Factor: runCfg.Factor, Pending: pending}, nil
+	return SurplusCount{Factor: runCfg.Factor, Pending: backlog.Over}, nil
 }
 
 // CleanExcess removes copies beyond the configured factor. batchSize <= 0 uses

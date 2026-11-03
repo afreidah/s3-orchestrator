@@ -116,14 +116,15 @@ func KeysOf(locs []ObjectLocation) []string {
 	return keys
 }
 
-// Cursor returns the position a by-key listing resumes from after this copy.
-func (l *ObjectLocation) Cursor() Cursor {
+// CursorOf returns the position a by-key listing resumes from after l. It
+// takes the copy by value so a batch.Pager can use it as its CursorOf.
+func CursorOf(l ObjectLocation) Cursor { //nolint:gocritic // matches batch.Pager.CursorOf
 	return Cursor{ObjectKey: l.ObjectKey, BackendName: l.BackendName}
 }
 
-// SizeCursor returns the position a backend's smallest-first listing resumes
-// from after this copy.
-func (l *ObjectLocation) SizeCursor() SizeCursor {
+// SizeCursorOf returns the position a backend's smallest-first listing
+// resumes from after l, taken by value for batch.Pager.CursorOf.
+func SizeCursorOf(l ObjectLocation) SizeCursor { //nolint:gocritic // matches batch.Pager.CursorOf
 	return SizeCursor{SizeBytes: l.SizeBytes, ObjectKey: l.ObjectKey}
 }
 

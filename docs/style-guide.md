@@ -350,7 +350,7 @@ Until a mock is needed, the interface declaration alone documents the dependency
 **When NOT to declare a narrow interface (#918).** A consumer-side interface earns its keep when at least one of these is true:
 
 1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
-2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `ops.Replicator`/`OverReplicationOps`/`ScrubberOps` and `admin.Reconciler`, whose fakes drive the operations layer and the admin handlers).
+2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `ops.Replicator`/`OverReplicationCleaner`/`ScrubberOps` and `admin.Reconciler`, whose fakes drive the operations layer and the admin handlers).
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` - without the interface, `readpath` would have to import `object` which already imports `readpath`).
 4. **The interface models a real domain boundary** between subsystems (`backendstate.Runtime`, `multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 

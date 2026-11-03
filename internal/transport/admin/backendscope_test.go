@@ -42,7 +42,7 @@ func TestBackendParam_UnknownNameIsRefused(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 			h := newTestHandler(t)
-			h.d.BackendNames = func() []string { return []string{"b1", "b2"} }
+			h.d.Config = backendsConfig("b1", "b2")
 			mux := http.NewServeMux()
 			h.Register(mux)
 
@@ -63,7 +63,7 @@ func TestBackendParam_KnownNameIsAccepted(t *testing.T) {
 	t.Parallel()
 
 	h := newTestHandler(t)
-	h.d.BackendNames = func() []string { return []string{"b1"} }
+	h.d.Config = backendsConfig("b1")
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/scrub?backend=b1", nil)
 	w := httptest.NewRecorder()
@@ -83,7 +83,7 @@ func TestBackendParam_AbsentMeansEveryBackend(t *testing.T) {
 	t.Parallel()
 
 	h := newTestHandler(t)
-	h.d.BackendNames = func() []string { return []string{"b1"} }
+	h.d.Config = backendsConfig("b1")
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/scrub", nil)
 	w := httptest.NewRecorder()

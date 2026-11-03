@@ -116,6 +116,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Mover:        st.Coord,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
+		Backlog:      testStore,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
 		Provisioning: testStore,
@@ -137,21 +138,15 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, srv *
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := admin.New(&admin.Deps{
-		BackendOps:   st.Usage,
-		Objects:      opsSvc.Objects,
-		Integrity:    opsSvc.Integrity,
-		Replication:  opsSvc.Replication,
-		Rebalance:    opsSvc.Rebalance,
-		Encryption:   opsSvc.Encryption,
-		Compression:  opsSvc.Compression,
-		Provision:    opsSvc.Provision,
-		States:       st.States,
-		StateStore:   testStore,
-		DBHealthy:    testDatabaseCB.IsHealthy,
-		Cleanup:      testStore,
-		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
-		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
-		LogLevel:     &lv,
+		BackendOps: st.Usage,
+		Ops:        opsSvc,
+		States:     st.States,
+		StateStore: testStore,
+		DBHealthy:  testDatabaseCB.IsHealthy,
+		Cleanup:    testStore,
+		Registry:   func() *auth.BucketRegistry { return srv.GetBucketAuth() },
+		Config:     st.Config,
+		LogLevel:   &lv,
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)

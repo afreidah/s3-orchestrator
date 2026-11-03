@@ -17,6 +17,7 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
@@ -54,14 +55,7 @@ type Handler struct {
 type Deps struct {
 	BackendOps   BackendOps
 	Dashboard    DashboardReader
-	Objects      *ops.Objects
-	Integrity    *ops.Integrity
-	Replication  *ops.Replication
-	Rebalance    *ops.Rebalance
-	Expiry       *ops.Lifecycle
-	Encryption   *ops.Encryption
-	Compression  *ops.Compression
-	Provision    *ops.Provisioning
+	Ops          *ops.Services
 	States       *backendstate.Manager
 	StateStore   core.BackendStateStore
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
@@ -73,7 +67,7 @@ type Deps struct {
 	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
 	Reconciler   Reconciler
 	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
-	BackendNames func() []string             // typically *infra.BackendRuntime.BackendOrder
+	Config       *config.Live
 	LogLevel     *slog.LevelVar
 	Instance     adminapi.InstanceStatus // this instance's identity, reported on every status response
 	Shared       *sharedstate.Shared     // state shared with the other instances; nil on a single instance
@@ -87,19 +81,20 @@ type Deps struct {
 func New(d *Deps) *Handler {
 	must.NotNil("d", d)
 	must.NotNil("d.BackendOps", d.BackendOps)
-	must.NotNil("d.Objects", d.Objects)
-	must.NotNil("d.Integrity", d.Integrity)
-	must.NotNil("d.Replication", d.Replication)
-	must.NotNil("d.Rebalance", d.Rebalance)
-	must.NotNil("d.Encryption", d.Encryption)
-	must.NotNil("d.Compression", d.Compression)
-	must.NotNil("d.Provision", d.Provision)
+	must.NotNil("d.Ops", d.Ops)
+	must.NotNil("d.Ops.Objects", d.Ops.Objects)
+	must.NotNil("d.Ops.Integrity", d.Ops.Integrity)
+	must.NotNil("d.Ops.Replication", d.Ops.Replication)
+	must.NotNil("d.Ops.Rebalance", d.Ops.Rebalance)
+	must.NotNil("d.Ops.Encryption", d.Ops.Encryption)
+	must.NotNil("d.Ops.Compression", d.Ops.Compression)
+	must.NotNil("d.Ops.Provision", d.Ops.Provision)
 	must.NotNil("d.States", d.States)
 	must.NotNil("d.StateStore", d.StateStore)
 	must.NotNil("d.Cleanup", d.Cleanup)
 	must.NotNil("d.LogLevel", d.LogLevel)
 	must.NotNil("d.Registry", d.Registry)
-	must.NotNil("d.BackendNames", d.BackendNames)
+	must.NotNil("d.Config", d.Config)
 	h := &Handler{
 		d:          *d,
 		log:        slog.Default().With(logfmt.Component("admin")),
@@ -135,14 +130,6 @@ func (h *Handler) SetReloadStatusProvider(fn func() *adminapi.ReloadStatusRespon
 func (h *Handler) SetConfigProvider(fn func() (*adminapi.ConfigResponse, error)) {
 	h.liveConfig = fn
 }
-
-// Outcome values every operation response carries, so a client can branch on
-// what happened before reading the operation-specific counts.
-const (
-	statusOK       = "ok"
-	statusSkipped  = "skipped"
-	statusComplete = "complete"
-)
 
 // maxSmallBody caps a request body that carries names, tags or a CORS rule
 // set, never data. Ten tags at their maximum lengths is a few kilobytes.

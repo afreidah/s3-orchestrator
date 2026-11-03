@@ -67,7 +67,7 @@ func TestStreamPass_OutlivesTheServerWriteTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := &Handler{}
 		body, err := getWithWriteTimeout(t, func(w http.ResponseWriter, r *http.Request) {
-			h.streamPass(w, r, passEndpoint[int]{
+			h.streamPass(w, r, &Pass[int]{
 				op: "slow-op", verb: "processing", sequential: true,
 				run: func(_ context.Context, obs progress.Observer) (int, error) {
 					// Two steps either side of the deadline: the first lands

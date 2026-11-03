@@ -90,7 +90,7 @@ func TestApplyCacheErr_SeparatesDisabled(t *testing.T) {
 
 	m.cache.failed(&adminclient.Error{
 		Status: http.StatusServiceUnavailable,
-		Body:   `{"status":"disabled","reason":"object data caching is disabled"}`,
+		Body:   `{"error":"object data caching is disabled"}`,
 	})
 	if m.cache.err != nil || m.cache.unavailable != "object data caching is disabled" {
 		t.Errorf("503: err=%v unavailable=%q", m.cache.err, m.cache.unavailable)

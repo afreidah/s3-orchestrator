@@ -333,7 +333,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 		List: func(ctx context.Context, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 			return d.objects.ListObjectsByBackend(ctx, name, limit, after)
 		},
-		CursorOf: func(obj core.ObjectLocation) core.SizeCursor { return obj.SizeCursor() },
+		CursorOf: core.SizeCursorOf,
 	}
 	runner := batch.Runner[core.ObjectLocation]{
 		Concurrency: 1,

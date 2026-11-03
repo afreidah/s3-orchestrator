@@ -17,9 +17,7 @@ package admin
 
 import (
 	"cmp"
-	"log/slog"
 	"net/http"
-	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -98,7 +96,10 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 	// for one, so this is unreachable by a served route and stays as the
 	// fallback that keeps the default closed.
 	if rt.Perm == 0 {
-		h.refuse(r, w, rt, who, "", "route declares no permission")
+		h.refuse(w, r, &auth.Denial{
+			Event: eventActionDenied, User: who, Operation: rt.Summary,
+			Resource: core.Resource{Kind: rt.kind()}, Reason: auth.ReasonNoRoutePermission,
+		})
 		return false
 	}
 	if rt.kind() != core.ResourceBucket {
@@ -107,7 +108,10 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 
 	bucket, reason, ok := auth.AuthorizeKey(who, h.resourceValue(r, rt), rt.Perm)
 	if !ok {
-		h.refuse(r, w, rt, who, bucket, reason)
+		h.refuse(w, r, &auth.Denial{
+			Event: eventActionDenied, User: who, Operation: rt.Summary,
+			Resource: core.Resource{Kind: core.ResourceBucket, Name: bucket}, Required: rt.Perm, Reason: reason,
+		})
 		return false
 	}
 	return true
@@ -122,7 +126,10 @@ func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request, rt *rou
 		resource.Name = cmp.Or(h.resourceValue(r, rt), core.ResourceWildcard)
 	}
 	if !who.CanAdmin(resource, rt.Perm) {
-		h.refuseAdmin(r, w, rt, who, resource)
+		h.refuse(w, r, &auth.Denial{
+			Event: eventControlPlaneDenied, User: who, Operation: rt.Summary,
+			Resource: resource, Required: rt.Perm, Reason: auth.ReasonPermission,
+		})
 		return false
 	}
 	return true
@@ -148,62 +155,24 @@ func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, 
 	if name == "" {
 		return "", true
 	}
-	if !slices.Contains(h.d.BackendNames(), name) {
+	if !h.d.Config.Load().HasBackend(name) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "unknown backend: "+name)
 		return "", false
 	}
 	return name, true
 }
 
-// refuse writes the 403 and records what was asked for against what was held,
-// so an operator reading the audit stream can fix the grant without a second
-// lookup. Named to match the s3.ActionDenied entry the data path emits, so one
-// query finds a refusal whichever surface it happened on.
-func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who *auth.User, bucket, reason string) {
-	held, _ := who.Permissions(bucket)
-	h.log.WarnContext(r.Context(), "admin request not permitted by grant",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-		"user", who.ID,
-		"bucket", bucket,
-		"reason", reason,
-	)
-	audit.Log(r.Context(), "admin.ActionDenied",
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.String("bucket", bucket),
-		slog.String("operation", rt.Summary),
-		slog.String("required", rt.Perm.String()),
-		slog.String("held", held.String()),
-		slog.String("reason", reason),
-		slog.Int("status", http.StatusForbidden),
-	)
-	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)
-}
+// The audit events a refusal is filed under. eventActionDenied matches the
+// s3.ActionDenied entry the data path emits, so one query finds an object
+// refusal whichever surface it happened on; control-plane refusals are filed
+// apart so one query finds them without the object traffic.
+const (
+	eventActionDenied       = "admin.ActionDenied"
+	eventControlPlaneDenied = "admin.ControlPlaneDenied"
+)
 
-// refuseAdmin writes the 403 a credential gets when its control-plane grants do
-// not carry the operation. Recorded separately from a denied object operation
-// so one query finds every control-plane refusal without the object traffic.
-func (h *Handler) refuseAdmin(r *http.Request, w http.ResponseWriter, rt *route, who *auth.User, resource core.Resource) {
-	held := who.AdminPermissions(resource)
-	h.log.WarnContext(r.Context(), "control-plane request not permitted by grant",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-		"user", who.ID,
-		"resource", resource.String(),
-	)
-	audit.Log(r.Context(), "admin.ControlPlaneDenied",
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.String("resource", resource.String()),
-		slog.String("operation", rt.Summary),
-		slog.String("required", rt.Perm.String()),
-		slog.String("held", held.String()),
-		slog.Int("status", http.StatusForbidden),
-	)
+// refuse records d and writes the 403.
+func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, d *auth.Denial) {
+	d.Record(r, h.log)
 	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)
 }

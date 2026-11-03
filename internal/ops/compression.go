@@ -71,7 +71,7 @@ func NewCompression(d *CompressionDeps) *Compression {
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, mover: c.mover, layers: c.layers}
+	return bulkRewriteEnv{log: c.log, store: c.store, mover: c.mover, layers: c.layers}
 }
 
 // -------------------------------------------------------------------------
@@ -89,29 +89,28 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 	if c.layers.Codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return bulkRewriteOp{
+	// The size floor and the recorded declines are both applied by the listing
+	// rather than here: both answers outlive the pass, so a copy either one
+	// excludes selects out of every future pass instead of being handed to
+	// each one only to be declined again.
+	op := bulkRewriteOp{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
-		// The size floor and the recorded declines are both applied by the
-		// listing rather than here: both answers outlive the pass, so a copy
-		// either one excludes selects out of every future pass instead of being
-		// handed to each one only to be declined again.
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return c.store.ListCopiesByForm(ctx, &core.FormFilter{
-				Without: core.StoredCompressed,
-				Backend: backend,
-				Candidates: &core.CompressionThresholds{
-					MinSize:  c.cfg.MinSize,
-					MinRatio: c.cfg.MinRatio,
-					Level:    c.cfg.Level,
-				},
-			}, batchSize, after)
+		layer:       core.StoredCompressed,
+		add:         true,
+		filter: core.FormFilter{
+			Backend: backend,
+			Candidates: &core.CompressionThresholds{
+				MinSize:  c.cfg.MinSize,
+				MinRatio: c.cfg.MinRatio,
+				Level:    c.cfg.Level,
+			},
 		},
-		want:        func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() | core.StoredCompressed },
 		onDeclined:  c.recordDecline,
 		maxRewrites: maxRewrites,
-	}.run(ctx, c.rewriteEnv(), obs)
+	}
+	return op.run(ctx, c.rewriteEnv(), obs)
 }
 
 // DecompressExisting decodes every encoded copy and records it as stored
@@ -121,16 +120,15 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 	if c.layers.Codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return bulkRewriteOp{
+	op := bulkRewriteOp{
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return c.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredCompressed, Backend: backend}, batchSize, after)
-		},
-		want:        func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() &^ core.StoredCompressed },
+		layer:       core.StoredCompressed,
+		filter:      core.FormFilter{Backend: backend},
 		maxRewrites: maxRewrites,
-	}.run(ctx, c.rewriteEnv(), obs)
+	}
+	return op.run(ctx, c.rewriteEnv(), obs)
 }
 
 // -------------------------------------------------------------------------

@@ -262,7 +262,7 @@ If you enable encryption on an orchestrator that already has unencrypted objects
    This processes all unencrypted copies in batches of 100: downloads each from its backend, encrypts it, and writes the ciphertext to a new path on the same backend. The new row replaces the old one in one transaction, then the plaintext bytes are deleted. The response shows progress:
 
    ```json
-   {"status": "complete", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
+   {"status": "ok", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
 3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (`status` values: `success`, `skipped`, `changed`, `error`). A `changed` copy is one a client wrote mid-pass; the client's write stands. See [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write).
@@ -282,7 +282,7 @@ To remove encryption from all objects and restore plaintext on backends, use the
    This processes all encrypted copies in batches of 100: downloads the ciphertext from its backend, decrypts it, and writes the plaintext to a new path on the same backend. The new row, with no encryption metadata, replaces the old one in one transaction, then the ciphertext bytes are deleted. A compressed copy keeps its encoding. Each copy costs a GET, a PUT and a DELETE, plus egress and ingress against the backend's usage quota. The response shows progress:
 
    ```json
-   {"status": "complete", "decrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
+   {"status": "ok", "decrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
 2. **Disable encryption** in the config and restart the orchestrator.
@@ -332,7 +332,7 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
    The response shows progress:
 
    ```json
-   {"status": "complete", "rotated": 1423, "failed": 0, "total": 1423}
+   {"status": "ok", "rotated": 1423, "failed": 0, "total": 1423}
    ```
 
 5. **After all DEKs are re-wrapped**, you can remove the old key from the config and restart. Wait first for multipart uploads started before the rotation to complete or be aborted: their parts were sealed under the old key, and the re-wrap pass covers stored objects only.

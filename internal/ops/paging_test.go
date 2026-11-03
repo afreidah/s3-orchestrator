@@ -17,6 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -74,7 +75,7 @@ func keyedEncryptor(t *testing.T, primary string, previous ...string) *encryptio
 
 // rotateWith runs one rotation over store with enc, of oldKeyID or, when it
 // is empty, of every stale key.
-func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, oldKeyID string) RotateKeyResult {
+func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, oldKeyID string) batch.Summary {
 	t.Helper()
 	svc := NewEncryption(EncryptionDeps{
 		Encryptor: enc,
@@ -150,12 +151,12 @@ func TestRotateKey_RotatesEveryRowAcrossPages(t *testing.T) {
 		})
 	}
 
-	if res := rotateWith(t, keyedEncryptor(t, "key-b", "key-a"), store, keyIDOf("key-a")); res.Rotated != copies || res.Failed != 0 {
+	if res := rotateWith(t, keyedEncryptor(t, "key-b", "key-a"), store, keyIDOf("key-a")); res.Succeeded != copies || res.Failed != 0 {
 		t.Errorf("first rotation = %+v, want all %d rotated", res, copies)
 	}
 	assertAllUnder(t, store, keyIDOf("key-b"))
 
-	if res := rotateWith(t, keyedEncryptor(t, "key-c", "key-b"), store, keyIDOf("key-b")); res.Rotated != copies || res.Failed != 0 {
+	if res := rotateWith(t, keyedEncryptor(t, "key-c", "key-b"), store, keyIDOf("key-b")); res.Succeeded != copies || res.Failed != 0 {
 		t.Errorf("second rotation = %+v, want all %d rotated", res, copies)
 	}
 	assertAllUnder(t, store, keyIDOf("key-c"))
@@ -183,7 +184,7 @@ func TestRotateKey_AllStaleMovesEveryOtherID(t *testing.T) {
 		ObjectKey: "z-current", BackendName: "b1", EncryptionKey: currentData, KeyID: currentID,
 	})
 
-	if res := rotateWith(t, keyedEncryptor(t, "key-b", "key-a"), store, ""); res.Rotated != copies || res.Failed != 0 || res.Total != copies {
+	if res := rotateWith(t, keyedEncryptor(t, "key-b", "key-a"), store, ""); res.Succeeded != copies || res.Failed != 0 || res.Planned != copies {
 		t.Errorf("rotation = %+v, want all %d stale copies rotated and the current one left out", res, copies)
 	}
 	assertAllUnder(t, store, currentID)

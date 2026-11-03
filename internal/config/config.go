@@ -183,6 +183,11 @@ func (c *Config) SetDefaultsAndValidate() error {
 	return errors.Join(errs...)
 }
 
+// HasBackend reports whether the config declares a backend named name.
+func (c *Config) HasBackend(name string) bool {
+	return slices.ContainsFunc(c.Backends, func(b BackendConfig) bool { return b.Name == name })
+}
+
 // CopiesPerWrite reports how many copies a single-object PUT places itself:
 // 1 unless fan-out is on, and always 1 at replication factor 1.
 func (c *Config) CopiesPerWrite() int {
