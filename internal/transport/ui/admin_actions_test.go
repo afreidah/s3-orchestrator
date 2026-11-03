@@ -3,314 +3,159 @@
 //
 // Author: Alex Freidah
 //
-// Covers the async dispatcher and status-polling helpers used by all four
-// long-running admin buttons (Replicate, Scrub, Backfill Checksums,
-// Encrypt Existing). The shared helpers handle method validation,
-// not-configured guards, single-flight concurrency, and serialisation of
-// asyncResult into the status JSON payload, so testing them once exercises
-// the contract for every endpoint that delegates to them.
+// Covers the background runner and status poll every dashboard action shares:
+// single-flight starts, refusal of malformed parameters, and how each way a
+// pass can end reaches the poll. The passes themselves are admin.Pass and are
+// tested with the admin API; admin_actions_integration_test.go drives them
+// end to end through the dashboard.
 // -------------------------------------------------------------------------------
 
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"log/slog"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
-// fakeStatus stands in for a real action's response type: the shared state
-// plus one named count, which is the shape every action publishes.
-type fakeStatus struct {
-	adminActionState
-	Count  int `json:"count"`
-	Failed int `json:"failed"`
-	Total  int `json:"total"`
+// fakePass is a dashboard action that reports a fixed report.
+type fakePass struct {
+	rep admin.Report
 }
 
-// fakeOp wraps run in an adminActionOp rendering fakeStatus, so the dispatcher
-// tests exercise the generic paths without depending on a real operation.
-func fakeOp(name string, run func(context.Context) (adminActionCounts, error)) adminActionOp[fakeStatus] {
-	return adminActionOp[fakeStatus]{
-		name: name,
-		run:  run,
-		render: func(s adminActionState, c adminActionCounts) fakeStatus {
-			return fakeStatus{adminActionState: s, Count: c.Count, Failed: c.Failed, Total: c.Total}
-		},
-	}
-}
+// Name implements pass.
+func (fakePass) Name() string { return "fake" }
 
-// noopOp returns an adminActionOp whose run closure does nothing useful;
-// used to exercise control-flow paths that exit before the goroutine fires.
-func noopOp(name string) adminActionOp[fakeStatus] {
-	return fakeOp(name, func(context.Context) (adminActionCounts, error) {
-		return adminActionCounts{}, nil
-	})
-}
+// Run implements pass.
+func (p fakePass) Run(context.Context, *slog.Logger) admin.Report { return p.rep }
 
-// TestStartAdminAction_MethodNotAllowed asserts that non-POST requests are
-// rejected before the op is started.
-func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
+// TestStartAction_AlreadyRunning asserts single-flight semantics: a second
+// start while the first runs is refused with 409 rather than clobbering it.
+func TestStartAction_AlreadyRunning(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate", nil)
-	w := httptest.NewRecorder()
-
-	h.startAdminAction(w, req, noopOp("replicate"))
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-// TestStartAdminAction_AlreadyRunning asserts single-flight semantics: a
-// second concurrent invocation returns 409 Conflict instead of clobbering
-// the first run.
-func TestStartAdminAction_AlreadyRunning(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	if !h.asyncOps.TryStart("replicate") {
+	if !h.asyncOps.TryStart("/api/fake") {
 		t.Fatal("test pre-condition: TryStart should claim the slot")
 	}
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
-	h.startAdminAction(w, req, noopOp("replicate"))
+	h.startAction(w, "/api/fake", fakePass{}, nil)
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
 	}
 }
 
-// TestStartAdminAction_AcceptedStoresCounts asserts the happy path: 202 is
-// returned immediately, the op runs in the background, and every count it
-// reported ends up on the asyncResult for the poller.
-func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
+// TestStartAction_InvalidRefusedBeforeStarting asserts a malformed request is
+// a 400 and never starts the pass.
+func TestStartAction_InvalidRefusedBeforeStarting(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/encrypt-existing", nil)
 	w := httptest.NewRecorder()
+	h.startAction(w, "/api/fake", fakePass{}, errors.New("max is not a count"))
 
-	h.startAdminAction(w, req, fakeOp("encrypt-existing-test",
-		func(context.Context) (adminActionCounts, error) {
-			return adminActionCounts{Count: 7, Failed: 1, Total: 8}, nil
-		}))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if _, running := h.asyncOps.Status("/api/fake"); running {
+		t.Error("a malformed request started the pass")
+	}
+}
+
+// TestStartAction_AcceptedKeepsTheReport asserts the happy path: 202 at once,
+// and the pass's report kept for the poll once it finishes.
+func TestStartAction_AcceptedKeepsTheReport(t *testing.T) {
+	t.Parallel()
+	h := &Handler{log: slog.Default()}
+
+	w := httptest.NewRecorder()
+	h.startAction(w, "/api/fake", fakePass{rep: admin.Report{Result: adminstream.OutcomeOK, Body: "done"}}, nil)
 
 	if w.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusAccepted)
 	}
-
-	res := waitForResult(t, h, "encrypt-existing-test")
-	if res.Error != "" {
-		t.Errorf("result.Error = %q, want none", res.Error)
-	}
-	want := adminActionCounts{Count: 7, Failed: 1, Total: 8}
-	if res.Counts != want {
-		t.Errorf("result.Counts = %+v, want %+v", res.Counts, want)
+	if res := waitForResult(t, h, "/api/fake"); res.Body != "done" {
+		t.Errorf("report = %+v, want the pass's own", res)
 	}
 }
 
-// TestBulkRewriteOp_PublishesTallyAndRefusesBadMax asserts a bulk-rewrite status
-// carries every count the pass reported, changed included, and that a malformed
-// max is refused before the pass starts rather than widening it to the fleet.
-func TestBulkRewriteOp_PublishesTallyAndRefusesBadMax(t *testing.T) {
+// TestWriteActionStatus_EachState asserts the poll before a run, during it,
+// and after each way it can end.
+func TestWriteActionStatus_EachState(t *testing.T) {
 	t.Parallel()
-	pass := func(context.Context, int) (ops.BulkRewriteResult, error) {
-		return ops.BulkRewriteResult{Succeeded: 3, Skipped: 1, Changed: 2, Failed: 1, Total: 7}, nil
-	}
-	render := func(s adminActionState, count int, tally adminapi.BulkRewriteTally) compressExistingStatus {
-		return compressExistingStatus{adminActionState: s, Compressed: count, BulkRewriteTally: tally}
-	}
-	request := func(target string) *http.Request {
-		return httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil)
-	}
+	for _, tc := range []struct {
+		name    string
+		running bool
+		rep     *admin.Report
+		want    actionStatus
+	}{
+		{name: "never started", want: actionStatus{Status: statusIdle}},
+		{name: "running", running: true, want: actionStatus{Status: statusRunning}},
+		{
+			name: "ran",
+			rep:  &admin.Report{Result: adminstream.OutcomeOK, Body: map[string]any{"moved": float64(3)}},
+			want: actionStatus{Status: adminstream.OutcomeOK, Result: map[string]any{"moved": float64(3)}},
+		},
+		{
+			name: "skipped",
+			rep:  &admin.Report{Result: adminstream.OutcomeSkipped, Message: "factor <= 1", Body: map[string]any{}},
+			want: actionStatus{Status: adminstream.OutcomeSkipped, Reason: "factor <= 1", Result: map[string]any{}},
+		},
+		{
+			name: "failed",
+			rep:  &admin.Report{Result: adminstream.OutcomeFailed, Message: "scrub failed"},
+			want: actionStatus{Status: adminstream.OutcomeFailed, Error: "scrub failed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{log: slog.Default()}
+			if tc.running || tc.rep != nil {
+				h.asyncOps.TryStart("/api/fake")
+			}
+			if tc.rep != nil {
+				h.asyncOps.Complete("/api/fake", tc.rep)
+			}
 
-	op := bulkRewriteOp("compress-existing", request("/api/compress-existing?max=5"), pass, render)
-	counts, err := op.run(t.Context())
-	if err != nil || op.invalid != nil {
-		t.Fatalf("run err = %v, invalid = %v", err, op.invalid)
-	}
-	got := op.render(adminActionState{Status: "done"}, counts)
-	want := adminapi.BulkRewriteTally{Skipped: 1, Changed: 2, Failed: 1, Total: 7}
-	if got.Compressed != 3 || got.BulkRewriteTally != want {
-		t.Errorf("status = %+v, want compressed 3 and tally %+v", got, want)
-	}
+			w := httptest.NewRecorder()
+			h.writeActionStatus(w, "/api/fake")
 
-	bad := request("/api/compress-existing?max=1O")
-	w := httptest.NewRecorder()
-	h := &Handler{log: slog.Default()}
-	h.startAdminAction(w, bad, bulkRewriteOp("compress-existing", bad, pass, render))
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("malformed max: status = %d, want 400", w.Code)
-	}
-	if _, running := h.asyncOps.Status("compress-existing"); running {
-		t.Error("malformed max started the pass")
+			var got actionStatus
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(tc.want)
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Errorf("status = %s, want %s", gotJSON, wantJSON)
+			}
+		})
 	}
 }
 
-// TestStartAdminAction_SkippedReason asserts that a skip error returned by
-// the run closure lands on the asyncResult as a reason, not as a failure, so
-// the status endpoint can render it.
-func TestStartAdminAction_SkippedReason(t *testing.T) {
+// TestRewriteAction_RefusesBadMax asserts a malformed max is reported as the
+// request's error rather than read as absent, which would rewrite the fleet.
+func TestRewriteAction_RefusesBadMax(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/scrub", nil)
-	w := httptest.NewRecorder()
-
-	h.startAdminAction(w, req, fakeOp("scrub-test",
-		func(context.Context) (adminActionCounts, error) {
-			return adminActionCounts{}, ops.ErrIntegrityDisabled
-		}))
-
-	res := waitForResult(t, h, "scrub-test")
-	if res.Skipped != ops.ErrIntegrityDisabled.Reason || res.Error != "" {
-		t.Errorf("result = %+v, want a successful skip carrying the reason", res)
-	}
-}
-
-// TestStartAdminAction_ErrorPropagates asserts that an error returned by
-// the run closure is captured on the asyncResult.
-func TestStartAdminAction_ErrorPropagates(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
-	w := httptest.NewRecorder()
-
-	h.startAdminAction(w, req, fakeOp("replicate-err-test",
-		func(context.Context) (adminActionCounts, error) {
-			return adminActionCounts{}, errors.New("boom")
-		}))
-
-	res := waitForResult(t, h, "replicate-err-test")
-	if res.Error == "" {
-		t.Error("result.Error empty, expected non-empty")
-	}
-}
-
-// -------------------------------------------------------------------------
-// writeAdminActionStatus
-// -------------------------------------------------------------------------
-
-// TestWriteAdminActionStatus_Idle asserts that a never-started op surfaces
-// as idle to the poller.
-func TestWriteAdminActionStatus_Idle(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, noopOp("never-started"))
-
-	got := decodeBody(t, w)
-	if got["status"] != "idle" {
-		t.Errorf("status = %v, want idle (body=%v)", got["status"], got)
-	}
-}
-
-// TestWriteAdminActionStatus_Running asserts that an in-flight op surfaces
-// as running.
-func TestWriteAdminActionStatus_Running(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	if !h.asyncOps.TryStart("running-op") {
-		t.Fatal("test pre-condition: TryStart")
-	}
-	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, noopOp("running-op"))
-
-	got := decodeBody(t, w)
-	if got["status"] != "running" {
-		t.Errorf("status = %v, want running", got["status"])
-	}
-}
-
-// TestWriteAdminActionStatus_Done_PropagatesCounts asserts that every count the
-// operation reported appears in the status JSON, under the names the action's
-// own response type gives them.
-func TestWriteAdminActionStatus_Done_PropagatesCounts(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	if !h.asyncOps.TryStart("done-op") {
-		t.Fatal("test pre-condition: TryStart")
-	}
-	h.asyncOps.Complete("done-op", &asyncResult{
-		Counts: adminActionCounts{Count: 5, Failed: 2, Total: 7},
-	})
-
-	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, noopOp("done-op"))
-
-	got := decodeBody(t, w)
-	if got["status"] != "done" {
-		t.Errorf("status = %v, want done", got["status"])
-	}
-	if got["ok"] != true {
-		t.Errorf("ok = %v, want true", got["ok"])
-	}
-	if got["count"] != float64(5) {
-		t.Errorf("count = %v, want 5", got["count"])
-	}
-	if got["failed"] != float64(2) {
-		t.Errorf("failed = %v, want 2", got["failed"])
-	}
-	if got["total"] != float64(7) {
-		t.Errorf("total = %v, want 7", got["total"])
-	}
-}
-
-// TestWriteAdminActionStatus_Skipped asserts that skipped results render
-// as status=skipped with the supplied reason instead of done.
-func TestWriteAdminActionStatus_Skipped(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	if !h.asyncOps.TryStart("skip-op") {
-		t.Fatal("test pre-condition: TryStart")
-	}
-	h.asyncOps.Complete("skip-op", &asyncResult{Skipped: "factor <= 1"})
-
-	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, noopOp("skip-op"))
-
-	got := decodeBody(t, w)
-	if got["status"] != "skipped" {
-		t.Errorf("status = %v, want skipped", got["status"])
-	}
-	if got["reason"] != "factor <= 1" {
-		t.Errorf("reason = %v, want %q", got["reason"], "factor <= 1")
-	}
-}
-
-// TestWriteAdminActionStatus_Error asserts that errored results render as
-// status=error with the supplied error message.
-func TestWriteAdminActionStatus_Error(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()}
-	if !h.asyncOps.TryStart("err-op") {
-		t.Fatal("test pre-condition: TryStart")
-	}
-	h.asyncOps.Complete("err-op", &asyncResult{Error: "boom"})
-
-	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, noopOp("err-op"))
-
-	got := decodeBody(t, w)
-	if got["status"] != "error" {
-		t.Errorf("status = %v, want error", got["status"])
-	}
-	if got["error"] != "boom" {
-		t.Errorf("error = %v, want boom", got["error"])
+	h := &Handler{log: slog.Default(), d: Deps{Ops: &ops.Services{}}}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/compress-existing?max=1O", nil)
+	if _, err := rewriteAction(admin.CompressExisting)(h, r); err == nil {
+		t.Error("a malformed max was accepted")
 	}
 }
 
@@ -318,20 +163,19 @@ func TestWriteAdminActionStatus_Error(t *testing.T) {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// waitForResult polls the asyncOpTracker until the named op's goroutine
-// completes or the test deadline is hit. Encapsulates the goroutine sync
-// so individual tests stay focused on assertions.
-func waitForResult(t *testing.T, h *Handler, name string) *asyncResult {
+// waitForResult polls the tracker until the action under key finishes or the
+// test deadline is hit.
+func waitForResult(t *testing.T, h *Handler, key string) *admin.Report {
 	t.Helper()
-	var result *asyncResult
+	var result *admin.Report
 	testx.Eventually(t, 2*time.Second, func() bool {
-		res, running := h.asyncOps.Status(name)
+		res, running := h.asyncOps.Status(key)
 		if running || res == nil {
 			return false
 		}
 		result = res
 		return true
-	}, "op %q did not complete", name)
+	}, "action %q did not complete", key)
 	return result
 }
 
@@ -347,10 +191,7 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 // -------------------------------------------------------------------------
-// Per-action smoke coverage. Every action's trigger and poll come from
-// actionRoutes; driving each one's guard paths through the route table keeps
-// every table entry covered. The runs themselves are exercised in
-// admin_actions_integration_test.go.
+// ROUTE TABLE
 // -------------------------------------------------------------------------
 
 // actionPaths is every async action's trigger path.
@@ -359,9 +200,9 @@ var actionPaths = []string{
 	"/api/backfill-checksums", "/api/encrypt-existing", "/api/compress-existing", "/api/decompress-existing",
 }
 
-// TestAdminActions_IdleBeforeFirstRun asserts every status poll reports "idle"
-// before its operation has ever been started, which is what the dashboard
-// polls into on a fresh page load.
+// TestAdminActions_IdleBeforeFirstRun asserts every status poll reports idle
+// before its action has ever started, which is what the dashboard polls into
+// on a fresh page load.
 func TestAdminActions_IdleBeforeFirstRun(t *testing.T) {
 	t.Parallel()
 	for _, path := range actionPaths {
@@ -370,15 +211,15 @@ func TestAdminActions_IdleBeforeFirstRun(t *testing.T) {
 			h := &Handler{log: slog.Default()}
 			statusW := httptest.NewRecorder()
 			serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path+"/status", nil))
-			if body := decodeBody(t, statusW); body["status"] != "idle" {
+			if body := decodeBody(t, statusW); body["status"] != statusIdle {
 				t.Errorf("status body = %v, want idle", body)
 			}
 		})
 	}
 }
 
-// TestAdminActions_MethodNotAllowed asserts every trigger rejects non-POST
-// requests before reaching the dispatcher's other guards.
+// TestAdminActions_MethodNotAllowed asserts every trigger refuses anything
+// but POST before the action is built.
 func TestAdminActions_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	for _, path := range actionPaths {
@@ -393,6 +234,10 @@ func TestAdminActions_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// LIFECYCLE END TO END
+// -------------------------------------------------------------------------
+
 // lifecycleHandler builds a UI handler whose expiry service is backed by stub,
 // with the stub's lifecycle config as the running one.
 func lifecycleHandler(t *testing.T, stub *uiExpiryStub) *Handler {
@@ -405,7 +250,7 @@ func lifecycleHandler(t *testing.T, stub *uiExpiryStub) *Handler {
 			running.Lifecycle = *stub.cfg
 		}
 	}
-	return &Handler{log: slog.Default(), d: Deps{Expiry: ops.NewLifecycle(deps)}}
+	return &Handler{log: slog.Default(), d: Deps{Ops: &ops.Services{Lifecycle: ops.NewLifecycle(deps)}}}
 }
 
 // uiExpiryStub stands in for *expiry.Manager with a fixed outcome.
@@ -422,66 +267,46 @@ func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule, pro
 
 // TestHandleAPILifecycle_ReportsCountsThroughStatus drives the dashboard's
 // path end to end: the trigger returns 202 and the poll reports what the sweep
-// removed, under the key the button reads.
-//
-// Not parallel: the async tracker is per-handler but the op name is shared.
+// removed, in the admin API's own response under the key the button reads.
 func TestHandleAPILifecycle_ReportsCountsThroughStatus(t *testing.T) {
+	t.Parallel()
 	h := lifecycleHandler(t, &uiExpiryStub{
 		cfg:     &config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}},
 		deleted: 9,
 		failed:  1,
 	})
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
 	w := httptest.NewRecorder()
-	serveRoute(h, w, req)
+	serveRoute(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("trigger status = %d, want 202", w.Code)
 	}
-
-	res := waitForResult(t, h, opLifecycle)
-	if res.Error != "" || res.Skipped != "" {
-		t.Fatalf("result = %+v, want a completed sweep", res)
-	}
+	waitForResult(t, h, "/api/lifecycle")
 
 	statusW := httptest.NewRecorder()
-	serveRoute(h, statusW, httptest.NewRequestWithContext(
-		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
+	serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
 
 	got := decodeBody(t, statusW)
-	if got["status"] != "done" {
-		t.Errorf("status = %v, want done", got["status"])
-	}
-	if got["deleted"] != float64(9) {
-		t.Errorf("deleted = %v, want 9; the dashboard button keys on this", got["deleted"])
-	}
-	if got["failed"] != float64(1) {
-		t.Errorf("failed = %v, want 1", got["failed"])
+	result, _ := got["result"].(map[string]any)
+	if got["status"] != adminstream.OutcomeOK || result["deleted"] != float64(9) || result["failed"] != float64(1) {
+		t.Errorf("status body = %v, want ok with deleted 9 and failed 1", got)
 	}
 }
 
 // TestHandleAPILifecycle_NoRulesSurfacesTheReason holds the skip path: a
 // deployment with no rules must say so rather than report a sweep of zero,
 // which is the distinction the trigger exists to make.
-//
-// Not parallel: shares the op name with the test above.
 func TestHandleAPILifecycle_NoRulesSurfacesTheReason(t *testing.T) {
+	t.Parallel()
 	h := lifecycleHandler(t, &uiExpiryStub{})
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
-	serveRoute(h, httptest.NewRecorder(), req)
-
-	res := waitForResult(t, h, opLifecycle)
-	if res.Skipped == "" {
-		t.Fatalf("result = %+v, want a skip naming the reason", res)
-	}
+	serveRoute(h, httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil))
+	waitForResult(t, h, "/api/lifecycle")
 
 	statusW := httptest.NewRecorder()
-	serveRoute(h, statusW, httptest.NewRequestWithContext(
-		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
+	serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
 
-	got := decodeBody(t, statusW)
-	if got["status"] != "skipped" || got["reason"] == "" {
+	if got := decodeBody(t, statusW); got["status"] != adminstream.OutcomeSkipped || got["reason"] == "" {
 		t.Errorf("status body = %v, want skipped with a reason", got)
 	}
 }

@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -91,11 +92,11 @@ func authzMux(t *testing.T, mock core.ObjectStore, perms core.PermissionSet, adm
 	var lv slog.LevelVar
 	registry := registryGranting(t, perms, admin)
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
-		DBHealthy:    cb.IsHealthy,
-		Objects:      objectsOver(t, mock),
-		Registry:     func() *auth.BucketRegistry { return registry },
-		LogLevel:     &lv,
-		BackendNames: func() []string { return []string{"b1", "b2"} },
+		DBHealthy: cb.IsHealthy,
+		Ops:       &ops.Services{Objects: objectsOver(t, mock)},
+		Registry:  func() *auth.BucketRegistry { return registry },
+		LogLevel:  &lv,
+		Config:    backendsConfig("b1", "b2"),
 	}}
 	mux := http.NewServeMux()
 	h.Register(mux)

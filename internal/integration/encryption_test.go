@@ -36,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -132,6 +133,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Mover:        st.Coord,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
+		Backlog:      testStore,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
 		Provisioning: testStore,
@@ -139,21 +141,15 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Config:       config.NewLive(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),
 	})
 	adminHandler := admin.New(&admin.Deps{
-		BackendOps:   st.Usage,
-		Objects:      opsSvc.Objects,
-		Integrity:    opsSvc.Integrity,
-		Replication:  opsSvc.Replication,
-		Rebalance:    opsSvc.Rebalance,
-		Encryption:   opsSvc.Encryption,
-		Compression:  opsSvc.Compression,
-		Provision:    opsSvc.Provision,
-		States:       st.States,
-		StateStore:   testStore,
-		DBHealthy:    testDatabaseCB.IsHealthy,
-		Cleanup:      testStore,
-		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
-		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
-		LogLevel:     &lv,
+		BackendOps: st.Usage,
+		Ops:        opsSvc,
+		States:     st.States,
+		StateStore: testStore,
+		DBHealthy:  testDatabaseCB.IsHealthy,
+		Cleanup:    testStore,
+		Registry:   func() *auth.BucketRegistry { return srv.GetBucketAuth() },
+		Config:     st.Config,
+		LogLevel:   &lv,
 	})
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)
@@ -355,8 +351,8 @@ func assertPlaintextSizes(t *testing.T, i int, sizeBytes int64, ptSize *int64, p
 // status string and the integer count under field.
 func assertAdminCount(t *testing.T, result map[string]any, field string, want int) {
 	t.Helper()
-	if status, _ := result["status"].(string); status != "complete" {
-		t.Fatalf("admin status = %q, want complete", status)
+	if status, _ := result["status"].(string); status != adminapi.StatusOK {
+		t.Fatalf("admin status = %q, want %q", status, adminapi.StatusOK)
 	}
 	got := int(result[field].(float64))
 	if got != want {

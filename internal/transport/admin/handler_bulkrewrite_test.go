@@ -123,8 +123,8 @@ func TestCompressExisting_EmptyFleet(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.Status != statusComplete {
-		t.Errorf("status = %q, want %q", got.Status, statusComplete)
+	if got.Status != adminapi.StatusOK {
+		t.Errorf("status = %q, want %q", got.Status, adminapi.StatusOK)
 	}
 	if got.Compressed != 0 || got.Skipped != 0 || got.Failed != 0 || got.Total != 0 {
 		t.Errorf("counts = %+v, want all zero", got)
@@ -152,7 +152,7 @@ func TestDecompressExisting_EmptyFleet(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.Status != statusComplete || got.Decompressed != 0 {
+	if got.Status != adminapi.StatusOK || got.Decompressed != 0 {
 		t.Errorf("response = %+v, want a complete run of zero", got)
 	}
 }
@@ -222,23 +222,31 @@ func TestEncryptExisting_EmptyFleet(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.Status != statusComplete {
-		t.Errorf("status = %q, want %q", got.Status, statusComplete)
+	if got.Status != adminapi.StatusOK {
+		t.Errorf("status = %q, want %q", got.Status, adminapi.StatusOK)
 	}
 	if got.Encrypted != 0 || got.Skipped != 0 || got.Failed != 0 || got.Total != 0 {
 		t.Errorf("counts = %+v, want all zero", got)
 	}
 }
 
-// TestBulkRewriteOutcome_CarriesEveryCount asserts the outcome publishes each
-// count the pass tallied, changed included.
-func TestBulkRewriteOutcome_CarriesEveryCount(t *testing.T) {
+// TestRewritePass_BodyCarriesEveryCount asserts a rewrite's response
+// publishes each count the pass tallied, changed included, under its own
+// success name.
+func TestRewritePass_BodyCarriesEveryCount(t *testing.T) {
 	t.Parallel()
-	got := bulkRewriteOutcome(ops.BulkRewriteResult{Succeeded: 3, Skipped: 1, Changed: 2, Failed: 1, Total: 7})
-	want := adminapi.BulkRewriteOutcome{Status: statusComplete,
-		BulkRewriteTally: adminapi.BulkRewriteTally{Skipped: 1, Changed: 2, Failed: 1, Total: 7}}
+	p := RewritePass(&ops.Services{}, EncryptExisting, 0, "")
+	got := p.body(adminapi.Outcome{Status: adminapi.StatusOK},
+		ops.BulkRewriteResult{Succeeded: 3, Skipped: 1, Changed: 2, Failed: 1, Total: 7})
+	want := adminapi.EncryptExistingResponse{
+		BulkRewriteOutcome: adminapi.BulkRewriteOutcome{
+			Outcome:          adminapi.Outcome{Status: adminapi.StatusOK},
+			BulkRewriteTally: adminapi.BulkRewriteTally{Skipped: 1, Changed: 2, Failed: 1, Total: 7},
+		},
+		Encrypted: 3,
+	}
 	if got != want {
-		t.Errorf("outcome = %+v, want %+v", got, want)
+		t.Errorf("body = %+v, want %+v", got, want)
 	}
 }
 
@@ -269,7 +277,7 @@ func TestDecryptExisting_EmptyFleet(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.Status != statusComplete || got.Decrypted != 0 {
+	if got.Status != adminapi.StatusOK || got.Decrypted != 0 {
 		t.Errorf("response = %+v, want a complete run of zero", got)
 	}
 }

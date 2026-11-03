@@ -121,7 +121,10 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
 		h.serveBackendChange(w, r, &backendChange{
-			apply: h.removeBackend(false), failLog: "remove backend failed", failMsg: "remove failed",
+			apply: func(ctx context.Context, name string) error {
+				return h.d.States.RemoveBackend(ctx, name, false, nil)
+			},
+			failLog: "remove backend failed", failMsg: "remove failed",
 			code: http.StatusOK, okStatus: "backend removed",
 		})
 		return
@@ -133,14 +136,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteJSONError(w, http.StatusForbidden, "invalid or expired confirmation token")
 			return
 		}
-		if acceptsStream(r) {
-			h.streamRemovePurge(w, r, name)
-			return
-		}
-		h.serveBackendChange(w, r, &backendChange{
-			apply: h.removeBackend(true), failLog: "purge backend failed", failMsg: "purge failed",
-			code: http.StatusOK, okStatus: "backend purged",
-		})
+		h.servePass(w, r, h.purgePass(name))
 		return
 	}
 
@@ -162,20 +158,11 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// removeBackend is the backendChange that drops a backend's records, deleting
-// its objects too when purge is set.
-func (h *Handler) removeBackend(purge bool) func(context.Context, string) error {
-	return func(ctx context.Context, name string) error {
-		return h.d.States.RemoveBackend(ctx, name, purge, nil)
-	}
-}
-
-// streamRemovePurge runs a backend purge as an NDJSON step stream, one
-// "deleting <key>" line per object plus a terminal summary. Purge deletes
-// objects one at a time, so each step renders live (sequential=true): a prefix
-// when the object starts, the status when it finishes.
-func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name string) {
-	h.streamPass(w, r, passEndpoint[int]{
+// purgePass deletes a backend's objects and records, counting the objects it
+// deleted. Purge deletes objects one at a time, so each streamed step renders
+// live: a prefix when the object starts, the status when it finishes.
+func (h *Handler) purgePass(name string) *Pass[int] {
+	return &Pass[int]{
 		op: "remove-backend", verb: "deleting", sequential: true, failMsg: "purge failed",
 		run: func(ctx context.Context, obs progress.Observer) (int, error) {
 			var purged int
@@ -183,20 +170,22 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 				if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
 					purged++
 				}
-				obs(s)
+				if obs != nil {
+					obs(s)
+				}
 			}
 			if err := h.d.States.RemoveBackend(ctx, name, true, counting); err != nil {
 				return purged, fmt.Errorf("purge backend %s: %w", name, err)
 			}
 			return purged, nil
 		},
-		body: func(_ adminapi.Outcome, purged int) any {
-			return adminapi.BackendPurgeResult{Backend: name, Purged: purged}
+		body: func(o adminapi.Outcome, purged int) any {
+			return adminapi.BackendPurgeResult{Outcome: o, Backend: name, Purged: purged}
 		},
 		summary: func(purged int) (int, string) {
 			return purged, fmt.Sprintf("purged %d objects from backend %q", purged, name)
 		},
-	})
+	}
 }
 
 // generateRemoveToken signs a purge confirmation for one backend under the

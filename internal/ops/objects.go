@@ -14,12 +14,10 @@ package ops
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -39,21 +37,12 @@ const MaxUploadSize = 512 << 20
 // walking a prefix ahead of a bulk delete.
 const deletePrefixPageSize = 1000
 
-// defaultListMaxKeys caps one browse page when the caller asks for no limit.
-const defaultListMaxKeys = 1000
+// listPageSize is how many keys one browse page holds.
+const listPageSize = 1000
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
-
-// DeletePrefixResult reports what a prefix delete removed. Failed is non-zero
-// when some copies could not be removed, which leaves the prefix partially
-// deleted rather than untouched.
-type DeletePrefixResult struct {
-	Deleted int
-	Failed  int
-	Total   int
-}
 
 // ObjectsDeps holds the collaborators Objects requires.
 type ObjectsDeps struct {
@@ -91,13 +80,9 @@ func NewObjects(d ObjectsDeps) *Objects {
 // List returns one page of the namespace under prefix. A delimiter groups the
 // keys below it into common prefixes; an empty delimiter lists every key flat,
 // which is what a caller counting or sweeping a subtree wants. A non-empty
-// continuation resumes a previously truncated page, and maxKeys <= 0 falls
-// back to the default page size.
-func (o *Objects) List(ctx context.Context, prefix, delimiter, continuation string, maxKeys int) (*core.ListObjectsResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = defaultListMaxKeys
-	}
-	return o.store.ListObjects(ctx, prefix, delimiter, continuation, maxKeys)
+// continuation resumes a previously truncated page.
+func (o *Objects) List(ctx context.Context, prefix, delimiter, continuation string) (*core.ListObjectsResult, error) {
+	return o.store.ListObjects(ctx, prefix, delimiter, continuation, listPageSize)
 }
 
 // Locations reports every backend holding a copy of one key, for callers
@@ -123,12 +108,17 @@ func (o *Objects) Tags(ctx context.Context, key string) ([]core.Tag, error) {
 }
 
 // SetTags replaces one object's whole tag set. An empty set leaves the object
-// untagged, which is the same outcome as DeleteTags.
+// untagged, which is the same outcome as DeleteTags. A tag set of the wrong
+// shape is rejected as invalid, naming the limit it broke.
 func (o *Objects) SetTags(ctx context.Context, key string, tags []core.Tag) error {
 	if err := o.validateKey(key); err != nil {
 		return err
 	}
-	return notFound(o.objects.PutObjectTags(ctx, key, tags))
+	err := o.objects.PutObjectTags(ctx, key, tags)
+	if core.IsTagValidationError(err) {
+		return &Rejection{Kind: RejectInvalid, err: err}
+	}
+	return notFound(err)
 }
 
 // DeleteTags removes one object's whole tag set.
@@ -164,21 +154,19 @@ func (o *Objects) Get(ctx context.Context, key string) (*s3be.GetObjectResult, e
 	return result.GetObjectResult, nil
 }
 
-// Put stores one object and returns its ETag. size is the exact byte count of
-// body; contentType may be empty, in which case the backend decides.
-func (o *Objects) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) (string, error) {
-	if err := o.validateKey(key); err != nil {
+// Put stores one object and returns its ETag. Size is the exact byte count of
+// the body; an empty content type leaves the choice to the backend.
+func (o *Objects) Put(ctx context.Context, req *object.PutObjectRequest) (string, error) {
+	if err := o.validateKey(req.Key); err != nil {
 		return "", err
 	}
 
-	etag, err := o.objects.PutObject(ctx, &object.PutObjectRequest{
-		Key: key, Body: body, Size: size, ContentType: contentType,
-	})
+	etag, err := o.objects.PutObject(ctx, req)
 	if err != nil {
 		return "", err
 	}
 
-	o.log.InfoContext(ctx, "stored object", "key", key, "size", size)
+	o.log.InfoContext(ctx, "stored object", "key", req.Key, "size", req.Size)
 	return etag, nil
 }
 
@@ -197,15 +185,15 @@ func (o *Objects) Delete(ctx context.Context, key string) error {
 }
 
 // DeletePrefix removes every object under prefix, one listing page at a time
-// so the key set never has to be held whole. observer, when non-nil, receives
-// an end step per key as each page completes. The result reports how many keys
-// were removed, so a caller can tell a no-op from a mass removal.
-func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer progress.Observer) (DeletePrefixResult, error) {
+// so the key set never has to be held whole. The result counts the keys
+// removed as succeeded, so a caller can tell a no-op from a mass removal, and
+// the ones that could not be removed as failed.
+func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summary, error) {
 	if prefix == "" {
-		return DeletePrefixResult{}, ErrPrefixRequired
+		return batch.Summary{}, ErrPrefixRequired
 	}
 
-	var res DeletePrefixResult
+	var res batch.Summary
 	pager := batch.Pager[string, string]{
 		PageSize: batch.FixedPage(deletePrefixPageSize),
 		List: func(ctx context.Context, limit int, after string) ([]string, error) {
@@ -218,13 +206,13 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 		CursorOf: func(key string) string { return key },
 	}
 	if _, err := pager.Walk(ctx, func(ctx context.Context, keys []string) (batch.Step, error) {
-		o.deletePage(ctx, keys, observer, &res)
+		o.deletePage(ctx, keys, &res)
 		return batch.Step{}, nil
 	}); err != nil {
 		return res, err
 	}
 
-	o.log.InfoContext(ctx, "prefix delete completed", "prefix", prefix, "deleted", res.Deleted, "failed", res.Failed)
+	o.log.InfoContext(ctx, "prefix delete completed", "prefix", prefix, "deleted", res.Succeeded, "failed", res.Failed)
 	return res, nil
 }
 
@@ -232,20 +220,15 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// deletePage removes one page of keys and folds the per-key outcomes into res,
-// reporting each one through the observer as the batch reports it.
-func (o *Objects) deletePage(ctx context.Context, keys []string, observer progress.Observer, res *DeletePrefixResult) {
-	res.Total += len(keys)
+// deletePage removes one page of keys and folds the per-key outcomes into res.
+func (o *Objects) deletePage(ctx context.Context, keys []string, res *batch.Summary) {
+	res.Planned += len(keys)
+	res.Attempted += len(keys)
 	for _, item := range o.objects.DeleteObjects(ctx, keys) {
-		status := "ok"
 		if item.Err != nil {
-			status = "failed"
 			res.Failed++
 		} else {
-			res.Deleted++
-		}
-		if observer != nil {
-			observer(progress.Step{Label: item.Key, Phase: progress.PhaseEnd, Status: status})
+			res.Succeeded++
 		}
 	}
 }

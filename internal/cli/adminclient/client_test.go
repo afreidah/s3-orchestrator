@@ -206,7 +206,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 
 	t.Run("types a non-2xx", func(t *testing.T) {
 		t.Parallel()
-		srv, _ := newCaptureServer(t, http.StatusServiceUnavailable, `{"status":"disabled","reason":"caching is off"}`)
+		srv, _ := newCaptureServer(t, http.StatusServiceUnavailable, `{"error":"caching is off"}`)
 		_, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Get[struct{}](t.Context(), "/admin/api/cache", nil)
 
 		apiErr, ok := errors.AsType[*Error](err)

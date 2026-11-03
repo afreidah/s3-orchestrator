@@ -15,9 +15,7 @@ package admin
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -46,28 +44,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.servePass(w, r, passEndpoint[batch.Summary]{
-		op:         "scrub",
-		verb:       "verifying",
-		sequential: true,
-		failMsg:    "scrub failed",
-		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
-			return h.d.Integrity.Scrub(ctx, batchSize, backend, obs)
-		},
-		body: func(o adminapi.Outcome, res batch.Summary) any {
-			return adminapi.ScrubResponse{
-				Outcome:    o,
-				Checked:    res.Attempted,
-				Failed:     res.Failed,
-				Unreadable: res.Skipped,
-				Deferred:   res.Deferred,
-			}
-		},
-		summary: func(res batch.Summary) (int, string) {
-			return res.Attempted, fmt.Sprintf("checked %d, failed %d, unreadable %d, deferred %d",
-				res.Attempted, res.Failed, res.Skipped, res.Deferred)
-		},
-	})
+	h.servePass(w, r, ScrubPass(h.d.Ops, batchSize, backend))
 }
 
 // handleScrubKey verifies every copy of one object immediately.
@@ -78,20 +55,13 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get(paramKey)
 
-	copies, err := h.d.Integrity.VerifyKey(r.Context(), key)
-	switch {
-	case errors.Is(err, ops.ErrKeyRequired):
-		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+	copies, err := h.d.Ops.Integrity.VerifyKey(r.Context(), key)
+	if reason, skipped := ops.SkipReason(err); skipped {
+		httputil.WriteJSONError(w, http.StatusConflict, reason)
 		return
-	case errors.Is(err, ops.ErrNotFound):
-		httputil.WriteJSONError(w, http.StatusNotFound, "no copies of that key are recorded")
-		return
-	case err != nil:
-		if reason, skipped := ops.SkipReason(err); skipped {
-			httputil.WriteJSONError(w, http.StatusConflict, reason)
-			return
-		}
-		httputil.InternalError(r.Context(), h.log, w, "failed to verify object", err, slog.String("key", key))
+	}
+	if err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "failed to verify object", "key", key)
 		return
 	}
 
@@ -149,32 +119,17 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	pause := time.Duration(delayMS) * time.Millisecond
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
 	}
 
-	h.servePass(w, r, passEndpoint[worker.BackfillResult]{
-		op:         "backfill-checksums",
-		verb:       "hashing",
-		sequential: true,
-		failMsg:    "backfill failed",
-		run: func(ctx context.Context, obs progress.Observer) (worker.BackfillResult, error) {
-			return h.d.Integrity.BackfillChecksums(ctx, batchSize, maxObjects, pause, backend, obs)
-		},
-		body: func(o adminapi.Outcome, res worker.BackfillResult) any {
-			return adminapi.BackfillChecksumsResponse{
-				Outcome:    o,
-				Processed:  res.Succeeded,
-				Unreadable: res.Skipped,
-				Done:       res.Done,
-			}
-		},
-		summary: func(res worker.BackfillResult) (int, string) {
-			return res.Succeeded, fmt.Sprintf("hashed %d, unreadable %d", res.Succeeded, res.Skipped)
-		},
-	})
+	h.servePass(w, r, BackfillPass(h.d.Ops, BackfillParams{
+		BatchSize:  batchSize,
+		MaxObjects: maxObjects,
+		Pause:      time.Duration(delayMS) * time.Millisecond,
+		Backend:    backend,
+	}))
 }
 
 // -------------------------------------------------------------------------
@@ -188,7 +143,7 @@ func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.d.Integrity.ListUnreadable(r.Context(), limit)
+	res, err := h.d.Ops.Integrity.ListUnreadable(r.Context(), limit)
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to list unreadable copies", err)
 		return
@@ -211,13 +166,13 @@ func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.servePass(w, r, passEndpoint[batch.Summary]{
+	h.servePass(w, r, &Pass[batch.Summary]{
 		op:         "purge-unreadable",
 		verb:       "purging",
 		sequential: true,
 		failMsg:    "purge failed",
 		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
-			return h.d.Integrity.PurgeUnreadable(ctx, batchSize, obs)
+			return h.d.Ops.Integrity.PurgeUnreadable(ctx, batchSize, obs)
 		},
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.UnreadablePurgeResponse{Outcome: o, Purged: res.Succeeded, Failed: res.Failed}
@@ -248,7 +203,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 
 	h.log.InfoContext(r.Context(), "reconcile triggered", "backend", backendName)
 
-	h.servePass(w, r, passEndpoint[worker.ReconcileResult]{
+	h.servePass(w, r, &Pass[worker.ReconcileResult]{
 		op:         "reconcile",
 		verb:       "reconciling",
 		sequential: true,

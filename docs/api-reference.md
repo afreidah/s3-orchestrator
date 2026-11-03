@@ -143,13 +143,13 @@ Deletes a single object by key.
 **Response (success):**
 
 ```json
-{"ok": true}
+{"deleted": 1}
 ```
 
 **Response (error):**
 
 ```json
-{"error": "failed to delete object: ..."}
+{"error": "object not found"}
 ```
 
 ### POST /ui/api/delete-prefix
@@ -165,13 +165,13 @@ Deletes all objects under a given key prefix.
 **Response (success):**
 
 ```json
-{"ok": true, "deleted": 42}
+{"deleted": 42}
 ```
 
-**Response (partial failure):**
+**Response (partial failure, 500):**
 
 ```json
-{"error": "5 of 47 deletes failed", "deleted": 42}
+{"deleted": 42, "failed": 5, "total": 47}
 ```
 
 ### POST /ui/api/upload
@@ -193,8 +193,10 @@ The `key` must start with a configured virtual bucket name (e.g., `my-bucket/`).
 **Response (success):**
 
 ```json
-{"ok": true, "etag": "\"abc123...\""}
+{"etag": "\"abc123...\""}
 ```
+
+These are the admin API's own object responses.
 
 ### GET /ui/api/download
 
@@ -231,15 +233,15 @@ Triggers an on-demand rebalance in the background. Returns immediately with 202 
 
 ### GET /ui/api/rebalance/status
 
-Returns the status of the most recent rebalance operation.
+Returns the status of the most recent rebalance operation. Once the run ends, `result` is the response the admin API's `POST /admin/api/rebalance` returns.
 
 **Response:**
 
 ```json
 {"status": "running"}
-{"status": "done", "ok": true, "moved": 5}
-{"status": "skipped", "reason": "backend utilization is within the configured threshold"}
-{"status": "error", "error": "rebalance failed"}
+{"status": "ok", "result": {"status": "ok", "moved": 5}}
+{"status": "skipped", "reason": "backend utilization is within the configured threshold", "result": {"status": "skipped", "reason": "backend utilization is within the configured threshold", "moved": 0}}
+{"status": "failed", "error": "rebalance failed"}
 {"status": "idle"}
 ```
 
@@ -258,26 +260,26 @@ Removes over-replicated copies in the background. Returns immediately with 202 A
 **Response (409):** Returned if cleanup is already running.
 
 ```json
-{"error": "clean-excess already running"}
+{"error": "over-replication already running"}
 ```
 
 ### GET /ui/api/clean-excess/status
 
-Returns the status of the most recent cleanup operation.
+Returns the status of the most recent cleanup operation. Once the run ends, `result` is the admin API's over-replication cleanup response.
 
 **Response:**
 
 ```json
 {"status": "running"}
-{"status": "done", "ok": true, "removed": 3, "failed": 0}
-{"status": "skipped", "reason": "replication not configured or factor <= 1"}
-{"status": "error", "error": "clean-excess failed"}
+{"status": "ok", "result": {"status": "ok", "copies_removed": 3, "failed": 0}}
+{"status": "skipped", "reason": "replication not configured or factor <= 1", "result": {"status": "skipped", "reason": "replication not configured or factor <= 1", "copies_removed": 0, "failed": 0}}
+{"status": "failed", "error": "over-replication cleanup failed"}
 {"status": "idle"}
 ```
 
 ### Other background actions
 
-The dashboard's other actions take the same shape: `POST` starts the run and answers 202, a second `POST` while it runs answers 409, and `GET .../status` reports `running`, `done`, `skipped`, `error` or `idle`. They are `/ui/api/lifecycle`, `/ui/api/replicate`, `/ui/api/scrub`, `/ui/api/backfill-checksums`, `/ui/api/encrypt-existing`, `/ui/api/compress-existing` and `/ui/api/decompress-existing`, each with its `/status` route. The three conversions take an optional `max` query parameter capping how many copies the run rewrites, and their finished status carries `skipped`, `changed`, `failed` and `total` beside the count.
+The dashboard's other actions take the same shape: `POST` starts the run and answers 202, a second `POST` while it runs answers 409, and `GET .../status` reports `running`, `ok`, `skipped`, `failed` or `idle`, with the admin API's response for the same pass under `result` once it ends. They are `/ui/api/lifecycle`, `/ui/api/replicate`, `/ui/api/scrub`, `/ui/api/backfill-checksums`, `/ui/api/encrypt-existing`, `/ui/api/compress-existing` and `/ui/api/decompress-existing`, each with its `/status` route. The three conversions take an optional `max` query parameter capping how many copies the run rewrites, and report `failed` with the reason when the encryptor or codec is not configured, as the admin API answers `400`.
 
 ### POST /ui/api/sync
 

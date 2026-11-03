@@ -12,17 +12,13 @@
 package admin
 
 import (
-	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -37,74 +33,19 @@ func acceptsStream(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), adminstream.ContentType)
 }
 
-// passEndpoint is one on-demand pass as the transport sees it: the pass to run,
-// how to word its stream, and how to render what it reported. Every pass
-// endpoint is one of these, so the JSON and stream modes, the skip handling and
-// the failure path are written once.
-//
-// body renders the endpoint's own response type and is also the stream's
-// result fields, so the two modes cannot report different keys. It receives
-// the outcome so a skipped pass renders the same shape with zero counts.
-// skipIsError fails a skipped pass with its reason instead, for passes whose
-// skip means the request cannot be served as asked. summary is the stream's
-// result line; an empty one reads as "processed N".
-type passEndpoint[R any] struct {
-	op          string
-	verb        string
-	sequential  bool
-	failMsg     string
-	skipIsError bool
-	run         func(context.Context, progress.Observer) (R, error)
-	body        func(adminapi.Outcome, R) any
-	summary     func(R) (processed int, line string)
-}
-
-// passOutcome is how one pass ended, decided once for both response modes.
-// result is an adminstream outcome; message is the skip reason or what the
-// caller is told of a failure; status is the code a failed JSON response
-// carries.
-type passOutcome struct {
-	result  string
-	message string
-	status  int
-}
-
 // servePass runs one pass. Streams per-item NDJSON progress when the client
 // accepts the stream content type; otherwise returns a single JSON result. The
 // pass runs under the request context, so a disconnecting caller stops it.
-func (h *Handler) servePass[R any](w http.ResponseWriter, r *http.Request, ep passEndpoint[R]) {
+func (h *Handler) servePass[R any](w http.ResponseWriter, r *http.Request, p *Pass[R]) {
 	if acceptsStream(r) {
-		h.streamPass(w, r, ep)
+		h.streamPass(w, r, p)
 		return
 	}
-
-	res, err := ep.run(r.Context(), nil)
-	switch o := ep.settle(r.Context(), h.log, err); o.result {
-	case adminstream.OutcomeOK:
-		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusOK}, res))
-	case adminstream.OutcomeSkipped:
-		var zero R
-		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusSkipped, Reason: o.message}, zero))
-	default:
-		httputil.WriteJSONError(w, o.status, o.message)
+	if rep := p.Run(r.Context(), h.log); rep.Body != nil {
+		httputil.WriteJSON(w, http.StatusOK, rep.Body)
+	} else {
+		httputil.WriteJSONError(w, rep.Status, rep.Message)
 	}
-}
-
-// settle decides how a pass that returned err ended. A failure is logged here,
-// so the caller is told only failMsg; a skip the endpoint refuses fails with
-// its reason, which is the caller's to act on.
-func (ep *passEndpoint[R]) settle(ctx context.Context, log *slog.Logger, err error) passOutcome {
-	reason, skipped := ops.SkipReason(err)
-	switch {
-	case skipped && ep.skipIsError:
-		return passOutcome{result: adminstream.OutcomeFailed, message: reason, status: http.StatusBadRequest}
-	case skipped:
-		return passOutcome{result: adminstream.OutcomeSkipped, message: reason}
-	case err != nil:
-		log.ErrorContext(ctx, ep.failMsg, "error", err)
-		return passOutcome{result: adminstream.OutcomeFailed, message: ep.failMsg, status: http.StatusInternalServerError}
-	}
-	return passOutcome{result: adminstream.OutcomeOK}
 }
 
 // resultFields flattens a response body into the stream result's fields,
@@ -133,34 +74,33 @@ func resultFields(body any) map[string]any {
 // the line. A concurrent op would interleave live prefixes, so each finished
 // item emits one labeled step_end instead. emit is mutex-guarded, so a
 // concurrent observer is safe.
-func (h *Handler) streamPass[R any](w http.ResponseWriter, r *http.Request, ep passEndpoint[R]) {
+func (h *Handler) streamPass[R any](w http.ResponseWriter, r *http.Request, p *Pass[R]) {
 	emit := newEventStream(w)
-	emit(adminstream.Event{Kind: adminstream.KindStart, Op: ep.op})
+	emit(adminstream.Event{Kind: adminstream.KindStart, Op: p.op})
 	start := time.Now()
 
 	observer := func(s progress.Step) {
 		switch {
-		case s.Phase == progress.PhaseStart && ep.sequential:
-			emit(adminstream.Event{Kind: adminstream.KindStepStart, Message: ep.verb + " " + s.Label})
-		case s.Phase == progress.PhaseEnd && ep.sequential:
+		case s.Phase == progress.PhaseStart && p.sequential:
+			emit(adminstream.Event{Kind: adminstream.KindStepStart, Message: p.verb + " " + s.Label})
+		case s.Phase == progress.PhaseEnd && p.sequential:
 			emit(adminstream.Event{Kind: adminstream.KindStepEnd, Outcome: s.Status, DurationMs: s.Duration.Milliseconds()})
 		case s.Phase == progress.PhaseEnd:
-			emit(adminstream.Event{Kind: adminstream.KindStepEnd, Message: ep.verb + " " + s.Label, Outcome: s.Status, DurationMs: s.Duration.Milliseconds()})
+			emit(adminstream.Event{Kind: adminstream.KindStepEnd, Message: p.verb + " " + s.Label, Outcome: s.Status, DurationMs: s.Duration.Milliseconds()})
 		}
 	}
 
-	res, err := ep.run(r.Context(), observer)
-	o := ep.settle(r.Context(), h.log, err)
-	result := adminstream.Event{Kind: adminstream.KindResult, Outcome: o.result}
-	switch o.result {
+	rep, res := p.exec(r.Context(), h.log, observer)
+	result := adminstream.Event{Kind: adminstream.KindResult, Outcome: rep.Result}
+	switch rep.Result {
 	case adminstream.OutcomeOK:
-		result.Processed, result.Message = ep.summary(res)
+		result.Processed, result.Message = p.summary(res)
 		result.DurationMs = time.Since(start).Milliseconds()
-		result.Fields = resultFields(ep.body(adminapi.Outcome{Status: statusOK}, res))
+		result.Fields = resultFields(rep.Body)
 	case adminstream.OutcomeSkipped:
-		result.Message = o.message
+		result.Message = rep.Message
 	default:
-		result.Error = o.message
+		result.Error = rep.Message
 	}
 	emit(result)
 }

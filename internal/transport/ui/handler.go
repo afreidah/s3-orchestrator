@@ -29,7 +29,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -55,9 +54,6 @@ const (
 	headerContentType    = "Content-Type"
 	loginPath            = "/login"
 	errLoginRenderFailed = "failed to render login page"
-	opCleanExcess        = "clean-excess"
-	opRebalance          = "rebalance"
-	opLifecycle          = "lifecycle"
 )
 
 // -------------------------------------------------------------------------
@@ -90,13 +86,7 @@ type DeclaredBuckets interface {
 type Deps struct {
 	Dashboard     DashboardOps
 	Sync          BackendSyncer
-	Objects       *ops.Objects
-	Integrity     *ops.Integrity
-	Replication   *ops.Replication
-	Rebalance     *ops.Rebalance
-	Expiry        *ops.Lifecycle
-	Encryption    *ops.Encryption
-	Compression   *ops.Compression
+	Ops           *ops.Services
 	DBHealthy     func() bool
 	Buckets       DeclaredBuckets
 	Config        *config.Live
@@ -128,12 +118,13 @@ type Handler struct {
 // contract the handler uses, so wiring stays visible at the call site.
 func New(d *Deps) *Handler {
 	must.NotNil("d", d)
-	must.NotNil("d.Objects", d.Objects)
-	must.NotNil("d.Integrity", d.Integrity)
-	must.NotNil("d.Replication", d.Replication)
-	must.NotNil("d.Rebalance", d.Rebalance)
-	must.NotNil("d.Encryption", d.Encryption)
-	must.NotNil("d.Compression", d.Compression)
+	must.NotNil("d.Ops", d.Ops)
+	must.NotNil("d.Ops.Objects", d.Ops.Objects)
+	must.NotNil("d.Ops.Integrity", d.Ops.Integrity)
+	must.NotNil("d.Ops.Replication", d.Ops.Replication)
+	must.NotNil("d.Ops.Rebalance", d.Ops.Rebalance)
+	must.NotNil("d.Ops.Encryption", d.Ops.Encryption)
+	must.NotNil("d.Ops.Compression", d.Ops.Compression)
 	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Config", d.Config)
 	must.NotNil("d.LoginThrottle", d.LoginThrottle)
@@ -161,11 +152,6 @@ func deriveSessionKey(ui *config.UIConfig) []byte {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// validBackend checks whether the backend name exists in config.
-func (h *Handler) validBackend(name string) bool {
-	return slices.ContainsFunc(h.d.Config.Load().Backends, func(b config.BackendConfig) bool { return b.Name == name })
-}
 
 // setSecurityHeaders adds security headers to dashboard responses.
 func setSecurityHeaders(w http.ResponseWriter) {

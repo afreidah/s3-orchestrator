@@ -27,7 +27,6 @@ func TestError_UnavailableReason(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"disabled subsystem", &Error{Status: http.StatusServiceUnavailable, Body: `{"status":"disabled","reason":"caching is off"}`}, "caching is off"},
 		{"error body", &Error{Status: http.StatusServiceUnavailable, Body: `{"error":"not wired"}`}, "not wired"},
 		{"empty body", &Error{Status: http.StatusServiceUnavailable}, "not available on this instance"},
 		{"unparseable body", &Error{Status: http.StatusServiceUnavailable, Body: "plain text"}, "plain text"},

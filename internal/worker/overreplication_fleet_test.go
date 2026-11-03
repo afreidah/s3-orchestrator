@@ -311,22 +311,6 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	}
 }
 
-// TestCountPending_Error surfaces the count-query failure.
-func TestCountPending_Error(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).
-		Return(core.ReplicationBacklog{}, errors.New("db error")).AnyTimes()
-	storetest.Permissive(store)
-
-	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
-
-	if _, err := w.CountPending(context.Background(), 2); err == nil {
-		t.Fatal("expected error from CountPending")
-	}
-}
-
 // TestClean_AdmissionBlocked asserts a saturated admission semaphore +
 // cancelled ctx halts the
 func TestClean_AdmissionBlocked(t *testing.T) {

@@ -28,25 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// TestCountPending verifies the count pending contract.
-// Asserts that unexpected error:.
-func TestCountPending(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{overReplicatedCount: 5}
-
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
-	count, err := c.CountPending(context.Background(), 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 5 {
-		t.Errorf("CountPending = %d, want 5", count)
-	}
-}
-
 // TestScoreCopy_DrainingBackend verifies the score copy draining backend contract.
 // Asserts that draining backend should score 0, got.
 func TestScoreCopy_DrainingBackend(t *testing.T) {

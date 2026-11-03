@@ -14,37 +14,21 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
 // REPLICATION
 // -------------------------------------------------------------------------
 
-// handleReplicate triggers one replication cycle. Replication fans objects out
-// across a worker pool, so streamed steps render as complete labeled lines
-// rather than live prefixes, which would interleave.
+// handleReplicate triggers one replication cycle.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	h.servePass(w, r, passEndpoint[worker.ReplicationSummary]{
-		op:      "replicate",
-		verb:    "replicating",
-		failMsg: "replication failed",
-		run:     h.d.Replication.Replicate,
-		body: func(o adminapi.Outcome, res worker.ReplicationSummary) any {
-			return adminapi.ReplicateResponse{Outcome: o, CopiesCreated: res.CopiesCreated, Failed: res.Failed}
-		},
-		summary: func(res worker.ReplicationSummary) (int, string) {
-			return res.CopiesCreated, fmt.Sprintf("created %d copies", res.CopiesCreated)
-		},
-	})
+	h.servePass(w, r, ReplicatePass(h.d.Ops))
 }
 
 // -------------------------------------------------------------------------
@@ -53,10 +37,10 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	res, err := h.d.Replication.CountSurplus(r.Context())
+	res, err := h.d.Ops.Replication.CountSurplus(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-			Status: statusSkipped, Reason: reason,
+			Outcome: adminapi.Outcome{Status: adminapi.StatusSkipped, Reason: reason},
 		})
 		return
 	}
@@ -66,36 +50,20 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-		Status:  statusOK,
+		Outcome: adminapi.Outcome{Status: adminapi.StatusOK},
 		Factor:  res.Factor,
 		Pending: res.Pending,
 	})
 }
 
 // handleOverReplicationClean triggers an immediate over-replication cleanup
-// pass. Accepts an optional batch_size query parameter. The cleaner fans
-// objects out across a worker pool, so streamed steps render as complete
-// labeled lines.
+// pass. Accepts an optional batch_size query parameter.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
 	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
 	if !ok {
 		return
 	}
-
-	h.servePass(w, r, passEndpoint[worker.OverReplicationSummary]{
-		op:      "over-replication",
-		verb:    "removing",
-		failMsg: "over-replication cleanup failed",
-		run: func(ctx context.Context, obs progress.Observer) (worker.OverReplicationSummary, error) {
-			return h.d.Replication.CleanExcess(ctx, batchSize, obs)
-		},
-		body: func(o adminapi.Outcome, res worker.OverReplicationSummary) any {
-			return adminapi.OverReplicationCleanResponse{Outcome: o, CopiesRemoved: res.CopiesRemoved, Failed: res.Failed}
-		},
-		summary: func(res worker.OverReplicationSummary) (int, string) {
-			return res.CopiesRemoved, fmt.Sprintf("removed %d copies", res.CopiesRemoved)
-		},
-	})
+	h.servePass(w, r, CleanExcessPass(h.d.Ops, batchSize))
 }
 
 // -------------------------------------------------------------------------

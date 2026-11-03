@@ -6,8 +6,7 @@
 // Wire types for the /admin/api/cache endpoints shared by the handler and its
 // clients. Kept in the leaf adminapi package so the server and its
 // out-of-process client depend on one definition and the JSON shape cannot
-// drift. Every endpoint answers a disabled cache with CacheDisabledResponse,
-// so callers can tell "no cache configured" from "cache empty".
+// drift.
 // -------------------------------------------------------------------------------
 
 package adminapi
@@ -39,11 +38,4 @@ type CacheInvalidateResponse struct {
 type CacheInvalidateKeyResponse struct {
 	Status string `json:"status"`
 	Key    string `json:"key"`
-}
-
-// CacheDisabledResponse is the 503 body every cache endpoint returns when the
-// orchestrator was started without the object data cache configured.
-type CacheDisabledResponse struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
 }

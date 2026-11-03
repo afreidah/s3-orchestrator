@@ -35,7 +35,8 @@ type Deps struct {
 	CompStore    RewriteStore
 	Mover        Mover
 	Replicator   Replicator
-	OverRep      OverReplicationOps
+	OverRep      OverReplicationCleaner
+	Backlog      BacklogCounter
 	Rebalancer   Rebalancer
 	Expiry       RuleProcessor
 	Scrubber     ScrubberOps
@@ -80,6 +81,7 @@ func New(d *Deps) *Services {
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,
 			OverRep:    d.OverRep,
+			Backlog:    d.Backlog,
 			Config:     cfg,
 		}),
 		Rebalance: NewRebalance(RebalanceDeps{

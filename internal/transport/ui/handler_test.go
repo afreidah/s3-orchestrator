@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 
@@ -135,7 +136,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -501,8 +502,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
-	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -814,8 +815,8 @@ func TestAPIDelete_Success(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if result["ok"] != true {
-		t.Errorf("expected ok=true, got %v", result)
+	if result["deleted"] != float64(1) {
+		t.Errorf("expected deleted=1, got %v", result)
 	}
 }
 
@@ -871,9 +872,6 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if result["ok"] != true {
-		t.Errorf("expected ok=true, got %v", result)
-	}
 	if int(result["deleted"].(float64)) != 2 {
 		t.Errorf("expected deleted=2, got %v", result["deleted"])
 	}
@@ -903,9 +901,6 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
-	}
-	if result["ok"] != true {
-		t.Errorf("expected ok=true, got %v", result)
 	}
 	if int(result["deleted"].(float64)) != 0 {
 		t.Errorf("expected deleted=0, got %v", result["deleted"])
@@ -959,8 +954,8 @@ func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if result["error"] == nil {
-		t.Error("expected error field in response")
+	if failed, _ := result["failed"].(float64); failed == 0 {
+		t.Errorf("expected the failed count in the response, got %v", result)
 	}
 }
 
@@ -1136,7 +1131,7 @@ func TestAPIRebalance_AlreadyRunning(t *testing.T) {
 	// Simulate a rebalance already in progress by marking the operation as
 	// running directly. The async goroutine completes too fast for a
 	// second HTTP request to race against it reliably.
-	h.asyncOps.TryStart("rebalance")
+	h.asyncOps.TryStart("/api/rebalance")
 
 	// Should conflict while the operation is marked as running
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
@@ -1191,8 +1186,8 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 		mux.ServeHTTP(w2, req2)
 		result = nil
 		_ = json.NewDecoder(w2.Body).Decode(&result)
-		return result["status"] == "error"
-	}, "expected status=error, got %v", result)
+		return result["status"] == adminstream.OutcomeFailed
+	}, "expected status=failed, got %v", result)
 }
 
 // -------------------------------------------------------------------------
@@ -1574,7 +1569,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -1779,12 +1774,9 @@ func TestAPICleanExcess_FactorLeOne(t *testing.T) {
 		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
 	}
 
-	res := waitForResult(t, h, opCleanExcess)
-	if res.Skipped == "" {
-		t.Error("skip reason is empty; want an explanation for the dashboard banner")
-	}
-	if res.Counts.Count != 0 {
-		t.Errorf("removed = %d, want 0", res.Counts.Count)
+	res := waitForResult(t, h, "/api/clean-excess")
+	if res.Result != adminstream.OutcomeSkipped || res.Message == "" {
+		t.Errorf("result = %+v, want a skip with an explanation for the dashboard banner", res)
 	}
 }
 
@@ -1887,8 +1879,8 @@ func testThrottle(tb testing.TB) *httputil.LoginThrottle {
 // without the auth wrapper, so a test drives one action's trigger or poll.
 func serveRoute(h *Handler, w http.ResponseWriter, r *http.Request) {
 	for i := range uiAPIRoutes {
-		if uiAPIRoutes[i].suffix == r.URL.Path {
-			uiAPIRoutes[i].handler(h)(w, r)
+		if route := &uiAPIRoutes[i]; route.suffix == r.URL.Path {
+			httputil.AllowMethod(route.method, route.handler(h))(w, r)
 			return
 		}
 	}

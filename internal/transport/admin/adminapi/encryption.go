@@ -15,10 +15,10 @@ package adminapi
 // re-wrapped under the current primary key. It does not embed
 // BulkRewriteOutcome because rotation never touches the object's bytes.
 type RotateEncryptionKeyResponse struct {
-	Status  string `json:"status"`
-	Failed  int    `json:"failed"`
-	Total   int    `json:"total"`
-	Rotated int    `json:"rotated"`
+	Outcome
+	Failed  int `json:"failed"`
+	Total   int `json:"total"`
+	Rotated int `json:"rotated"`
 }
 
 // EncryptExistingResponse reports an encrypt-existing pass: how many

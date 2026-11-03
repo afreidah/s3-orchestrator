@@ -64,19 +64,28 @@ func InternalError(ctx context.Context, log *slog.Logger, w http.ResponseWriter,
 	WriteJSONError(w, http.StatusInternalServerError, msg)
 }
 
-// WriteObjectError renders a failed object operation. A rejected request names
-// what was wrong with it, a missing object is a 404, and anything else is a
-// server fault logged under msg.
-func WriteObjectError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error, msg, key string) {
-	switch {
-	case errors.Is(err, ops.ErrKeyRequired),
-		errors.Is(err, ops.ErrPrefixRequired),
-		errors.Is(err, ops.ErrInvalidKey):
-		WriteJSONError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ops.ErrNotFound):
-		WriteJSONError(w, http.StatusNotFound, "not found")
+// WriteOpError renders a failed operation. A rejection tells the caller what
+// was wrong with the request under its kind's status; anything else is a
+// server fault logged under msg with attrs.
+func WriteOpError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error, msg string, attrs ...any) {
+	if rej, ok := errors.AsType[*ops.Rejection](err); ok {
+		WriteJSONError(w, rejectionStatus(rej.Kind), err.Error())
+		return
+	}
+	InternalError(r.Context(), log, w, msg, err, attrs...)
+}
+
+// rejectionStatus is the status a rejection of kind answers with.
+func rejectionStatus(kind ops.RejectionKind) int {
+	switch kind {
+	case ops.RejectNotFound:
+		return http.StatusNotFound
+	case ops.RejectForbidden:
+		return http.StatusForbidden
+	case ops.RejectConflict:
+		return http.StatusConflict
 	default:
-		InternalError(r.Context(), log, w, msg, err, slog.String("key", key))
+		return http.StatusBadRequest
 	}
 }
 
@@ -105,6 +114,21 @@ func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, maxBytes in
 		return false
 	}
 	return true
+}
+
+// AllowMethod wraps next so it serves only method, answering any other with a
+// 405 naming it. A GET route serves HEAD too, as a method-scoped mux pattern
+// does.
+func AllowMethod(method string, next http.HandlerFunc) http.HandlerFunc {
+	allowed := []string{method}
+	if method == http.MethodGet {
+		allowed = append(allowed, http.MethodHead)
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if RequireMethod(w, r, allowed...) {
+			next(w, r)
+		}
+	}
 }
 
 // RequireMethod verifies r.Method matches one of the allowed methods.

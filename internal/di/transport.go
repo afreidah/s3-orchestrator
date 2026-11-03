@@ -177,6 +177,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Mover:        coord,
 		Replicator:   replicator,
 		OverRep:      overRep,
+		Backlog:      stores,
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
 		Locker:       stores,
@@ -208,13 +209,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Buckets:       declared,
 		Dashboard:     aggregator,
 		Sync:          reconciler,
-		Objects:       opsSvc.Objects,
-		Integrity:     opsSvc.Integrity,
-		Replication:   opsSvc.Replication,
-		Rebalance:     opsSvc.Rebalance,
-		Expiry:        opsSvc.Lifecycle,
-		Encryption:    opsSvc.Encryption,
-		Compression:   opsSvc.Compression,
+		Ops:           opsSvc,
 		DBHealthy:     cb.IsHealthy,
 		Config:        live,
 		LogBuffer:     logBuffer,
@@ -263,6 +258,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	opsSvc := r.Resolve[*ops.Services]()
 	aggregator := r.Resolve[*dashboard.Aggregator]()
 	runtime := r.Resolve[*infra.BackendRuntime]()
+	live := r.Resolve[*config.Live]()
 	id := r.Resolve[instanceid.ID]()
 	shared := r.Resolve[*sharedstate.Shared]()
 	mode := r.Resolve[config.Mode]()
@@ -278,14 +274,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	deps := &admin.Deps{
 		BackendOps:   usageSvc,
 		Dashboard:    aggregator,
-		Objects:      opsSvc.Objects,
-		Integrity:    opsSvc.Integrity,
-		Replication:  opsSvc.Replication,
-		Rebalance:    opsSvc.Rebalance,
-		Expiry:       opsSvc.Lifecycle,
-		Encryption:   opsSvc.Encryption,
-		Compression:  opsSvc.Compression,
-		Provision:    opsSvc.Provision,
+		Ops:          opsSvc,
 		States:       states,
 		StateStore:   stores,
 		DBHealthy:    cb.IsHealthy,
@@ -295,7 +284,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		FlightRec:    Optional[*debug.FlightRecorderService](i).Get(ctx).Recorder(),
 		Reconciler:   Optional[*worker.Reconciler](i).Get(ctx),
 		Registry:     srv.GetBucketAuth,
-		BackendNames: runtime.BackendOrder,
+		Config:       live,
 		LogLevel:     logLevel,
 		LogBuffer:    logBuffer,
 		Instance: adminapi.InstanceStatus{

@@ -47,11 +47,11 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
 		DBHealthy: cb.IsHealthy,
-		Objects: ops.NewObjects(ops.ObjectsDeps{
+		Ops: &ops.Services{Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
-		}),
+		})},
 		LogLevel: &lv,
 		Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}}

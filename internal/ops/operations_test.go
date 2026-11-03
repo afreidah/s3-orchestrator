@@ -181,6 +181,7 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Mover:      mover,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
+		Backlog:    mock,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
 		Locker:     mock,
@@ -699,7 +700,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
-	if res.Rotated != 1 || res.Failed != 0 || res.Total != 1 {
+	if res.Succeeded != 1 || res.Failed != 0 || res.Planned != 1 {
 		t.Errorf("res = %+v, want rotated=1 failed=0 total=1", res)
 	}
 	if !updated {
@@ -734,8 +735,8 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
-	if res.Rotated != 0 || res.Failed != 0 || res.Total != 1 {
-		t.Errorf("res = %+v, want rotated=0 failed=0 total=1", res)
+	if res.Succeeded != 0 || res.Failed != 0 || res.Skipped != 1 {
+		t.Errorf("res = %+v, want rotated=0 failed=0 skipped=1", res)
 	}
 }
 
@@ -840,7 +841,7 @@ func TestRotateKey_AllStaleSkipsCurrentKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
-	if res.Total != 0 {
+	if res.Planned != 0 {
 		t.Errorf("res = %+v, want an empty run", res)
 	}
 }
@@ -858,7 +859,7 @@ func TestObjects_RejectsKeyOutsideBucket(t *testing.T) {
 	if err := svc.Objects.Delete(ctx, "nosuchbucket/file.txt"); !errors.Is(err, ErrInvalidKey) {
 		t.Errorf("Delete err = %v, want ErrInvalidKey", err)
 	}
-	if _, err := svc.Objects.Put(ctx, "nosuchbucket/file.txt", bytes.NewReader(nil), 0, ""); !errors.Is(err, ErrInvalidKey) {
+	if _, err := svc.Objects.Put(ctx, &object.PutObjectRequest{Key: "nosuchbucket/file.txt", Body: bytes.NewReader(nil)}); !errors.Is(err, ErrInvalidKey) {
 		t.Errorf("Put err = %v, want ErrInvalidKey", err)
 	}
 }
@@ -873,7 +874,7 @@ func TestObjects_RejectsEmptyKeyAndPrefix(t *testing.T) {
 	if err := svc.Objects.Delete(ctx, ""); !errors.Is(err, ErrKeyRequired) {
 		t.Errorf("Delete err = %v, want ErrKeyRequired", err)
 	}
-	if _, err := svc.Objects.DeletePrefix(ctx, "", nil); !errors.Is(err, ErrPrefixRequired) {
+	if _, err := svc.Objects.DeletePrefix(ctx, ""); !errors.Is(err, ErrPrefixRequired) {
 		t.Errorf("DeletePrefix err = %v, want ErrPrefixRequired", err)
 	}
 }
@@ -1062,7 +1063,9 @@ func TestObjectsPut_ReturnsETag(t *testing.T) {
 			return "etag-1", nil
 		}).Times(1)
 
-	etag, err := objects.Put(context.Background(), testBucket+"/file.txt", bytes.NewReader([]byte("hello")), 5, "text/plain")
+	etag, err := objects.Put(context.Background(), &object.PutObjectRequest{
+		Key: testBucket + "/file.txt", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain",
+	})
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -1089,7 +1092,7 @@ func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockObjectStore(gomock.NewController(t))
 	store.EXPECT().
-		ListObjects(gomock.Any(), "", "/", "", defaultListMaxKeys).
+		ListObjects(gomock.Any(), "", "/", "", listPageSize).
 		Return(&core.ListObjectsResult{CommonPrefixes: []string{testBucket + "/"}}, nil).
 		Times(1)
 	objects := NewObjects(ObjectsDeps{
@@ -1098,7 +1101,7 @@ func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 		Buckets: declaredBuckets(),
 	})
 
-	page, err := objects.List(context.Background(), "", "/", "", 0)
+	page, err := objects.List(context.Background(), "", "/", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -1114,7 +1117,7 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockObjectStore(gomock.NewController(t))
 	store.EXPECT().
-		ListObjects(gomock.Any(), testBucket+"/dir/", "", "", defaultListMaxKeys).
+		ListObjects(gomock.Any(), testBucket+"/dir/", "", "", listPageSize).
 		Return(&core.ListObjectsResult{
 			Objects:     []core.ObjectLocation{{ObjectKey: testBucket + "/dir/a"}, {ObjectKey: testBucket + "/dir/b"}},
 			IsTruncated: true,
@@ -1126,7 +1129,7 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 		Buckets: declaredBuckets(),
 	})
 
-	page, err := objects.List(context.Background(), testBucket+"/dir/", "", "", 0)
+	page, err := objects.List(context.Background(), testBucket+"/dir/", "", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -1167,11 +1170,18 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 // running factor, and declines when replication is meaningless.
 func TestCountSurplus_ReportsBacklog(t *testing.T) {
 	t.Parallel()
-	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	over.EXPECT().CountPending(gomock.Any(), 2).Return(int64(7), nil).Times(1)
-	svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
+	var askedFactor int
+	svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
+		opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
+		backlogFunc(func(_ context.Context, factor int) (core.ReplicationBacklog, error) {
+			askedFactor = factor
+			return core.ReplicationBacklog{Under: 3, Over: 7}, nil
+		}))
 
 	res, err := svc.CountSurplus(context.Background())
+	if askedFactor != 2 {
+		t.Errorf("counted at factor %d, want the running 2", askedFactor)
+	}
 	if err != nil {
 		t.Fatalf("CountSurplus: %v", err)
 	}
@@ -1192,7 +1202,7 @@ func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 			Succeeded: 1, Failed: 2,
 			CopiesCreated: 3,
 		}, nil).Times(1)
-	svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
+	svc := replicationOver(t, repl, opstest.NewMockOverReplicationCleaner(gomock.NewController(t)))
 
 	res, err := svc.Replicate(context.Background(), nil)
 	if err != nil {
@@ -1210,7 +1220,7 @@ func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 // surplus survived the cycle reach the caller.
 func TestCleanExcess_ReportsObjectsItCouldNotClean(t *testing.T) {
 	t.Parallel()
-	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
+	over := opstest.NewMockOverReplicationCleaner(gomock.NewController(t))
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.OverReplicationSummary{
 			Failed:        5,
@@ -1235,7 +1245,7 @@ func TestCleanExcess_ReportsObjectsItCouldNotClean(t *testing.T) {
 func TestCleanExcess_CapsBatchSize(t *testing.T) {
 	t.Parallel()
 	var ran config.ReplicationConfig
-	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
+	over := opstest.NewMockOverReplicationCleaner(gomock.NewController(t))
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig, _ progress.Observer) (worker.OverReplicationSummary, error) {
 			ran = cfg
@@ -1259,14 +1269,32 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 }
 
 // replicationOver builds a replication service over the two stubbed workers,
-// running at factor 2.
-func replicationOver(t *testing.T, repl Replicator, over OverReplicationOps) *Replication {
+// running at factor 2 over an empty backlog.
+func replicationOver(t *testing.T, repl Replicator, over OverReplicationCleaner) *Replication {
+	t.Helper()
+	return replicationCounting(t, repl, over, backlogFunc(func(context.Context, int) (core.ReplicationBacklog, error) {
+		return core.ReplicationBacklog{}, nil
+	}))
+}
+
+// replicationCounting builds a replication service whose backlog count
+// comes from backlog, running at factor 2.
+func replicationCounting(t *testing.T, repl Replicator, over OverReplicationCleaner, backlog BacklogCounter) *Replication {
 	t.Helper()
 	return NewReplication(ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,
+		Backlog:    backlog,
 		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 	})
+}
+
+// backlogFunc adapts a function to BacklogCounter.
+type backlogFunc func(ctx context.Context, factor int) (core.ReplicationBacklog, error)
+
+// CountReplicationBacklog calls the function.
+func (f backlogFunc) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
+	return f(ctx, factor)
 }
 
 // TestDecryptExisting_EmptyStore asserts the reverse pass shares the driver
@@ -1306,7 +1334,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
-	if res.Total != 1 || res.Failed != 1 || res.Rotated != 0 {
+	if res.Planned != 1 || res.Failed != 1 || res.Succeeded != 0 {
 		t.Errorf("res = %+v, want total=1 failed=1 rotated=0", res)
 	}
 }
@@ -1371,7 +1399,7 @@ func TestObjects_PropagateBackendFailures(t *testing.T) {
 		objects, api := newObjects(t)
 		api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
 			Return("", errBackend).Times(1)
-		if _, err := objects.Put(context.Background(), key, bytes.NewReader(nil), 0, ""); !errors.Is(err, errBackend) {
+		if _, err := objects.Put(context.Background(), &object.PutObjectRequest{Key: key, Body: bytes.NewReader(nil)}); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the backend failure", err)
 		}
 	})
@@ -1390,12 +1418,12 @@ func TestObjects_PropagateBackendFailures(t *testing.T) {
 		objects, api := newObjects(t)
 		api.EXPECT().ListObjects(gomock.Any(), testBucket+"/dir/", "", "", deletePrefixPageSize).
 			Return(nil, errBackend).Times(1)
-		res, err := objects.DeletePrefix(context.Background(), testBucket+"/dir/", nil)
+		res, err := objects.DeletePrefix(context.Background(), testBucket+"/dir/")
 		if !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the listing failure", err)
 		}
-		if res.Deleted != 0 {
-			t.Errorf("Deleted = %d, want 0 when the listing never returned keys", res.Deleted)
+		if res.Succeeded != 0 {
+			t.Errorf("deleted = %d, want 0 when the listing never returned keys", res.Succeeded)
 		}
 	})
 }
@@ -1425,7 +1453,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 		repl := opstest.NewMockReplicator(gomock.NewController(t))
 		repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(worker.ReplicationSummary{}, errBackend).Times(1)
-		svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
+		svc := replicationOver(t, repl, opstest.NewMockOverReplicationCleaner(gomock.NewController(t)))
 
 		if _, err := svc.Replicate(context.Background(), nil); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the worker failure", err)
@@ -1434,7 +1462,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 
 	t.Run("clean excess", func(t *testing.T) {
 		t.Parallel()
-		over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
+		over := opstest.NewMockOverReplicationCleaner(gomock.NewController(t))
 		over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(worker.OverReplicationSummary{}, errBackend).Times(1)
 		svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
@@ -1446,9 +1474,11 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 
 	t.Run("count surplus", func(t *testing.T) {
 		t.Parallel()
-		over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-		over.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(int64(0), errBackend).Times(1)
-		svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
+		svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
+			opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
+			backlogFunc(func(context.Context, int) (core.ReplicationBacklog, error) {
+				return core.ReplicationBacklog{}, errBackend
+			}))
 
 		if _, err := svc.CountSurplus(context.Background()); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the store failure", err)
@@ -1472,8 +1502,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 }
 
 // TestDeletePrefix_CountsAndReports asserts a prefix delete pages the listing,
-// counts what it removed, separates the failures, and reports one step per key
-// so a streaming caller can render progress.
+// counts what it removed and separates the failures.
 func TestDeletePrefix_CountsAndReports(t *testing.T) {
 	t.Parallel()
 	objects, api := newObjects(t)
@@ -1495,20 +1524,11 @@ func TestDeletePrefix_CountsAndReports(t *testing.T) {
 		}).
 		Times(1)
 
-	var steps []progress.Step
-	res, err := objects.DeletePrefix(context.Background(), prefix, func(s progress.Step) {
-		steps = append(steps, s)
-	})
+	res, err := objects.DeletePrefix(context.Background(), prefix)
 	if err != nil {
 		t.Fatalf("DeletePrefix: %v", err)
 	}
-	if res.Deleted != 2 || res.Failed != 1 || res.Total != 3 {
+	if res.Succeeded != 2 || res.Failed != 1 || res.Attempted != 3 {
 		t.Errorf("result = %+v, want deleted=2 failed=1 total=3", res)
-	}
-	if len(steps) != 3 {
-		t.Fatalf("steps = %d, want one per key", len(steps))
-	}
-	if steps[1].Status != "failed" || steps[1].Label != keys[1] {
-		t.Errorf("step for the failed key = %+v, want label=%s status=failed", steps[1], keys[1])
 	}
 }

@@ -51,7 +51,7 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 	var lv slog.LevelVar
 	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
 		DBHealthy: cb.IsHealthy,
-		Objects:   objectsOver(t, mock),
+		Ops:       &ops.Services{Objects: objectsOver(t, mock)},
 		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		LogLevel:  &lv,
 	}}
@@ -163,11 +163,11 @@ func objectsAPIHandler(t *testing.T) (*Handler, *opstest.MockObjectAPI, *http.Se
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
-		Objects: ops.NewObjects(ops.ObjectsDeps{
+		Ops: &ops.Services{Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
-		}),
+		})},
 		LogLevel: &lv,
 		Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}}

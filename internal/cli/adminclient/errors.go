@@ -40,21 +40,14 @@ func (e *Error) Error() string {
 func (e *Error) Unavailable() bool { return e.Status == http.StatusServiceUnavailable }
 
 // Detail extracts the human-readable part of an error body, which the admin
-// API writes as either {"error":...} or, for a disabled subsystem,
-// {"status":"disabled","reason":...}. Falls back to the raw body so an
-// unrecognised shape is still legible.
+// API writes as {"error":...}. Falls back to the raw body so an unrecognised
+// shape is still legible.
 func (e *Error) Detail() string {
 	var parsed struct {
-		Error  string `json:"error"`
-		Reason string `json:"reason"`
+		Error string `json:"error"`
 	}
-	if json.Unmarshal([]byte(e.Body), &parsed) == nil {
-		if parsed.Error != "" {
-			return parsed.Error
-		}
-		if parsed.Reason != "" {
-			return parsed.Reason
-		}
+	if json.Unmarshal([]byte(e.Body), &parsed) == nil && parsed.Error != "" {
+		return parsed.Error
 	}
 	return e.Body
 }

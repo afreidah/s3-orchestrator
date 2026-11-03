@@ -32,9 +32,10 @@ type BackendOperationResponse struct {
 	Backend string `json:"backend"`
 }
 
-// BackendPurgeResult is the result fields of a streamed backend purge: the
-// backend and how many of its objects were deleted.
+// BackendPurgeResult reports a backend purge: the backend and how many of its
+// objects were deleted.
 type BackendPurgeResult struct {
+	Outcome
 	Backend string `json:"backend"`
 	Purged  int    `json:"purged"`
 }

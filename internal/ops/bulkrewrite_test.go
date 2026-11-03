@@ -78,10 +78,10 @@ func newShrinkingSet(n int) *shrinkingSet {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// page returns the rows after the cursor, up to limit. served bounds the total
-// handed out so a driver that never advances its cursor fails the test instead
-// of spinning forever.
-func (s *shrinkingSet) page(_ context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+// ListCopiesByForm returns the rows after the cursor, up to limit, whatever
+// the filter. served bounds the total handed out so a driver that never
+// advances its cursor fails the test instead of spinning forever.
+func (s *shrinkingSet) ListCopiesByForm(_ context.Context, _ *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -101,6 +101,16 @@ func (s *shrinkingSet) page(_ context.Context, limit int, after core.Cursor) ([]
 		return nil, fmt.Errorf("listing served %d rows for a set of %d: the pass is not advancing", s.served, len(s.rows))
 	}
 	return out, nil
+}
+
+// CountCopiesByForm is unused by the driver.
+func (s *shrinkingSet) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, nil
+}
+
+// UpdateCopyMetadata is unused by the driver, which records through the mover.
+func (s *shrinkingSet) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
+	return nil
 }
 
 // remove takes a row out of the set, standing in for the metadata update that
@@ -165,12 +175,13 @@ func (f moverFunc) MoveObject(ctx context.Context, req *writepath.MoveRequest) (
 	return f(ctx, req)
 }
 
-// pagingEnv builds the collaborators the driver needs, over a mover that does
-// what move says.
-func pagingEnv(t *testing.T, move moverFunc) bulkRewriteEnv {
+// pagingEnv builds the collaborators the driver needs, listing from set over a
+// mover that does what move says.
+func pagingEnv(t *testing.T, set *shrinkingSet, move moverFunc) bulkRewriteEnv {
 	t.Helper()
 	return bulkRewriteEnv{
 		log:    slog.New(slog.DiscardHandler),
+		store:  set,
 		mover:  move,
 		layers: &storedform.Layers{},
 	}
@@ -201,14 +212,13 @@ func decliningRewrite(set *shrinkingSet) moverFunc {
 	}
 }
 
-// pagingOp is the bulk rewrite op every paging test drives over set.
-func pagingOp(set *shrinkingSet, maxRewrites int) bulkRewriteOp {
-	return bulkRewriteOp{
+// pagingOp is the bulk rewrite op every paging test drives. It changes no
+// layer, so each copy is rewritten in the form it already has.
+func pagingOp(maxRewrites int) *bulkRewriteOp {
+	return &bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      set.page,
-		want:        func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() },
 		maxRewrites: maxRewrites,
 	}
 }
@@ -226,7 +236,7 @@ func TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, leavingRewrite(set)), nil)
+	res, err := pagingOp(0).run(context.Background(), pagingEnv(t, set, leavingRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -244,7 +254,7 @@ func TestRunBulkRewrite_TerminatesWhenRowsStay(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, decliningRewrite(set)), nil)
+	res, err := pagingOp(0).run(context.Background(), pagingEnv(t, set, decliningRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -280,7 +290,7 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 		}
 		return leave(ctx, req)
 	}
-	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil)
+	res, err := pagingOp(0).run(context.Background(), pagingEnv(t, set, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -305,7 +315,7 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 		return 0, fmt.Errorf("stream copy: %w", core.ErrUsageLimitExceeded)
 	}
 
-	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil)
+	res, err := pagingOp(0).run(context.Background(), pagingEnv(t, set, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -359,7 +369,7 @@ func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
 	const capRewrites = bulkRewriteBatchSize + 50
 	set := newShrinkingSet(pagingRows)
 
-	res, err := pagingOp(set, capRewrites).run(context.Background(), pagingEnv(t, leavingRewrite(set)), nil)
+	res, err := pagingOp(capRewrites).run(context.Background(), pagingEnv(t, set, leavingRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -402,7 +412,7 @@ func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
 		}
 		return leave(ctx, req)
 	}
-	res, err := pagingOp(set, capRewrites).run(context.Background(), pagingEnv(t, move), nil)
+	res, err := pagingOp(capRewrites).run(context.Background(), pagingEnv(t, set, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -443,18 +453,18 @@ func TestRunBulkRewrite_ClassifiesEachMoveOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			set := newShrinkingSet(1)
-			op := pagingOp(set, 0)
+			op := pagingOp(0)
 			op.opName = "outcome-test-" + tc.name
 			move := func(context.Context, *writepath.MoveRequest) (int64, error) { return 1024, tc.err }
 
-			res, err := op.run(context.Background(), pagingEnv(t, move), nil)
+			res, err := op.run(context.Background(), pagingEnv(t, set, move), nil)
 			if err != nil {
 				t.Fatalf("bulk rewrite: %v", err)
 			}
 			if res != tc.want {
 				t.Errorf("counts = %+v, want %+v", res, tc.want)
 			}
-			assertOutcomeCounters(t, &op, tc.label, tc.usageDecline, tc.copyChanged)
+			assertOutcomeCounters(t, op, tc.label, tc.usageDecline, tc.copyChanged)
 		})
 	}
 }
@@ -482,7 +492,7 @@ func TestRunBulkRewrite_DeclineReachesOnDeclined(t *testing.T) {
 	set := newShrinkingSet(1)
 	var gotKey string
 	var gotSize int64
-	op := pagingOp(set, 0)
+	op := pagingOp(0)
 	op.onDeclined = func(_ context.Context, loc *core.ObjectLocation, encodedSize int64) {
 		gotKey, gotSize = loc.ObjectKey, encodedSize
 	}
@@ -490,7 +500,7 @@ func TestRunBulkRewrite_DeclineReachesOnDeclined(t *testing.T) {
 		return 0, fmt.Errorf("stream copy: %w", &storedform.Declined{EncodedSize: 777})
 	}
 
-	res, err := op.run(context.Background(), pagingEnv(t, move), nil)
+	res, err := op.run(context.Background(), pagingEnv(t, set, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -516,7 +526,7 @@ func TestRunBulkRewrite_AuditsAChangedCopy(t *testing.T) {
 
 	set := newShrinkingSet(1)
 	move := func(context.Context, *writepath.MoveRequest) (int64, error) { return 0, core.ErrCopyChanged }
-	if _, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil); err != nil {
+	if _, err := pagingOp(0).run(context.Background(), pagingEnv(t, set, move), nil); err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
 	if got := raced.Load(); got != 1 {
@@ -534,16 +544,17 @@ func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
 	payload := []byte("hello world")
 	be := &fakeBackend{payload: payload}
 	mover := &fakeMover{backends: map[string]s3be.ObjectBackend{"backend-a": be}}
-	env := bulkRewriteEnv{
-		log:    slog.New(slog.DiscardHandler),
-		mover:  mover,
-		layers: &storedform.Layers{Encryptor: enc},
-	}
 	set := newShrinkingSet(1)
 	set.rows[0].ContentHash = "hash"
 	set.rows[0].SizeBytes = int64(len(payload))
-	op := pagingOp(set, 0)
-	op.want = func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() | core.StoredEncrypted }
+	env := bulkRewriteEnv{
+		log:    slog.New(slog.DiscardHandler),
+		store:  set,
+		mover:  mover,
+		layers: &storedform.Layers{Encryptor: enc},
+	}
+	op := pagingOp(0)
+	op.layer, op.add = core.StoredEncrypted, true
 
 	if _, err := op.run(context.Background(), env, nil); err != nil {
 		t.Fatalf("bulk rewrite: %v", err)

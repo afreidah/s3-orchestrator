@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
@@ -203,12 +204,12 @@ func TestCacheFlush_Disabled(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}
-	var resp adminapi.CacheDisabledResponse
+	var resp map[string]string
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Status != "disabled" || resp.Reason == "" {
-		t.Errorf("got status=%q reason=%q, want disabled with a reason", resp.Status, resp.Reason)
+	if resp["error"] != cacheDisabledReason {
+		t.Errorf("error = %q, want %q", resp["error"], cacheDisabledReason)
 	}
 }
 
@@ -427,8 +428,13 @@ func newTestHandler(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
-		log:        slog.Default().With(logfmt.Component("admin")),
-		d:          Deps{Registry: func() *auth.BucketRegistry { return rootRegistry(t) }, LogLevel: &lv},
+		log: slog.Default().With(logfmt.Component("admin")),
+		d: Deps{
+			Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
+			LogLevel: &lv,
+			Ops:      &ops.Services{},
+			Config:   backendsConfig(),
+		},
 		confirmKey: mustConfirmKey(),
 	}
 	h.instances = h.instanceRoster(nil)

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -53,7 +55,7 @@ func provisioningWith(t *testing.T, h *Handler, cfgBuckets []config.BucketConfig
 	store.EXPECT().ListCredentials(a).Return(rows.credentials, nil).AnyTimes()
 	store.EXPECT().ListGrants(a).Return(rows.grants, nil).AnyTimes()
 
-	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
 		Config: config.NewLive(&config.Config{Buckets: cfgBuckets}),
 	})
@@ -168,7 +170,7 @@ func TestHandleProvisioning_StoreFailureIs500(t *testing.T) {
 	h := newCoverageHandler(t)
 	store := opstest.NewMockProvisioningStore(gomock.NewController(t))
 	store.EXPECT().ListBuckets(gomock.Any()).Return(nil, context.DeadlineExceeded)
-	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
 		Config: config.NewLive(&config.Config{}),
 	})
@@ -334,7 +336,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 
 	objects := opstest.NewMockNamespaceCounter(gomock.NewController(t))
 	objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "photos/").Return(int64(0), nil)
-	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:   store,
 		Objects: objects,
 		Config:  config.NewLive(&config.Config{}),
@@ -573,9 +575,10 @@ func TestHandleCreateCredential_MalformedBodyIs400(t *testing.T) {
 // REJECTION STATUSES
 // -------------------------------------------------------------------------
 
-// TestProvisioningError_StatusMapping verifies each rejection reaches the caller
-// as an answer it can act on rather than as a fault, with its own reason.
-func TestProvisioningError_StatusMapping(t *testing.T) {
+// TestProvisioningRejections_StatusMapping verifies each provisioning rejection
+// reaches the caller as an answer it can act on rather than as a fault, with
+// its own reason, including one wrapped with detail.
+func TestProvisioningRejections_StatusMapping(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -594,6 +597,7 @@ func TestProvisioningError_StatusMapping(t *testing.T) {
 		{"bucket not empty", ops.ErrBucketNotEmpty, http.StatusConflict},
 		{"bucket granted", ops.ErrBucketGranted, http.StatusConflict},
 		{"user in use", ops.ErrUserInUse, http.StatusConflict},
+		{"wrapped rejection", fmt.Errorf("%w: %q", ops.ErrBackendNotFound, "b9"), http.StatusNotFound},
 		{"anything else", context.DeadlineExceeded, http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -601,7 +605,7 @@ func TestProvisioningError_StatusMapping(t *testing.T) {
 			h := newCoverageHandler(t)
 			w := httptest.NewRecorder()
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/provisioning", nil)
-			h.provisioningError(w, r, "failed", tc.err)
+			httputil.WriteOpError(w, r, h.log, tc.err, "failed")
 
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d", w.Code, tc.want)

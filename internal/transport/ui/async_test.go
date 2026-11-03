@@ -9,7 +9,12 @@
 
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+)
 
 // -------------------------------------------------------------------------
 // TRY START AND STATUS
@@ -56,49 +61,32 @@ func TestAsyncOpTracker_IndependentOps(t *testing.T) {
 // COMPLETE AND RESULT
 // -------------------------------------------------------------------------
 
-// TestAsyncOpTracker_Complete verifies the async op tracker complete contract.
-// Asserts that result = v, want OK=true Count=42.
+// TestAsyncOpTracker_Complete verifies a completed operation is no longer
+// running and keeps the report it finished with.
 func TestAsyncOpTracker_Complete(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
-	tr.Complete("rebalance", &asyncResult{Counts: adminActionCounts{Count: 42}})
+	tr.Complete("rebalance", &admin.Report{Result: adminstream.OutcomeOK, Body: 42})
 
 	result, running := tr.Status("rebalance")
 	if running {
 		t.Error("expected running=false after Complete")
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Error != "" || result.Counts.Count != 42 {
-		t.Errorf("result = %+v, want no error and Count=42", result)
+	if result == nil || result.Result != adminstream.OutcomeOK || result.Body != 42 {
+		t.Errorf("result = %+v, want the completed report", result)
 	}
 }
 
-// TestAsyncOpTracker_CompleteError verifies the async op tracker complete error contract.
-// Asserts that expected error result, got v.
-func TestAsyncOpTracker_CompleteError(t *testing.T) {
-	t.Parallel()
-	var tr asyncOpTracker
-
-	tr.TryStart("rebalance")
-	tr.Complete("rebalance", &asyncResult{Error: "db down"})
-
-	result, _ := tr.Status("rebalance")
-	if result == nil || result.Error != "db down" {
-		t.Errorf("expected error result, got %+v", result)
-	}
-}
-
-// TestAsyncOpTracker_RestartAfterComplete verifies the async op tracker restart after complete path by exercising tr.TryStart, tr.Complete.
+// TestAsyncOpTracker_RestartAfterComplete verifies a finished operation may
+// start again.
 func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
-	tr.Complete("rebalance", &asyncResult{Counts: adminActionCounts{Count: 5}})
+	tr.Complete("rebalance", &admin.Report{Result: adminstream.OutcomeOK})
 
 	if !tr.TryStart("rebalance") {
 		t.Fatal("expected TryStart to succeed after completion")

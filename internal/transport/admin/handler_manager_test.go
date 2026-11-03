@@ -73,19 +73,16 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	lv.Set(slog.LevelInfo)
 	svc := testOps(st, workers, mock, nil)
 	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
-		BackendOps:  st.Usage,
-		Dashboard:   dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
-		Objects:     svc.Objects,
-		Integrity:   svc.Integrity,
-		Replication: svc.Replication,
-		Rebalance:   svc.Rebalance,
-		Encryption:  svc.Encryption,
-		States:      st.States,
-		StateStore:  mock,
-		DBHealthy:   cb.IsHealthy,
-		Cleanup:     mock,
-		LogLevel:    &lv,
-		Registry:    func() *auth.BucketRegistry { return rootRegistry(t) },
+		BackendOps: st.Usage,
+		Dashboard:  dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
+		Ops:        svc,
+		Config:     st.Config,
+		States:     st.States,
+		StateStore: mock,
+		DBHealthy:  cb.IsHealthy,
+		Cleanup:    mock,
+		LogLevel:   &lv,
+		Registry:   func() *auth.BucketRegistry { return rootRegistry(t) },
 	}}
 }
 
@@ -116,6 +113,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Mover:      st.Coord,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
+		Backlog:    store,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
 		Declared:   declaredBuckets(),
@@ -259,7 +257,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Objects: objectsOver(t, mock), LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -295,7 +293,7 @@ func TestHandleObjectLocations_NotFound(t *testing.T) {
 	h := newTestHandlerWithManager(t)
 	objects := storetest.NewMockObjectStore(gomock.NewController(t))
 	objects.EXPECT().GetAllObjectLocations(gomock.Any(), "ghost").Return(nil, core.ErrObjectNotFound).Times(1)
-	h.d.Objects = objectsOver(t, objects)
+	h.d.Ops.Objects = objectsOver(t, objects)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -652,7 +650,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Objects: objectsOver(t, mock), LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -818,12 +816,12 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 	if w2.Code != http.StatusOK {
 		t.Fatalf("purge status = %d, want 200; body=%s", w2.Code, w2.Body.String())
 	}
-	var resp adminapi.BackendOperationResponse
+	var resp adminapi.BackendPurgeResult
 	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode purge: %v", err)
 	}
-	if resp.Status != "backend purged" || resp.Backend != "b1" {
-		t.Errorf("got status=%q backend=%q, want {backend purged b1}", resp.Status, resp.Backend)
+	if resp.Status != adminapi.StatusOK || resp.Backend != "b1" {
+		t.Errorf("got status=%q backend=%q, want {ok b1}", resp.Status, resp.Backend)
 	}
 }
 

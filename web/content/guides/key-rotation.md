@@ -77,7 +77,7 @@ Releases before v0.163.0 recorded positional IDs (`config-0`, `config-1`, `file-
 The response shows progress:
 
 ```json
-{"status": "complete", "rotated": 1423, "failed": 0, "total": 1423}
+{"status": "ok", "rotated": 1423, "failed": 0, "total": 1423}
 ```
 
 ## Step 5: Monitor

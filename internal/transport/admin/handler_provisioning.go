@@ -15,7 +15,6 @@
 package admin
 
 import (
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -35,7 +34,7 @@ import (
 // handleProvisioning returns every bucket, user and credential a deployment
 // declares, from both the config file and the store.
 func (h *Handler) handleProvisioning(w http.ResponseWriter, r *http.Request) {
-	view, err := h.d.Provision.View(r.Context())
+	view, err := h.d.Ops.Provision.View(r.Context())
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "provisioning listing failed", err)
 		return
@@ -58,12 +57,12 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 		MaxMultipartUploads: req.MaxMultipartUploads,
 		CORS:                configCORS(req.CORS),
 	}
-	if err := h.d.Provision.CreateBucket(r.Context(), &b); err != nil {
-		h.provisioningError(w, r, "create bucket failed", err)
+	if err := h.d.Ops.Provision.CreateBucket(r.Context(), &b); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "create bucket failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, Bucket: req.Name,
+		Status: adminapi.StatusOK, Bucket: req.Name,
 	})
 }
 
@@ -79,24 +78,24 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 		MaxMultipartUploads: req.MaxMultipartUploads,
 		CORS:                configCORS(req.CORS),
 	}
-	if err := h.d.Provision.UpdateBucket(r.Context(), &b); err != nil {
-		h.provisioningError(w, r, "update bucket failed", err)
+	if err := h.d.Ops.Provision.UpdateBucket(r.Context(), &b); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "update bucket failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, Bucket: name,
+		Status: adminapi.StatusOK, Bucket: name,
 	})
 }
 
 // handleDeleteBucket removes a virtual bucket that holds nothing.
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue(paramName)
-	if err := h.d.Provision.DeleteBucket(r.Context(), name); err != nil {
-		h.provisioningError(w, r, "delete bucket failed", err)
+	if err := h.d.Ops.Provision.DeleteBucket(r.Context(), name); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "delete bucket failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, Bucket: name,
+		Status: adminapi.StatusOK, Bucket: name,
 	})
 }
 
@@ -110,13 +109,13 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
-	u, err := h.d.Provision.CreateUser(r.Context(), req.Name)
+	u, err := h.d.Ops.Provision.CreateUser(r.Context(), req.Name)
 	if err != nil {
-		h.provisioningError(w, r, "create user failed", err)
+		httputil.WriteOpError(w, r, h.log, err, "create user failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: u.ID, UserName: u.Name,
+		Status: adminapi.StatusOK, UserID: u.ID, UserName: u.Name,
 	})
 }
 
@@ -128,24 +127,24 @@ func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue(paramID)
-	if err := h.d.Provision.RenameUser(r.Context(), id, req.Name); err != nil {
-		h.provisioningError(w, r, "rename user failed", err)
+	if err := h.d.Ops.Provision.RenameUser(r.Context(), id, req.Name); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "rename user failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: id, UserName: req.Name,
+		Status: adminapi.StatusOK, UserID: id, UserName: req.Name,
 	})
 }
 
 // handleDeleteUser removes an identity that holds nothing.
 func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue(paramID)
-	if err := h.d.Provision.DeleteUser(r.Context(), id); err != nil {
-		h.provisioningError(w, r, "delete user failed", err)
+	if err := h.d.Ops.Provision.DeleteUser(r.Context(), id); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "delete user failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: id,
+		Status: adminapi.StatusOK, UserID: id,
 	})
 }
 
@@ -162,9 +161,9 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	keys := ops.Keypair{AccessKeyID: req.AccessKeyID, SecretAccessKey: req.SecretAccessKey}
-	c, err := h.d.Provision.CreateCredential(r.Context(), req.UserID, req.Label, keys)
+	c, err := h.d.Ops.Provision.CreateCredential(r.Context(), req.UserID, req.Label, keys)
 	if err != nil {
-		h.provisioningError(w, r, "create credential failed", err)
+		httputil.WriteOpError(w, r, h.log, err, "create credential failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.CreateCredentialResponse{
@@ -178,11 +177,11 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request)
 // handleDeleteCredential revokes one keypair, leaving its siblings alone.
 func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
 	accessKeyID := r.PathValue(paramID)
-	if err := h.d.Provision.DeleteCredential(r.Context(), accessKeyID); err != nil {
-		h.provisioningError(w, r, "delete credential failed", err)
+	if err := h.d.Ops.Provision.DeleteCredential(r.Context(), accessKeyID); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "delete credential failed")
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{Status: statusOK})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{Status: adminapi.StatusOK})
 }
 
 // -------------------------------------------------------------------------
@@ -201,12 +200,12 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.d.Provision.CreateGrant(r.Context(), req.UserID, resource, perms); err != nil {
-		h.provisioningError(w, r, "create grant failed", err)
+	if err := h.d.Ops.Provision.CreateGrant(r.Context(), req.UserID, resource, perms); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "create grant failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: req.UserID, Resource: resource.String(),
+		Status: adminapi.StatusOK, UserID: req.UserID, Resource: resource.String(),
 	})
 }
 
@@ -224,12 +223,12 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.d.Provision.SetGrant(r.Context(), userID, resource, perms); err != nil {
-		h.provisioningError(w, r, "set grant failed", err)
+	if err := h.d.Ops.Provision.SetGrant(r.Context(), userID, resource, perms); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "set grant failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: userID, Resource: resource.String(),
+		Status: adminapi.StatusOK, UserID: userID, Resource: resource.String(),
 	})
 }
 
@@ -240,12 +239,12 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 // writes keeps working.
 func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 	userID, resource := grantTarget(r)
-	if err := h.d.Provision.DeleteGrant(r.Context(), userID, resource); err != nil {
-		h.provisioningError(w, r, "delete grant failed", err)
+	if err := h.d.Ops.Provision.DeleteGrant(r.Context(), userID, resource); err != nil {
+		httputil.WriteOpError(w, r, h.log, err, "delete grant failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: userID, Resource: resource.String(),
+		Status: adminapi.StatusOK, UserID: userID, Resource: resource.String(),
 	})
 }
 
@@ -265,36 +264,6 @@ func grantTarget(r *http.Request) (string, core.Resource) {
 		resource.Name = ""
 	}
 	return r.PathValue(paramID), resource
-}
-
-// provisioningError maps an operation's rejection onto a status. Everything the
-// operations layer names is something the caller stated or asked for, so it is
-// reported with its own reason; anything else is a fault and says nothing.
-func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg string, err error) {
-	switch {
-	case errors.Is(err, ops.ErrNameRequired),
-		errors.Is(err, ops.ErrUserRequired),
-		errors.Is(err, ops.ErrNoPermissions),
-		errors.Is(err, ops.ErrInvalidResource),
-		errors.Is(err, ops.ErrKeypairIncomplete),
-		errors.Is(err, ops.ErrInvalidBucket):
-		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ops.ErrBucketNotFound),
-		errors.Is(err, ops.ErrBackendNotFound),
-		errors.Is(err, ops.ErrUserNotFound),
-		errors.Is(err, ops.ErrCredentialNotFound):
-		httputil.WriteJSONError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ops.ErrConfigDeclared):
-		httputil.WriteJSONError(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, ops.ErrBucketExists),
-		errors.Is(err, ops.ErrBucketNotEmpty),
-		errors.Is(err, ops.ErrBucketGranted),
-		errors.Is(err, ops.ErrCredentialExists),
-		errors.Is(err, ops.ErrUserInUse):
-		httputil.WriteJSONError(w, http.StatusConflict, err.Error())
-	default:
-		httputil.InternalError(r.Context(), h.log, w, msg, err)
-	}
 }
 
 // provisioningResponse renders the merged view. Secrets are dropped here rather

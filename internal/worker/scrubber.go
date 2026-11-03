@@ -388,7 +388,7 @@ func copyPager(batchSize int, list func(ctx context.Context, limit int, after co
 	return batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(batchSize),
 		List:     list,
-		CursorOf: func(loc core.ObjectLocation) core.Cursor { return loc.Cursor() },
+		CursorOf: core.CursorOf,
 	}
 }
 
