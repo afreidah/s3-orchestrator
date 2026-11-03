@@ -5,8 +5,8 @@
 //
 // The one decision every surface that addresses objects by a bucket-qualified
 // key makes before touching them: whether a user's grants carry a permission on
-// the bucket the key names. The admin API and the dashboard both ask it here, so
-// the two cannot drift into answering the same request differently.
+// the bucket the key names. The S3 API, the admin API and the dashboard all ask
+// it here, so they cannot drift into answering the same request differently.
 // -------------------------------------------------------------------------------
 
 package auth
@@ -38,11 +38,20 @@ func AuthorizeKey(u *User, key string, want core.PermissionSet) (bucket, reason 
 		}
 		return "", ReasonNoBucket, false
 	}
-	if !u.CanReach(bucket) {
-		return bucket, ReasonNoGrant, false
+	reason, ok = AuthorizeBucket(u, bucket, want)
+	return bucket, reason, ok
+}
+
+// AuthorizeBucket reports whether u may exercise want on bucket, and why not.
+// No grant at all and a grant missing a permission are refused separately, so
+// an operator reading the refusal knows which one to fix.
+func AuthorizeBucket(u *User, bucket string, want core.PermissionSet) (reason string, ok bool) {
+	held, reached := u.Permissions(bucket)
+	if !reached {
+		return ReasonNoGrant, false
 	}
-	if !u.Can(bucket, want) {
-		return bucket, ReasonPermission, false
+	if !held.Has(want) {
+		return ReasonPermission, false
 	}
-	return bucket, "", true
+	return "", true
 }

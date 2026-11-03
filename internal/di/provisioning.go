@@ -24,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // provisioningChannel is the shared-state channel provisioning changes are
@@ -83,14 +82,14 @@ func (p *Provisioned) Install(ctx context.Context, i do.Injector) error {
 	r := NewResolver(i)
 	declared := r.Resolve[*provisioning.Declared]()
 	policy := r.Resolve[*cors.Policy]()
-	srv := r.Resolve[*s3api.Server]()
+	registry := r.Resolve[*auth.LiveRegistry]()
 	if r.err != nil {
 		return r.err
 	}
 	declared.Set(p.buckets)
 	logAssemblyNotices(ctx, p.registry.Notices())
 	policy.SetRules(p.cors)
-	srv.SetBucketAuth(p.registry)
+	registry.Store(p.registry)
 	return nil
 }
 

@@ -560,7 +560,7 @@ internal/
     ui/                      # Dashboard handlers + templates
     auth/                    # SigV4 verification, users, grants, bucket registry
     cors/                    # Browser preflight for the S3 surface
-    httputil/                # Cross-cutting HTTP helpers (trusted proxies, login throttle, cert reload)
+    httputil/                # Cross-cutting HTTP helpers (trusted proxies, rate limiter, login throttle, cert reload)
   ops/                       # Operations layer: what the orchestrator can be told to do, shared by admin and UI
   proxy/                     # Orchestration layer: a namespace over the collaborators below, with no root object
     infra/                   # BackendRuntime: fleet, usage counters, admission, timeouts, error classification
@@ -679,23 +679,21 @@ is asked for.
 ### Provider Pattern
 
 Every provider follows the same shape. A provider with more than one
-dependency resolves them through the batch `resolver` (`resolve.go`) and
+dependency resolves them through the batch `Resolver` (`resolve.go`) and
 checks the error once:
 
 ```go
 // ProvideS3Server creates the S3 API server.
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
-    r := newResolver(i)
+    r := NewResolver(i)
     cfg := r.Resolve[*config.Config]()
     objects := r.Resolve[*object.Manager]()
     multipartManager := r.Resolve[*multipart.Manager]()
-    bucketAuth := r.Resolve[*auth.BucketRegistry]()
+    registry := r.Resolve[*auth.LiveRegistry]()
     if r.err != nil {
         return nil, r.err
     }
-    srv := s3api.NewServer(objects, multipartManager, cfg.Server.MaxObjectSize)
-    srv.SetBucketAuth(bucketAuth)
-    return srv, nil
+    return s3api.NewServer(objects, multipartManager, registry, cfg.Server.MaxObjectSize), nil
 }
 ```
 
@@ -758,7 +756,7 @@ component with fakes in its `Deps` rather than registering a fake provider.
 
 1. Add a `Provide<Name>` function to the `internal/di` file matching its
    concern.
-2. Resolve its dependencies with `newResolver(i)` and check `r.err` once.
+2. Resolve its dependencies with `NewResolver(i)` and check `r.err` once.
 3. Construct the component, passing what it resolved, and return
    `(value, nil)`.
 4. Register it in `NewInjector`. A worker the lifecycle manager runs is
@@ -1020,11 +1018,11 @@ Use the `S3Error` type, declared with its sentinels in `internal/store/core/erro
 ErrObjectNotFound = &S3Error{
     StatusCode: http.StatusNotFound,
     Code:       "NoSuchKey",
-    Message:    "object not found",
+    Message:    "The specified key does not exist.",
 }
 ```
 
-The S3 handlers use `writeStorageError(w, err, fallbackMsg)` to turn an error into an XML response. A streaming-signature failure takes precedence (`403 SignatureDoesNotMatch`), then any `*S3Error` in the chain; anything else falls back to `502 InternalError`.
+An S3 handler returns a failure as an error and never writes it; `classifyError` turns it into an XML response. A streaming-signature failure takes precedence (`403 SignatureDoesNotMatch`), then a tag validation error, then any `*S3Error` in the chain; anything else answers `502 InternalError`. A request guard refuses by returning an `*S3Error`, wrapped with the detail the request log keeps.
 
 ### Error Classification
 

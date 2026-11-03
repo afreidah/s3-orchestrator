@@ -29,7 +29,6 @@ import (
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // cacheTestEnv holds the components for cache integration tests.
@@ -71,15 +70,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 	registerStack(t, st)
 	_ = proxytest.BuildWorkers(st, stores)
 
-	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{AccessKeyID: "test", SecretAccessKey: "test"},
-			},
-		},
-	}))
+	srv := newS3Server(t, st, virtualBucketFor("test", "test"))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

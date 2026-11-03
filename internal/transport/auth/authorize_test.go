@@ -64,3 +64,18 @@ func TestUserByAccessKey(t *testing.T) {
 		t.Error("UserByAccessKey resolved an unknown key")
 	}
 }
+
+// TestLiveRegistry_ServesTheLatestSwap verifies the holder serves the registry
+// it was seeded with until one is stored over it.
+func TestLiveRegistry_ServesTheLatestSwap(t *testing.T) {
+	t.Parallel()
+	first, second := &BucketRegistry{}, &BucketRegistry{}
+	live := NewLiveRegistry(first)
+	if live.Load() != first {
+		t.Fatal("the holder does not serve the registry it was seeded with")
+	}
+	live.Store(second)
+	if live.Load() != second {
+		t.Error("the holder does not serve the registry stored over it")
+	}
+}

@@ -26,10 +26,10 @@ import (
 // Field tags must match the AWS S3 1996 XML schema exactly so v2 SDK
 // clients can unmarshal the response.
 type xmlListBucketsResult struct {
-	XMLName xml.Name   `xml:"ListAllMyBucketsResult"`
-	Xmlns   string     `xml:"xmlns,attr"`
-	Owner   xmlOwner   `xml:"Owner"`
-	Buckets xmlBuckets `xml:"Buckets"`
+	XMLName xml.Name    `xml:"ListAllMyBucketsResult"`
+	Xmlns   s3Namespace `xml:"xmlns,attr"`
+	Owner   xmlOwner    `xml:"Owner"`
+	Buckets xmlBuckets  `xml:"Buckets"`
 }
 
 // xmlOwner is the bucket-owner block included in ListBuckets and
@@ -58,8 +58,8 @@ type xmlBucket struct {
 // The orchestrator returns an empty body (us-east-1 by S3 convention)
 // since there is no per-bucket region to expose.
 type xmlLocationConstraint struct {
-	XMLName xml.Name `xml:"LocationConstraint"`
-	Xmlns   string   `xml:"xmlns,attr"`
+	XMLName xml.Name    `xml:"LocationConstraint"`
+	Xmlns   s3Namespace `xml:"xmlns,attr"`
 }
 
 // xmlVersioningConfiguration is the empty response body returned by
@@ -67,8 +67,8 @@ type xmlLocationConstraint struct {
 // envelope keeps clients that probe the endpoint happy without
 // promising features the orchestrator does not provide.
 type xmlVersioningConfiguration struct {
-	XMLName xml.Name `xml:"VersioningConfiguration"`
-	Xmlns   string   `xml:"xmlns,attr"`
+	XMLName xml.Name    `xml:"VersioningConfiguration"`
+	Xmlns   s3Namespace `xml:"xmlns,attr"`
 }
 
 // -------------------------------------------------------------------------
@@ -89,44 +89,20 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, buckets []string) (int
 		})
 	}
 
-	result := xmlListBucketsResult{
-		Xmlns: s3XMLNS,
+	return respondXML(w, xmlListBucketsResult{
 		Owner: xmlOwner{
 			ID:          "s3-orchestrator",
 			DisplayName: "s3-orchestrator",
 		},
 		Buckets: xmlBuckets{Bucket: entries},
-	}
-
-	return respondXML(w, result)
+	})
 }
 
 // handleHeadBucket returns 200 with an empty body to confirm the bucket
 // exists. The bucket is guaranteed to exist because auth already resolved it.
-func (s *Server) handleHeadBucket(w http.ResponseWriter) int {
+func (s *Server) handleHeadBucket(w http.ResponseWriter) (int, error) {
 	w.Header().Set(headerContentType, "application/xml")
 	w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
 	w.WriteHeader(http.StatusOK)
-	return http.StatusOK
-}
-
-// handleGetBucketLocation returns a canned LocationConstraint response.
-// Satisfies GET /{bucket}?location.
-func (s *Server) handleGetBucketLocation(w http.ResponseWriter) (int, error) {
-	result := xmlLocationConstraint{
-		Xmlns: s3XMLNS,
-	}
-
-	return respondXML(w, result)
-}
-
-// handleGetBucketVersioning returns an empty VersioningConfiguration to
-// indicate that versioning is not enabled. Many S3 client libraries probe
-// this endpoint on connect and error out without a response.
-func (s *Server) handleGetBucketVersioning(w http.ResponseWriter) (int, error) {
-	result := xmlVersioningConfiguration{
-		Xmlns: s3XMLNS,
-	}
-
-	return respondXML(w, result)
+	return http.StatusOK, nil
 }

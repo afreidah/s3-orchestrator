@@ -19,15 +19,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// classify builds a request and names the action it asks for. An empty key
-// selects the bucket vocabulary, matching how the router splits.
+// classify builds a request and names the action its target settles on, after
+// checking the path splits to key. An empty key selects the bucket vocabulary.
 func classify(t *testing.T, method, target, key string, headers map[string]string) Action {
 	t.Helper()
 	r := httptest.NewRequestWithContext(t.Context(), method, target, nil)
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
-	return Classify(r, key)
+	tg, ok := newTarget(r)
+	if !ok {
+		t.Fatalf("newTarget(%s %s) refused the path", method, target)
+	}
+	if tg.key != key {
+		t.Fatalf("newTarget(%s %s) key = %q, want %q", method, target, tg.key, key)
+	}
+	return tg.act
 }
 
 // copySource is the header that splits a write from a server-side copy.
@@ -244,6 +251,7 @@ func TestClassify_EveryActionIsReachable(t *testing.T) {
 		key     string
 		headers map[string]string
 	}{
+		{http.MethodGet, "/", "", nil},
 		{http.MethodHead, "/photos", "", nil},
 		{http.MethodGet, "/photos?versioning", "", nil},
 		{http.MethodGet, "/photos?location", "", nil},
@@ -271,7 +279,7 @@ func TestClassify_EveryActionIsReachable(t *testing.T) {
 	}
 
 	for _, act := range []Action{
-		ActionHeadBucket, ActionGetBucketVersioning, ActionGetBucketLocation,
+		ActionListBuckets, ActionHeadBucket, ActionGetBucketVersioning, ActionGetBucketLocation,
 		ActionListMultipartUpload, ActionListObjectsV1, ActionListObjectsV2,
 		ActionDeleteObjects, ActionGetObject, ActionHeadObject, ActionPutObject,
 		ActionCopyObject, ActionDeleteObject, ActionCreateMultipartUpload,

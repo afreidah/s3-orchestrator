@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // -------------------------------------------------------------------------
@@ -543,18 +542,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	})
 	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
-	spreadSrv := &s3api.Server{
-		Objects:   spreadStack.Objects,
-		Multipart: spreadStack.Multipart,
-	}
-	_ = spreadSrv
-	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
-		Name: virtualBucket,
-		Credentials: []config.CredentialConfig{{
-			AccessKeyID:     "test",
-			SecretAccessKey: "test",
-		}},
-	}}))
+	spreadSrv := newS3Server(t, spreadStack, virtualBucketFor("test", "test"))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)

@@ -42,6 +42,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -227,7 +228,7 @@ func TestQuotaSyncHook_FailedOnSyncError(t *testing.T) {
 // set, credentials and CORS rules, which is what makes adding a bucket or a
 // browser origin a reload rather than a restart.
 func TestProvisioningHook_ApplyInstalls(t *testing.T) {
-	inj, declared, srv := provisioningInjector(t)
+	inj, declared, registry := provisioningInjector(t)
 	h := &provisioningHook{inj: inj}
 
 	status, err := h.Apply(context.Background(), corsBucketConfig("https://app.example.com"))
@@ -237,19 +238,19 @@ func TestProvisioningHook_ApplyInstalls(t *testing.T) {
 	if !slices.Contains(declared.Names(), "photos") {
 		t.Errorf("declared = %v, want photos published", declared.Names())
 	}
-	if srv.GetBucketAuth() == nil {
+	if registry.Load() == nil {
 		t.Error("credential registry not installed")
 	}
 }
 
-// TestProvisioningHook_ApplyFailsOnBrokenServer proves a broken S3-server
+// TestProvisioningHook_ApplyFailsOnBrokenRegistry proves a broken registry
 // provider surfaces as HookFailed rather than being read as "feature off".
-func TestProvisioningHook_ApplyFailsOnBrokenServer(t *testing.T) {
+func TestProvisioningHook_ApplyFailsOnBrokenRegistry(t *testing.T) {
 	inj := do.New()
 	emptyProvisioningStore(t, inj)
 	do.ProvideValue(inj, provisioning.NewDeclared())
 	do.ProvideValue(inj, config.ModeAPI)
-	failingProvider[*s3api.Server](inj)
+	failingProvider[*auth.LiveRegistry](inj)
 	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
 	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), &config.Config{})
@@ -283,7 +284,7 @@ func TestRateLimitHook_FeatureDisabled(t *testing.T) {
 // registering a constructor that errors with the feature enabled.
 func TestRateLimitHook_FailedResolution(t *testing.T) {
 	inj := do.New()
-	failingProvider[*s3api.RateLimiter](inj)
+	failingProvider[*httputil.RateLimiter](inj)
 	h := &rateLimitHook{inj: inj}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = true
@@ -388,11 +389,11 @@ func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
 // pushes the new limits and returns HookApplied.
 func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 	inj := do.New()
-	rl := s3api.NewRateLimiter(config.RateLimitConfig{
+	rl := httputil.NewRateLimiter(config.RateLimitConfig{
 		RequestsPerSec: 1, Burst: 1, CleanupInterval: time.Minute, CleanupMaxAge: 5 * time.Minute,
 	})
 	t.Cleanup(rl.Close)
-	do.Provide(inj, func(do.Injector) (*s3api.RateLimiter, error) { return rl, nil })
+	do.Provide(inj, func(do.Injector) (*httputil.RateLimiter, error) { return rl, nil })
 	h := &rateLimitHook{inj: inj}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = true
@@ -471,16 +472,16 @@ func emptyProvisioningStore(t *testing.T, inj do.Injector) {
 
 // provisioningInjector registers everything the provisioning hook loads from
 // and installs into, in a mode serving S3, and returns the views a test reads.
-func provisioningInjector(t *testing.T) (do.Injector, *provisioning.Declared, *s3api.Server) {
+func provisioningInjector(t *testing.T) (do.Injector, *provisioning.Declared, *auth.LiveRegistry) {
 	t.Helper()
 	inj := do.New()
 	emptyProvisioningStore(t, inj)
-	declared, srv := provisioning.NewDeclared(), &s3api.Server{}
+	declared, registry := provisioning.NewDeclared(), auth.NewLiveRegistry(nil)
 	do.ProvideValue(inj, declared)
-	do.ProvideValue(inj, srv)
+	do.ProvideValue(inj, registry)
 	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
-	return inj, declared, srv
+	return inj, declared, registry
 }
 
 // TestProvisioningHook_CheckChangesNothing proves the Check pass publishes
@@ -497,13 +498,13 @@ func TestProvisioningHook_CheckChangesNothing(t *testing.T) {
 		"unreadable CORS rule": {corsBucketConfig("https://*.*.example.com"), true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			inj, declared, srv := provisioningInjector(t)
+			inj, declared, registry := provisioningInjector(t)
 			err := (&provisioningHook{inj: inj}).Check(tc.cfg)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Check = %v, want error %v", err, tc.wantErr)
 			}
-			if len(declared.Names()) != 0 || srv.GetBucketAuth() != nil {
-				t.Errorf("Check published: declared %v, registry %v", declared.Names(), srv.GetBucketAuth())
+			if len(declared.Names()) != 0 || registry.Load() != nil {
+				t.Errorf("Check published: declared %v, registry %v", declared.Names(), registry.Load())
 			}
 		})
 	}
@@ -513,9 +514,9 @@ func TestProvisioningHook_CheckChangesNothing(t *testing.T) {
 // directly, so a caller that skipped Check still cannot install a registry
 // built from an ambiguous credential.
 func TestProvisioningHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
-	inj, _, srv := provisioningInjector(t)
+	inj, _, registry := provisioningInjector(t)
 	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), duplicateKeyConfig())
-	if status != HookFailed || err == nil || srv.GetBucketAuth() != nil {
-		t.Fatalf("Apply = (%s, %v), registry %v; want failed and nothing installed", status, err, srv.GetBucketAuth())
+	if status != HookFailed || err == nil || registry.Load() != nil {
+		t.Fatalf("Apply = (%s, %v), registry %v; want failed and nothing installed", status, err, registry.Load())
 	}
 }

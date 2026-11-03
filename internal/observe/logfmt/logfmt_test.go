@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -120,6 +122,40 @@ func TestTransformAttr(t *testing.T) {
 	for _, tc := range cases {
 		if got := logfmt.TransformAttr(tc.in); !got.Equal(tc.want) {
 			t.Errorf("%s: TransformAttr = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestRequest verifies a request is named by method, path and client address
+// in that order, ahead of the caller's own attributes, and that RequestFrom
+// names the resolved client in place of the peer address.
+func TestRequest(t *testing.T) {
+	t.Parallel()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/photos/cat.jpg?x=1", nil)
+	r.RemoteAddr = "10.0.0.1:5000"
+	extra := slog.Int("status", 200)
+
+	for _, tc := range []struct {
+		name   string
+		got    []slog.Attr
+		client string
+	}{
+		{"Request", logfmt.Request(r, extra), "10.0.0.1:5000"},
+		{"RequestFrom", logfmt.RequestFrom(r, "203.0.113.50", extra), "203.0.113.50"},
+	} {
+		want := []slog.Attr{
+			slog.String("method", http.MethodPut),
+			slog.String("path", "/photos/cat.jpg"),
+			slog.String("client_addr", tc.client),
+			extra,
+		}
+		if len(tc.got) != len(want) {
+			t.Fatalf("%s = %v, want %v", tc.name, tc.got, want)
+		}
+		for i := range want {
+			if !tc.got[i].Equal(want[i]) {
+				t.Errorf("%s[%d] = %v, want %v", tc.name, i, tc.got[i], want[i])
+			}
 		}
 	}
 }

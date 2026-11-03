@@ -65,7 +65,7 @@ var (
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,
 		Code:       "NoSuchKey",
-		Message:    "object not found",
+		Message:    "The specified key does not exist.",
 	}
 
 	ErrMultipartUploadNotFound = &S3Error{

@@ -84,13 +84,15 @@ func ProvideDeclared(i do.Injector) (*provisioning.Declared, error) {
 	return declared, nil
 }
 
-// ProvideBucketAuth provides the credential registry the process starts with.
-func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
+// ProvideLiveRegistry provides the holder of the credential registry in force,
+// seeded with the one the process starts with. Every surface that
+// authenticates reads it; Install swaps it.
+func ProvideLiveRegistry(i do.Injector) (*auth.LiveRegistry, error) {
 	p, err := do.Invoke[*Provisioned](i)
 	if err != nil {
 		return nil, err
 	}
-	return p.registry, nil
+	return auth.NewLiveRegistry(p.registry), nil
 }
 
 // ProvideS3Server creates the S3-compatible HTTP handler.
@@ -99,13 +101,11 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	cfg := r.Resolve[*config.Config]()
 	objects := r.Resolve[*object.Manager]()
 	multipartManager := r.Resolve[*multipart.Manager]()
-	bucketAuth := r.Resolve[*auth.BucketRegistry]()
+	registry := r.Resolve[*auth.LiveRegistry]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	srv := s3api.NewServer(objects, multipartManager, cfg.Server.MaxObjectSize)
-	srv.SetBucketAuth(bucketAuth)
-	return srv, nil
+	return s3api.NewServer(objects, multipartManager, registry, cfg.Server.MaxObjectSize), nil
 }
 
 // ProvideCORS creates the browser CORS policy with the rules the process
@@ -122,12 +122,12 @@ func ProvideCORS(i do.Injector) (*cors.Policy, error) {
 }
 
 // ProvideRateLimiter creates the per-IP rate limiter.
-func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error) {
+func ProvideRateLimiter(i do.Injector) (*httputil.RateLimiter, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
 	}
-	rl := s3api.NewRateLimiter(cfg.RateLimit)
+	rl := httputil.NewRateLimiter(cfg.RateLimit)
 	slog.InfoContext(context.Background(), "rate limiting enabled",
 		logfmt.Component("di"),
 		"requests_per_sec", cfg.RateLimit.RequestsPerSec,
@@ -200,7 +200,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	reconciler := r.Resolve[*reconcile.Manager]()
 	opsSvc := r.Resolve[*ops.Services]()
 	declared := r.Resolve[*provisioning.Declared]()
-	srv := r.Resolve[*s3api.Server]()
+	registry := r.Resolve[*auth.LiveRegistry]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -214,7 +214,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Config:        live,
 		LogBuffer:     logBuffer,
 		LoginThrottle: loginThrottle,
-		Registry:      srv.GetBucketAuth,
+		Registry:      registry.Load,
 	}), nil
 }
 
@@ -264,7 +264,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	mode := r.Resolve[config.Mode]()
 	lm := r.Resolve[*lifecycle.Manager]()
 	logBuffer := r.Resolve[*telemetry.LogBuffer]()
-	srv := r.Resolve[*s3api.Server]()
+	registry := r.Resolve[*auth.LiveRegistry]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -283,7 +283,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		ObjectCache:  Optional[objcache.ObjectCache](i).Get(ctx),
 		FlightRec:    Optional[*debug.FlightRecorderService](i).Get(ctx).Recorder(),
 		Reconciler:   Optional[*worker.Reconciler](i).Get(ctx),
-		Registry:     srv.GetBucketAuth,
+		Registry:     registry.Load,
 		Config:       live,
 		LogLevel:     logLevel,
 		LogBuffer:    logBuffer,

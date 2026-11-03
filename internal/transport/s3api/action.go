@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -31,7 +32,9 @@ import (
 type Action string
 
 // The bucket-level operations, reached when a request names no object key.
+// ListBuckets names no bucket at all.
 const (
+	ActionListBuckets         Action = "ListBuckets"
 	ActionHeadBucket          Action = "HeadBucket"
 	ActionGetBucketVersioning Action = "GetBucketVersioning"
 	ActionGetBucketLocation   Action = "GetBucketLocation"
@@ -112,22 +115,61 @@ var requiredPermissions = map[Action]core.PermissionSet{
 
 // RequiredPermissions reports what a grant must carry for an action. Unknown and
 // unsupported actions need nothing, so they get 501 or 405 rather than 403.
+// ListBuckets needs nothing either: its answer lists only what the caller reaches.
 func RequiredPermissions(act Action) core.PermissionSet {
 	return requiredPermissions[act]
+}
+
+// -------------------------------------------------------------------------
+// REQUEST TARGET
+// -------------------------------------------------------------------------
+
+// target is what a request addresses, settled once before dispatch: the action,
+// the bucket and key in the client's terms, the internal key they are stored
+// under, the upload a multipart action names, and the parsed query. Handlers
+// read these rather than the URL, so none of them parses it again.
+type target struct {
+	act         Action
+	bucket      string
+	key         string
+	internalKey string
+	uploadID    string
+	query       url.Values
+}
+
+// newTarget settles what r addresses, or reports false for a path naming no
+// bucket. A GET of the root is ListBuckets, which names no bucket.
+func newTarget(r *http.Request) (*target, bool) {
+	query := r.URL.Query()
+	if r.URL.Path == "/" && r.Method == http.MethodGet {
+		return &target{act: ActionListBuckets, query: query}, true
+	}
+	bucket, key, ok := parsePath(r.URL.Path)
+	if !ok {
+		return nil, false
+	}
+	return &target{
+		act:         classifyAction(r.Method, query, key, r.Header.Get(headerCopySource) != ""),
+		bucket:      bucket,
+		key:         key,
+		internalKey: internalkey.Make(bucket, key),
+		uploadID:    query.Get("uploadId"),
+		query:       query,
+	}, true
 }
 
 // -------------------------------------------------------------------------
 // CLASSIFICATION
 // -------------------------------------------------------------------------
 
-// Classify names the operation a request asks for. An empty key selects the
-// bucket operations; the copy-source header separates CopyObject from PutObject.
-func Classify(r *http.Request, key string) Action {
-	query := r.URL.Query()
+// classifyAction names the operation a request asks for. An empty key selects
+// the bucket operations; the copy-source header separates CopyObject from
+// PutObject.
+func classifyAction(method string, query url.Values, key string, hasCopySource bool) Action {
 	if key == "" {
-		return classifyBucket(r.Method, query)
+		return classifyBucket(method, query)
 	}
-	return classifyObject(r.Method, query, r.Header.Get(headerCopySource) != "")
+	return classifyObject(method, query, hasCopySource)
 }
 
 // classifyBucket names a bucket-level operation.

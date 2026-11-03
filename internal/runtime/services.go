@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -82,7 +83,7 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 	r.Resolve[*s3api.Server]()
 	b.lifecyc = r.Resolve[*lifecycle.Manager]()
 	if cfg.RateLimit.Enabled {
-		r.Resolve[*s3api.RateLimiter]()
+		r.Resolve[*httputil.RateLimiter]()
 	}
 	if err := r.Err(); err != nil {
 		return b, err

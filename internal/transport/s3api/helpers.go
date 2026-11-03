@@ -1,10 +1,11 @@
 // -------------------------------------------------------------------------------
-// Helpers - Path Parsing and Error Formatting
+// Helpers - Request Guards, Path Parsing and XML Responses
 //
 // Author: Alex Freidah
 //
-// Utility functions for the server package. Handles URL path parsing for S3-style
-// bucket/key extraction and S3-compatible XML error response formatting.
+// Utility functions for the server package. Guards return the S3 error a
+// refusal answers with and never write; classifyError and fail turn every
+// handler failure into its S3 XML response, and writeXML writes every document.
 // -------------------------------------------------------------------------------
 
 package s3api
@@ -23,10 +24,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
-
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
 // xmlBufPool reuses bytes.Buffer instances for XML response encoding,
@@ -73,35 +74,49 @@ const headerCopySourceRange = "x-amz-copy-source-range"
 // REQUEST GUARDS
 // -------------------------------------------------------------------------
 
-// enforceContentLength applies the standard guard for any S3 PUT-style
-// handler: reject missing Content-Length with 411, reject oversized payloads
-// with 413, and otherwise wrap the body in MaxBytesReader. label ("Object",
-// "Part") prefixes the error message. When ok is false the response has
-// already been written and the caller must return (status, error) unchanged.
-func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64, label string) (int, error, bool) {
-	if r.ContentLength < 0 {
-		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", label+" Content-Length is required")
-		return http.StatusLengthRequired, fmt.Errorf("missing Content-Length"), false
+// checkSize refuses a body of size bytes over the configured object ceiling.
+// what names the body in the message: an object, a part, or an assembly.
+func (s *Server) checkSize(size int64, what string) error {
+	if s.MaxObjectSize > 0 && size > s.MaxObjectSize {
+		return fmt.Errorf("%w (%d bytes, limit %d)", s3Err(http.StatusRequestEntityTooLarge,
+			"EntityTooLarge", what+" size exceeds the maximum allowed size"), size, s.MaxObjectSize)
 	}
-	if maxSize > 0 && r.ContentLength > maxSize {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", label+" size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("%s size %d exceeds max %d", label, r.ContentLength, maxSize), false
-	}
-	if maxSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, maxSize)
-	}
-	return 0, nil, true
+	return nil
 }
 
-// uploadHeaders reads the content type and user metadata a new object carries.
-// When ok is false the MetadataTooLarge response has already been written.
-func uploadHeaders(w http.ResponseWriter, r *http.Request) (contentType string, meta map[string]string, status int, err error, ok bool) {
+// acceptBody refuses an upload body without a Content-Length or over the
+// object ceiling, and caps what is read of one it accepts at that ceiling.
+func (s *Server) acceptBody(w http.ResponseWriter, r *http.Request, what string) error {
+	if r.ContentLength < 0 {
+		return s3Err(http.StatusLengthRequired, "MissingContentLength", what+" Content-Length is required")
+	}
+	if err := s.checkSize(r.ContentLength, what); err != nil {
+		return err
+	}
+	if s.MaxObjectSize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.MaxObjectSize)
+	}
+	return nil
+}
+
+// uploadHeaders reads the content type and user metadata a new object carries,
+// refusing metadata S3 would refuse.
+func uploadHeaders(r *http.Request) (contentType string, meta map[string]string, err error) {
 	meta = extractUserMetadata(r.Header)
 	if err := validateUserMetadata(meta); err != nil {
-		writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
-		return "", nil, http.StatusBadRequest, err, false
+		return "", nil, s3Err(http.StatusBadRequest, "MetadataTooLarge", err.Error())
 	}
-	return cmp.Or(r.Header.Get(headerContentType), "application/octet-stream"), meta, 0, nil, true
+	return cmp.Or(r.Header.Get(headerContentType), "application/octet-stream"), meta, nil
+}
+
+// queryCount reads a non-negative count from the query, refusing a malformed
+// one as S3 does with InvalidArgument.
+func queryCount(t *target, param string, def, ceiling int) (int, error) {
+	n, err := httputil.QueryCount(t.query, param, def, ceiling)
+	if err != nil {
+		return 0, s3Err(http.StatusBadRequest, "InvalidArgument", err.Error())
+	}
+	return n, nil
 }
 
 // -------------------------------------------------------------------------
@@ -214,13 +229,6 @@ func parsePath(path string) (bucket string, key string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// invalidArgument refuses a request whose query parameter S3 would reject,
-// carrying err's message as the InvalidArgument response body.
-func invalidArgument(w http.ResponseWriter, err error) (int, error) {
-	writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
-	return http.StatusBadRequest, err
-}
-
 // Query keys an object request may carry. S3 selects the operation from the
 // query string, not just the method, so a key absent from this set names an
 // operation this server does not implement. It is an allow-list so that an
@@ -295,63 +303,86 @@ func unsupportedQuery(query url.Values, allowed map[string]bool, prefixes []stri
 }
 
 // -------------------------------------------------------------------------
-// RESPONSE HELPERS
+// ERROR RESPONSES
 // -------------------------------------------------------------------------
-
-// writeS3Error sends an S3-style XML error response with Content-Length.
-func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
-	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>%s</Code>
-  <Message>%s</Message>
-</Error>`, xmlEscape(errCode), xmlEscape(message))
-	w.Header().Set(headerContentType, "application/xml")
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.WriteHeader(code)
-	_, _ = io.WriteString(w, body) //nolint:gosec // G705: output is XML-escaped via xmlEscape before writing
-}
 
 // s3CodeAccessDenied is the S3 error code a refused request carries.
 const s3CodeAccessDenied = "AccessDenied"
 
-// WriteS3Error writes an S3 XML error. It matches httputil.ErrorWriter so the
-// panic-recovery middleware can use it directly.
-func WriteS3Error(w http.ResponseWriter, code int, errCode, message string) {
-	writeS3Error(w, code, errCode, message)
+// errInternal is the answer to a failure no S3 error describes. The client is
+// never shown the internal message; the request log keeps it.
+var errInternal = s3Err(http.StatusBadGateway, "InternalError", "We encountered an internal error. Please try again.")
+
+// s3Err builds the S3 error a refusal answers with. A guard wraps it with the
+// specifics the request log keeps, which the client does not see.
+func s3Err(status int, code, message string) *core.S3Error {
+	return &core.S3Error{StatusCode: status, Code: code, Message: message}
 }
 
-// xmlReplacer escapes special XML characters. Allocated once at package level
-// to avoid per-call allocation.
-var xmlReplacer = strings.NewReplacer(
-	"&", "&amp;",
-	"<", "&lt;",
-	">", "&gt;",
-	`"`, "&quot;",
-	"'", "&apos;",
-)
-
-// xmlEscape escapes special XML characters.
-func xmlEscape(s string) string {
-	return xmlReplacer.Replace(s)
+// classifyError names the S3 error a failure answers with, and the streaming
+// rejection reason the metrics count it under when it is one. Tag validation
+// keeps its own message, which names the offending value. Anything else not
+// carrying an S3 error is errInternal.
+func classifyError(err error) (*core.S3Error, string) {
+	if fault, ok := asStreamingFault(err); ok {
+		return fault.s3, fault.reason
+	}
+	switch {
+	case errors.Is(err, core.ErrTooManyTags):
+		return s3Err(http.StatusBadRequest, "BadRequest", err.Error()), ""
+	case errors.Is(err, errInvalidTaggingDirective):
+		return s3Err(http.StatusBadRequest, "InvalidArgument", err.Error()), ""
+	case core.IsTagValidationError(err):
+		return s3Err(http.StatusBadRequest, "InvalidTag", err.Error()), ""
+	}
+	if s3e, ok := errors.AsType[*core.S3Error](err); ok {
+		return s3e, ""
+	}
+	return errInternal, ""
 }
 
-// writeStorageError checks if err is an *storage.S3Error and writes the
-// appropriate S3 XML error response. Streaming-validation failures take
-// precedence so a tampered chunk surfaces as 403 SignatureDoesNotMatch
-// rather than the generic InternalError fallback. Returns the HTTP
-// status code used.
-func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int {
-	if status, code, msg, reason, ok := streamingErrorResponse(err); ok {
+// fail writes err as the S3 error it classifies as and returns that status.
+// Every handler failure reaches the client through here.
+func fail(w http.ResponseWriter, err error) int {
+	s3e, reason := classifyError(err)
+	if reason != "" {
 		telemetry.AuthStreamingRejectionsTotal.WithLabelValues(reason).Inc()
-		writeS3Error(w, status, code, msg)
-		return status
 	}
-	if s3err, ok := errors.AsType[*core.S3Error](err); ok {
-		writeS3Error(w, s3err.StatusCode, s3err.Code, s3err.Message)
-		return s3err.StatusCode
-	}
-	writeS3Error(w, http.StatusBadGateway, "InternalError", fallbackMsg)
-	return http.StatusBadGateway
+	WriteS3Error(w, s3e.StatusCode, s3e.Code, s3e.Message)
+	return s3e.StatusCode
+}
+
+// errorDocument is the S3 XML error body.
+type errorDocument struct {
+	XMLName xml.Name `xml:"Error"`
+	Code    string   `xml:"Code"`
+	Message string   `xml:"Message"`
+}
+
+// WriteS3Error writes an S3 XML error. It matches httputil.ErrorWriter, so the
+// middleware in front of the S3 API refuses in the format its clients read.
+func WriteS3Error(w http.ResponseWriter, status int, code, message string) {
+	_, _ = writeXML(w, status, errorDocument{Code: code, Message: message})
+}
+
+// -------------------------------------------------------------------------
+// XML DOCUMENTS
+// -------------------------------------------------------------------------
+
+// s3Namespace is the xmlns attribute of every S3 response document. It always
+// marshals as the S3 schema namespace, so a document declaring the field needs
+// nothing set; v2 SDK clients do not deserialize a document without it.
+type s3Namespace struct{}
+
+// MarshalXMLAttr writes the S3 schema namespace.
+func (s3Namespace) MarshalXMLAttr(xml.Name) (xml.Attr, error) {
+	return xml.Attr{Name: xml.Name{Local: "xmlns"}, Value: s3XMLNS}, nil
+}
+
+// UnmarshalXMLAttr accepts the namespace when a document is read back. It
+// carries nothing to keep.
+func (*s3Namespace) UnmarshalXMLAttr(xml.Attr) error {
+	return nil
 }
 
 // Request-body ceilings for the two XML control-plane operations. Both sit
@@ -363,19 +394,18 @@ const (
 	maxCompleteMultipartBody = 2 << 20
 )
 
-// decodeXMLBody reads exactly one XML document from the request body into v,
-// writes the matching S3 error response on failure, and returns the status it
-// used. Trailing content after the document is refused, so the server never
-// acts on something other than what an upstream inspector saw.
+// decodeXMLBody reads exactly one XML document from the request body into v.
+// Trailing content after the document is refused, so the server never acts on
+// something other than what an upstream inspector saw.
 //
 // It uses MaxBytesReader rather than io.LimitReader, which would silently
 // truncate an oversized body and could accept a prefix that happens to be a
 // complete document.
-func decodeXMLBody(w http.ResponseWriter, r *http.Request, limit int64, v any) (int, error) {
+func decodeXMLBody(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
 	dec := xml.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 
 	if err := dec.Decode(v); err != nil {
-		return xmlBodyError(w, err)
+		return xmlBodyError(err)
 	}
 
 	// Walk what remains rather than decoding again: a second Decode skips
@@ -385,57 +415,51 @@ func decodeXMLBody(w http.ResponseWriter, r *http.Request, limit int64, v any) (
 	for {
 		tok, err := dec.Token()
 		if errors.Is(err, io.EOF) {
-			return http.StatusOK, nil
+			return nil
 		}
 		if err != nil {
-			return xmlBodyError(w, err)
+			return xmlBodyError(err)
 		}
 		text, isText := tok.(xml.CharData)
 		if !isText || len(bytes.TrimSpace(text)) > 0 {
-			writeS3Error(w, http.StatusBadRequest, "MalformedXML",
-				"Request body must contain exactly one XML document")
-			return http.StatusBadRequest, errors.New("trailing content after XML document")
+			return s3Err(http.StatusBadRequest, "MalformedXML", "Request body must contain exactly one XML document")
 		}
 	}
 }
 
-// xmlBodyError renders a request-body failure, separating a body that ran past
-// its ceiling from one that is simply not valid XML. A LimitReader could not
-// tell those apart, so an oversized request was reported as malformed.
-func xmlBodyError(w http.ResponseWriter, err error) (int, error) {
-	if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "MaxMessageLengthExceeded",
-			"Request body exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("request body over %d bytes: %w", maxErr.Limit, err)
+// xmlBodyError separates a request body that ran past its ceiling from one
+// that is simply not valid XML. A LimitReader could not tell those apart, so an
+// oversized request was reported as malformed.
+func xmlBodyError(err error) error {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return fmt.Errorf("%w: %w", s3Err(http.StatusRequestEntityTooLarge, "MaxMessageLengthExceeded",
+			"Request body exceeds the maximum allowed size"), err)
 	}
-	writeS3Error(w, http.StatusBadRequest, "MalformedXML", "Failed to parse request body")
-	return http.StatusBadRequest, fmt.Errorf("decode request body: %w", err)
+	return fmt.Errorf("%w: %w", s3Err(http.StatusBadRequest, "MalformedXML", "Failed to parse request body"), err)
 }
 
-// writeXML writes an S3-compatible XML response with the standard XML header.
-// Encodes to a pooled buffer first so a serialization error doesn't commit a
-// success status to the client.
-func writeXML(w http.ResponseWriter, status int, v any) error {
+// writeXML encodes v as a document and writes it with status. The document is
+// encoded to a pooled buffer before anything is sent, so an encoding failure
+// leaves the response unwritten and reports status zero for the caller to fail.
+func writeXML(w http.ResponseWriter, status int, v any) (int, error) {
 	buf := xmlBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer xmlBufPool.Put(buf)
 
 	buf.WriteString(xml.Header)
 	if err := xml.NewEncoder(buf).Encode(v); err != nil {
-		return err
+		return 0, fmt.Errorf("encode XML response: %w", err)
 	}
 	w.Header().Set(headerContentType, "application/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	w.WriteHeader(status)
-	_, err := w.Write(buf.Bytes())
-	return err
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return status, fmt.Errorf("write XML response: %w", err)
+	}
+	return status, nil
 }
 
-// respondXML writes v as a 200 XML response and returns the status and error
-// a handler reports for it. The request log names the operation, so the error
-// needs no label of its own.
+// respondXML writes v as a 200 XML response.
 func respondXML(w http.ResponseWriter, v any) (int, error) {
-	if err := writeXML(w, http.StatusOK, v); err != nil {
-		return http.StatusOK, fmt.Errorf("write XML response: %w", err)
-	}
-	return http.StatusOK, nil
+	return writeXML(w, http.StatusOK, v)
 }

@@ -27,7 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // newSharedInstance builds one API instance through the production injector
@@ -93,9 +93,9 @@ func TestProvisioning_CredentialReachesEveryInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve ops: %v", err)
 	}
-	srv, err := do.Invoke[*s3api.Server](reader)
+	registry, err := do.Invoke[*auth.LiveRegistry](reader)
 	if err != nil {
-		t.Fatalf("resolve reader server: %v", err)
+		t.Fatalf("resolve reader registry: %v", err)
 	}
 
 	ctx := context.Background()
@@ -110,7 +110,7 @@ func TestProvisioning_CredentialReachesEveryInstance(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, err := srv.GetBucketAuth().AuthenticateSecret(cred.AccessKeyID, cred.Secret); err == nil {
+		if _, err := registry.Load().AuthenticateSecret(cred.AccessKeyID, cred.Secret); err == nil {
 			return
 		}
 		if time.Now().After(deadline) {

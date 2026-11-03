@@ -37,7 +37,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // -------------------------------------------------------------------------
@@ -96,13 +95,7 @@ func setupCompressionEnv(t *testing.T) *compressionEnv {
 	})
 	registerStack(t, st)
 
-	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name:        virtualBucket,
-			Credentials: []config.CredentialConfig{{AccessKeyID: "test", SecretAccessKey: "test"}},
-		},
-	}))
+	srv := newS3Server(t, st, virtualBucketFor("test", "test"))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

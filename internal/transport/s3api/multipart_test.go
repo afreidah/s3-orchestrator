@@ -731,15 +731,11 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := NewServer(st.Objects, st.Multipart, 10*1024*1024)
-	buckets := []config.BucketConfig{{
+	ts := httptest.NewServer(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,
 		Credentials:         []config.CredentialConfig{testCredential()},
-	}}
-	srv.SetBucketAuth(mustBucketRegistry(t, buckets))
-
-	ts := httptest.NewServer(srv)
+	}}), 10*1024*1024))
 	t.Cleanup(ts.Close)
 	return ts, mockStore
 }
@@ -1086,5 +1082,31 @@ func TestParseCopySourceRange_Classification(t *testing.T) {
 			t.Errorf("parseCopySourceRange(%q) = (%q, %d), want (%q, %d)",
 				tc.spec, hdr, size, tc.wantHdr, tc.wantSize)
 		}
+	}
+}
+
+// TestCompleteMultipartUpload_IfNoneMatchStarChecksTheStoredKey verifies the
+// completion's `If-None-Match: *` looks for an existing object under the key it
+// is stored as, so an upload completing over an existing object is refused
+// before anything is assembled.
+func TestCompleteMultipartUpload_IfNoneMatchStarChecksTheStoredKey(t *testing.T) {
+	t.Parallel()
+	ts, objects, multipart := newOpsServer(t)
+	multipart.EXPECT().GetParts(gomock.Any(), "mybucket", "testkey", "upload-1").Return(nil, nil)
+	objects.EXPECT().ObjectExists(gomock.Any(), "mybucket/testkey").Return(true, nil)
+
+	body := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"e1"</ETag></Part></CompleteMultipartUpload>`
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader(body))
+	req.Header.Set("If-None-Match", "*")
+	signRequest(t, req)
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412", resp.StatusCode)
 	}
 }

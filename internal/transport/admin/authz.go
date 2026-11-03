@@ -17,9 +17,11 @@ package admin
 
 import (
 	"cmp"
+	"log/slog"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -74,8 +76,7 @@ func (h *Handler) guard(rt *route) http.HandlerFunc {
 		w.Header().Set(adminapi.HeaderInstance, h.d.Instance.ID)
 		who, ok := h.authenticate(r)
 		if !ok {
-			h.log.WarnContext(r.Context(), "unauthorized request",
-				"path", r.URL.Path, "client_addr", r.RemoteAddr)
+			h.log.LogAttrs(r.Context(), slog.LevelWarn, "unauthorized request", logfmt.Request(r)...)
 			httputil.WriteJSONError(w, http.StatusUnauthorized, msgUnauthorized)
 			return
 		}

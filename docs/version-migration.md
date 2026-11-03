@@ -64,6 +64,19 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**One S3 dispatch, error mapping and XML writer ([#1858](https://github.com/afreidah/s3-orchestrator/issues/1858), v0.179.8)**
+
+Log queries and alerts that read S3 refusals need updating.
+
+- A missing key answers `NoSuchKey` with AWS's message, `The specified key does not exist.`, on every route. GET and HEAD used to say `object not found`.
+- An S3 failure no S3 error describes answers `502 InternalError` with AWS's generic message. It used to carry a per-operation one such as `Failed to store object`.
+- `s3.BucketDenied` and `s3.ActionDenied` audit entries carry the same attributes as `admin.ActionDenied`: `method`, `path`, `client_addr`, `operation`, `resource`, `required`, `held` and `reason`. `requested_bucket` and `bucket` are now `resource` (as `bucket:<name>`), and the entries no longer carry `duration`. Both warnings read `request not permitted by grant`.
+- `s3.RateLimitRejected` and `admin.RateLimitRejected` name the client as `client_addr`. It used to be `client_ip`. `s3.LoadShed`, `s3.AdmissionRejected` and `http.PanicRecovered` gain `client_addr`.
+- `PutObjectTagging` and `DeleteObjectTagging` write one audit entry each. They used to write a second one under the same event name.
+- A `CompleteMultipartUpload` carrying `If-None-Match: *` is refused with `412` when the key already holds an object. The check used to look up the wrong key and never refuse.
+- A panic in a dashboard route answers a JSON `500` with a request ID and counts under `s3o_http_panic_recovered_total{route="ui"}`. It used to reset the connection.
+- Every S3 XML response carries `Content-Length`.
+
 **One copy loop, charged probe reads ([#1857](https://github.com/afreidah/s3-orchestrator/issues/1857), [#1825](https://github.com/afreidah/s3-orchestrator/issues/1825), v0.179.7)**
 
 - A backend-to-backend copy refuses a source whose bytes are not the size its row records. Replication and CopyObject move on to the next copy; a rebalance or drain move and a stored-form rewrite stop for that object instead of placing damaged bytes.

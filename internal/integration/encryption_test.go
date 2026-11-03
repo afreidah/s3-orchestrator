@@ -103,15 +103,8 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 	workers := proxytest.BuildWorkers(st, stores)
 
 	// Start proxy server
-	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{AccessKeyID: "test", SecretAccessKey: "test"},
-			},
-		},
-	}))
+	registry := auth.NewLiveRegistry(mustBucketRegistry(t, []config.BucketConfig{virtualBucketFor("test", "test")}))
+	srv := s3api.NewServer(st.Objects, st.Multipart, registry, 0)
 
 	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -147,7 +140,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		StateStore: testStore,
 		DBHealthy:  testDatabaseCB.IsHealthy,
 		Cleanup:    testStore,
-		Registry:   func() *auth.BucketRegistry { return srv.GetBucketAuth() },
+		Registry:   registry.Load,
 		Config:     st.Config,
 		LogLevel:   &lv,
 	})

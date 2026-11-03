@@ -68,13 +68,10 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := NewServer(st.Objects, st.Multipart, 10*1024*1024)
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
+	ts := httptest.NewServer(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{
 		{Name: "bucket-a", Credentials: []config.CredentialConfig{bucketACredential}},
 		{Name: "bucket-b", Credentials: []config.CredentialConfig{bucketBCredential}},
-	}))
-
-	ts := httptest.NewServer(srv)
+	}), 10*1024*1024))
 	t.Cleanup(ts.Close)
 	return ts, mockStore
 }
