@@ -1554,8 +1554,8 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 
 	store, _ := copyObjectStore(t,
 		[]core.ObjectLocation{
-			{ObjectKey: "src", BackendName: "ghost"}, // unknown -> skip branch
-			{ObjectKey: "src", BackendName: "b1"},    // real -> succeeds
+			{ObjectKey: "src", BackendName: "ghost", SizeBytes: 7}, // unknown -> skip branch
+			{ObjectKey: "src", BackendName: "b1", SizeBytes: 7},    // real -> succeeds
 		}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
@@ -1580,7 +1580,7 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
+		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
 	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
@@ -1606,7 +1606,7 @@ func TestCopyObject_Success(t *testing.T) {
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
@@ -1618,13 +1618,6 @@ func TestCopyObject_Success(t *testing.T) {
 	}
 	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found")
-	}
-	// Regression pin for #815: the body handed to the destination
-	// PutObject must satisfy io.Seeker so the AWS SDK stays on the
-	// non-streaming UNSIGNED-PAYLOAD path and preserves Content-Length.
-	// A pipe-based body broke OCI with HTTP 411 MissingContentLength.
-	if !be.LastPutBodySeekable {
-		t.Error("PutObject body was not seekable; would break OCI with HTTP 411")
 	}
 }
 
@@ -1638,7 +1631,7 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	be := backendtest.NewInMemory()
 	be.CopyEnabled = true
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
-	be.LastPutBodySeekable = false // reset so we can detect a no-PUT fast path
+	be.PutCalls = 0 // reset so the fast path's skipped PUT is visible
 
 	store, _ := copyObjectStore(t,
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
@@ -1654,18 +1647,16 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found")
 	}
-	calls := be.CopyCallCount()
-	puttedBody := be.PutBodyWasSeekable()
-	if calls != 1 {
+	if calls := be.CopyCallCount(); calls != 1 {
 		t.Errorf("native copyCalls = %d, want 1", calls)
 	}
-	if puttedBody {
-		t.Error("PutObject ran; fast path should have skipped materialize+PUT")
+	if puts := be.PutCallCount(); puts != 0 {
+		t.Errorf("PutObject ran %d times; the fast path should skip the stream copy", puts)
 	}
 }
 
 // TestCopyObject_NativeRecordFailure_NoFallback asserts a native copy whose
-// commit fails surfaces the error without falling back to a materialized copy,
+// commit fails surfaces the error without falling back to a stream copy,
 // and leaves the copied bytes under their intent for the reaper.
 func TestCopyObject_NativeRecordFailure_NoFallback(t *testing.T) {
 	t.Parallel()
@@ -1676,7 +1667,7 @@ func TestCopyObject_NativeRecordFailure_NoFallback(t *testing.T) {
 	c := &objectsCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
+		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
 	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
@@ -1690,7 +1681,7 @@ func TestCopyObject_NativeRecordFailure_NoFallback(t *testing.T) {
 		t.Errorf("native copyCalls = %d, want 1", got)
 	}
 	if len(c.recordObject) != 1 {
-		t.Errorf("RecordObject calls = %d, want 1 (no materialized fallback)", len(c.recordObject))
+		t.Errorf("RecordObject calls = %d, want 1 (no stream-copy fallback)", len(c.recordObject))
 	}
 	if !be.HasCopyOf("dst") {
 		t.Error("copied bytes should stay for the reaper to resolve")
@@ -1698,19 +1689,18 @@ func TestCopyObject_NativeRecordFailure_NoFallback(t *testing.T) {
 }
 
 // TestCopyObject_FastPathFallsBackOnNativeError verifies the fast path
-// gracefully falls back to materialized copy when native CopyObject
-// returns an error. The destination must still end up populated via
-// the slow path.
+// gracefully falls back to a stream copy when native CopyObject returns an
+// error. The destination must still end up populated via the slow path.
 func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.CopyEnabled = true
 	be.CopyErr = errors.New("simulated native copy failure")
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
-	be.LastPutBodySeekable = false
+	be.PutCalls = 0
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
@@ -1719,9 +1709,8 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found after fallback")
 	}
-	puttedBody := be.PutBodyWasSeekable()
-	if !puttedBody {
-		t.Error("expected materialized PUT after native-copy fallback")
+	if be.PutCallCount() != 1 {
+		t.Error("expected a stream-copy PUT after native-copy fallback")
 	}
 }
 
@@ -1738,8 +1727,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testin
 	// so the backend has to land it rather than the test seeding it.
 	be.CopyLandsBeforeErr = true
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
-	// Reset the seekable flag so a materialized PUT would flip it true.
-	be.LastPutBodySeekable = false
+	be.PutCalls = 0
 
 	store, _ := copyObjectStore(t,
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
@@ -1752,16 +1740,15 @@ func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testin
 	if etag == "" {
 		t.Error("expected non-empty etag from HEAD-probe recovery")
 	}
-	puttedBody := be.PutBodyWasSeekable()
-	if puttedBody {
-		t.Error("materialized PUT ran; HEAD probe should have suppressed the fallback")
+	if be.PutCallCount() != 0 {
+		t.Error("stream-copy PUT ran; HEAD probe should have suppressed the fallback")
 	}
 }
 
 // TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack pins the
 // other side of the #884 contract: when native CopyObject errors and
 // the HEAD probe shows the destination is absent, the orchestrator
-// falls back to materialized copy. The destination must still end up
+// falls back to a stream copy. The destination must still end up
 // populated.
 func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 	t.Parallel()
@@ -1770,27 +1757,26 @@ func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 	be.CopyErr = errors.New("simulated network error")
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 	// No dst pre-populated: the probe sees 404 and falls back.
-	be.LastPutBodySeekable = false
+	be.PutCalls = 0
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
 	if !be.HasCopyOf("dst") {
-		t.Error("destination object not found after materialized fallback")
+		t.Error("destination object not found after stream-copy fallback")
 	}
-	puttedBody := be.PutBodyWasSeekable()
-	if !puttedBody {
-		t.Error("expected materialized PUT after probe returned 404")
+	if be.PutCallCount() != 1 {
+		t.Error("expected a stream-copy PUT after probe returned 404")
 	}
 }
 
 // TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack asserts that
 // when the HEAD probe finds the destination at a different size than the
-// source, the copy falls back to the materialized path.
+// source, the copy falls back to a stream copy.
 func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1800,18 +1786,17 @@ func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
 	// Pre-populate dst with a different size to simulate "something
 	// else is already at this key."
 	_, _ = be.PutObject(context.Background(), "dst", bytes.NewReader([]byte("different-content")), 17, "text/plain", nil)
-	be.LastPutBodySeekable = false
+	be.PutCalls = 0
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
-	puttedBody := be.PutBodyWasSeekable()
-	if !puttedBody {
-		t.Error("expected materialized PUT after size-mismatch probe")
+	if be.PutCallCount() != 1 {
+		t.Error("expected a stream-copy PUT after size-mismatch probe")
 	}
 }
 
@@ -1828,7 +1813,7 @@ func TestCopyObject_FastPathSkippedCrossBackend(t *testing.T) {
 	dst.CopyEnabled = true // destination supports native copy, but source is elsewhere
 
 	store, storeCalls := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 5}}, nil)
 	// b1 holds the source and has no room, so its claim is declined, the copy
 	// lands on b2, and the cross-backend path is the one under test.
 	storeCalls.full = map[string]bool{"b1": true}
@@ -2020,7 +2005,7 @@ func TestCopyObject_BackendTimeout_DestPutSlow(t *testing.T) {
 	slowDst := &slowMockBackend{InMemory: dstBE, delay: 200 * time.Millisecond}
 
 	store, copyCalls := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 7}}, nil)
 	// destination under test.
 	copyCalls.full = map[string]bool{"b1": true}
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBE, "b2": slowDst}, &fleetOpts{

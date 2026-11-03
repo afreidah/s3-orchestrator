@@ -37,7 +37,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 		return res, nil
 	}
 
-	result, backendName, err := o.failover.Read(ctx, "HeadObject", key, locs, lookupErr,
+	result, backendName, err := o.failover.Read(ctx, s3op.HeadObject, key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
 			if !o.core.Acct().Allow(beName, s3op.HeadObject, 0, 0) {
@@ -124,11 +124,13 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 	}
 
 	res := &s3be.HeadObjectResult{
-		Size:         loc.ObjectSize(),
-		ContentType:  loc.Identity.ContentType,
-		ETag:         loc.Identity.ETag,
-		LastModified: loc.CreatedAt,
-		Metadata:     loc.Identity.UserMetadata,
+		Size: loc.ObjectSize(),
+		ObjectAttrs: s3be.ObjectAttrs{
+			ContentType:  loc.Identity.ContentType,
+			ETag:         loc.Identity.ETag,
+			LastModified: loc.CreatedAt,
+			Metadata:     loc.Identity.UserMetadata,
+		},
 	}
 	telemetry.HeadServedFromMetadataTotal.Inc()
 	pobserve.HeadCompleted(ctx, key, "metadata", res.Size)

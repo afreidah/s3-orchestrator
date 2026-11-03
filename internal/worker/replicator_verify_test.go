@@ -353,7 +353,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, target: dstBe})
 	ops.EXPECT().GetBackend(target).Return(dstBe, nil).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
-		Return(int64(0), nil)
+		Return("", nil)
 	ops.EXPECT().Get(gomock.Any(), gomock.Any(), dstBe, gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(readBack)),
 		Size: int64(len(readBack)),
@@ -400,9 +400,9 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 	// written to rather than the object's key.
 	var wrote string
 	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
-		DoAndReturn(func(_ context.Context, req *backend.CopyRequest) (int64, error) {
+		DoAndReturn(func(_ context.Context, req *backend.CopyRequest) (string, error) {
 			wrote = req.DstKey
-			return 0, nil
+			return "", nil
 		})
 	ops.EXPECT().Get(gomock.Any(), gomock.Any(), dstBe, gomock.Cond(func(key string) bool { return key == wrote }), "").
 		Return(&backend.GetObjectResult{
@@ -446,7 +446,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
 	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
-		Return(int64(0), nil)
+		Return("", nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
 	// No read-back: the source carries no hash, so there is nothing to check.

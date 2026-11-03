@@ -19,9 +19,18 @@ import (
 	"time"
 )
 
-// MaxPartNumber is the highest part number S3 allows, so it also bounds how
-// many parts one upload can hold.
-const MaxPartNumber = 10000
+// MinPartNumber and MaxPartNumber are the part numbers S3 allows. The maximum
+// also bounds how many parts one upload can hold.
+const (
+	MinPartNumber = 1
+	MaxPartNumber = 10000
+)
+
+// ValidPartNumber reports whether n is a part number S3 allows. Every layer
+// that accepts a part number checks it here.
+func ValidPartNumber(n int) bool {
+	return n >= MinPartNumber && n <= MaxPartNumber
+}
 
 // -------------------------------------------------------------------------
 // RECORD PART
@@ -40,8 +49,8 @@ type partOutcome struct {
 // intent is gone was resolved by the pending reaper mid-upload; its bytes are
 // queued and ErrIntentLost returned.
 func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error) {
-	if p.PartNumber < 1 || p.PartNumber > MaxPartNumber {
-		return nil, fmt.Errorf("invalid part number %d: must be between 1 and %d", p.PartNumber, MaxPartNumber)
+	if !ValidPartNumber(p.PartNumber) {
+		return nil, fmt.Errorf("invalid part number %d: must be between %d and %d", p.PartNumber, MinPartNumber, MaxPartNumber)
 	}
 	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (partOutcome, error) {
 		return recordPartTx(ctx, tx, p)

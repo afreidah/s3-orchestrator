@@ -15,7 +15,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -23,8 +22,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
 // -------------------------------------------------------------------------
@@ -44,21 +43,30 @@ type StoredInspector interface {
 }
 
 // ClassifyDeps is what ClassifyImport needs to reach the bytes and the ledger.
+// Reader reads the stored bytes and charges whatever meters its caller holds.
 // Source labels the metric and audit trail with which pass did the import.
 // Codec is optional; without one a compressed object is imported as verbatim.
 type ClassifyDeps struct {
-	Backend backend.ObjectBackend
-	Stores  SiblingLocator
-	Codec   StoredInspector
-	Source  string
-	Log     *slog.Logger
+	Reader backend.RangeReader
+	Stores SiblingLocator
+	Codec  StoredInspector
+	Source string
+	Log    *slog.Logger
 }
 
-// backendRange fetches byte ranges of one object, adapting a backend to the
-// codec's RangeFetcher so the seek table can be read without pulling the object.
-type backendRange struct {
-	be  backend.ObjectBackend
+// keyRange fetches byte ranges of one object, adapting a reader to the codec's
+// RangeFetcher so the seek table can be read without pulling the object.
+type keyRange struct {
+	r   backend.RangeReader
 	key string
+}
+
+// meteredReader reads one backend's objects directly and charges each read to
+// usage.
+type meteredReader struct {
+	be    backend.ObjectBackend
+	name  string
+	usage UsageRecorder
 }
 
 // -------------------------------------------------------------------------
@@ -66,13 +74,20 @@ type backendRange struct {
 // -------------------------------------------------------------------------
 
 // FetchRange implements compression.RangeFetcher.
-func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte, error) {
-	r, err := b.be.GetObject(ctx, b.key, byterange.Header(start, end))
+func (k keyRange) FetchRange(ctx context.Context, start, end int64) ([]byte, error) {
+	return k.r.ReadRange(ctx, k.key, start, end)
+}
+
+// ReadRange implements backend.RangeReader. A failed read is charged one call
+// and a successful one the bytes it returned.
+func (m meteredReader) ReadRange(ctx context.Context, key string, start, end int64) ([]byte, error) {
+	data, err := backend.DirectReader{Backend: m.be}.ReadRange(ctx, key, start, end)
 	if err != nil {
+		m.usage.APICall(ctx, s3op.GetObject, m.name)
 		return nil, err
 	}
-	defer func() { _ = r.Body.Close() }()
-	return io.ReadAll(r.Body)
+	m.usage.Egress(ctx, s3op.GetObject, m.name, int64(len(data)))
+	return data, nil
 }
 
 // ClassifyImport determines the stored form a discovered object is imported
@@ -81,7 +96,7 @@ func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte,
 // be recorded as plaintext and served to clients as raw ciphertext. A nil
 // return means the bytes are stored verbatim.
 func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key string, size int64) (*core.StoredForm, error) {
-	discovered, err := DiscoverBytes(ctx, deps.Backend, deps.Codec, key, size)
+	discovered, err := DiscoverBytes(ctx, deps.Reader, deps.Codec, key, size)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +131,8 @@ func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key str
 // like a zstd frame, the tail for this codec's seek table. A client's plain .zst
 // file has no seek table and is reported uncompressed, as is any object whose
 // tail cannot be read or when codec is nil.
-func DiscoverBytes(ctx context.Context, be backend.ObjectBackend, codec StoredInspector, path string, size int64) (core.DiscoveredBytes, error) {
-	header, err := backend.FetchEnvelopeHeader(ctx, be, path)
+func DiscoverBytes(ctx context.Context, r backend.RangeReader, codec StoredInspector, path string, size int64) (core.DiscoveredBytes, error) {
+	header, err := backend.ReadEnvelopeHeader(ctx, r, path)
 	if err != nil {
 		return core.DiscoveredBytes{}, fmt.Errorf("failed to inspect %s: %w", path, err)
 	}
@@ -125,7 +140,7 @@ func DiscoverBytes(ctx context.Context, be backend.ObjectBackend, codec StoredIn
 	if codec == nil || size <= 0 || encryption.HasEnvelopeMagic(header) || !compression.HasFrameMagic(header) {
 		return found, nil
 	}
-	found.LogicalSize, found.Compressed = codec.InspectStored(ctx, backendRange{be: be, key: path}, size)
+	found.LogicalSize, found.Compressed = codec.InspectStored(ctx, keyRange{r: r, key: path}, size)
 	return found, nil
 }
 

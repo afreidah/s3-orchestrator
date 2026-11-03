@@ -54,18 +54,24 @@ import (
 // GetObject") in the same trace.
 const spanPrefix = "Backend "
 
+// ObjectAttrs is what a backend reports about a stored object besides its
+// bytes and size: the content type, ETag, modification time and user metadata.
+type ObjectAttrs struct {
+	ContentType  string
+	ETag         string
+	LastModified time.Time
+	Metadata     map[string]string
+}
+
 // GetObjectResult holds the response from a GetObject call. Size is the length
 // of Body. WireSize is set only when the backend sent more than Body holds, as
 // one that ignores Range does; WireBytes reports what to charge as egress.
 type GetObjectResult struct {
+	ObjectAttrs
 	Body         io.ReadCloser
 	Size         int64
 	WireSize     int64
-	ContentType  string
-	ETag         string
 	ContentRange string
-	LastModified time.Time
-	Metadata     map[string]string
 }
 
 // WireBytes returns how many bytes the backend sent for this response: WireSize
@@ -76,11 +82,8 @@ func (r *GetObjectResult) WireBytes() int64 {
 
 // HeadObjectResult holds the response from a HeadObject call.
 type HeadObjectResult struct {
-	Size         int64
-	ContentType  string
-	ETag         string
-	LastModified time.Time
-	Metadata     map[string]string
+	ObjectAttrs
+	Size int64
 }
 
 // ObjectBackend defines the interface for object storage operations.
@@ -360,10 +363,12 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 // application/octet-stream when the backend omits it.
 func headResultFromSDK(contentLength *int64, contentType, etag *string, lastModified *time.Time, metadata map[string]string) HeadObjectResult {
 	h := HeadObjectResult{
-		Size:         aws.ToInt64(contentLength),
-		ContentType:  "application/octet-stream",
-		ETag:         aws.ToString(etag),
-		LastModified: aws.ToTime(lastModified),
+		Size: aws.ToInt64(contentLength),
+		ObjectAttrs: ObjectAttrs{
+			ContentType:  "application/octet-stream",
+			ETag:         aws.ToString(etag),
+			LastModified: aws.ToTime(lastModified),
+		},
 	}
 	if contentType != nil {
 		h.ContentType = *contentType
@@ -379,13 +384,10 @@ func headResultFromSDK(contentLength *int64, contentType, etag *string, lastModi
 func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
 	h := headResultFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
 	return &GetObjectResult{
+		ObjectAttrs:  h.ObjectAttrs,
 		Body:         result.Body,
 		Size:         h.Size,
-		ContentType:  h.ContentType,
-		ETag:         h.ETag,
 		ContentRange: aws.ToString(result.ContentRange),
-		LastModified: h.LastModified,
-		Metadata:     h.Metadata,
 	}
 }
 

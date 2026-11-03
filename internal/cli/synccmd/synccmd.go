@@ -272,11 +272,11 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	pages := reconcile.PageImporter{
 		Store: run.Store,
 		Classify: reconcile.ClassifyDeps{
-			Backend: s3b,
-			Stores:  run.Store,
-			Codec:   run.Codec,
-			Source:  "sync",
-			Log:     synccmdLogger(),
+			Reader: backend.DirectReader{Backend: s3b},
+			Stores: run.Store,
+			Codec:  run.Codec,
+			Source: "sync",
+			Log:    synccmdLogger(),
 		},
 		BackendName: run.BackendCfg.Name,
 		Prefixes:    reconcile.BucketPrefixes(run.Buckets),

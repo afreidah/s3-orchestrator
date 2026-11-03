@@ -15,7 +15,6 @@ package infra
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -46,7 +45,6 @@ type Config struct {
 	Profiles         map[string]core.BackendProfile
 	MetricsCollector *metrics.Collector
 	AdmissionSem     chan struct{}
-	Log              *slog.Logger
 }
 
 // BackendRuntime holds the shared backend infrastructure. It holds no store:
@@ -67,7 +65,6 @@ type BackendRuntime struct {
 	admissionSem     chan struct{}
 	routingStrategy  config.RoutingStrategy
 	metricsCollector *metrics.Collector
-	log              *slog.Logger
 	recorder         *accounting.Recorder
 }
 
@@ -84,7 +81,6 @@ func New(cfg *Config) *BackendRuntime {
 		admissionSem:     cfg.AdmissionSem,
 		routingStrategy:  cfg.RoutingStrategy,
 		metricsCollector: cfg.MetricsCollector,
-		log:              cfg.Log,
 	}
 	c.recorder = accounting.New(cfg.Usage, telemetry.ManagerOps.Record)
 	return c
@@ -103,15 +99,6 @@ func (c *BackendRuntime) Acct() *accounting.Recorder {
 // MetricsCollector returns the wired metrics collector (nil if unset).
 func (c *BackendRuntime) MetricsCollector() *metrics.Collector {
 	return c.metricsCollector
-}
-
-// Log returns the component-scoped logger; falls back to slog.Default()
-// when *BackendRuntime was constructed without one.
-func (c *BackendRuntime) Log() *slog.Logger {
-	if c.log == nil {
-		return slog.Default()
-	}
-	return c.log
 }
 
 // RoutingStrategy returns the configured routing strategy.

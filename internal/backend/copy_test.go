@@ -86,7 +86,7 @@ func TestCircuitBreakerBackend_CopyObject_ForwardsWhenSupported(t *testing.T) {
 // TestCircuitBreakerBackend_CopyObject_ReturnsNotSupportedWhenInnerLacksIt
 // pins the fallback contract: a decorator wrapping a backend that does
 // not implement Copier must return ErrCopyNotSupported so the
-// proxy can fall back to materialized copy.
+// proxy can fall back to a stream copy.
 func TestCircuitBreakerBackend_CopyObject_ReturnsNotSupportedWhenInnerLacksIt(t *testing.T) {
 	t.Parallel()
 	inner := newMockBackend() // does not implement Copier

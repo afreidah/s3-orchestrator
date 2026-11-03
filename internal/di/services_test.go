@@ -163,7 +163,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	rec := reconcile.NewManager(&reconcile.Deps{
 		Backends: rt, Stores: mock, Usage: rt.Acct(),
 	})
-	exp := expiry.New(mock, st.Objects, live.Lifecycle(), nil)
+	exp := expiry.New(mock, st.Objects, live.Lifecycle())
 	return &servicesFixture{
 		stack:         st,
 		expirer:       exp,

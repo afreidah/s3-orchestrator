@@ -221,3 +221,15 @@ func (mr *MockUsageRecorderMockRecorder) Allow(backendName, op, egress, ingress 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockUsageRecorder)(nil).Allow), backendName, op, egress, ingress)
 }
+
+// Egress mocks base method.
+func (m *MockUsageRecorder) Egress(ctx context.Context, op s3op.Operation, backendName string, sizeBytes int64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Egress", ctx, op, backendName, sizeBytes)
+}
+
+// Egress indicates an expected call of Egress.
+func (mr *MockUsageRecorderMockRecorder) Egress(ctx, op, backendName, sizeBytes any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Egress", reflect.TypeOf((*MockUsageRecorder)(nil).Egress), ctx, op, backendName, sizeBytes)
+}

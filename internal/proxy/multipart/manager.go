@@ -210,8 +210,8 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	)
 	defer span.End()
 
-	if partNumber < 1 || partNumber > 10000 {
-		err := badRequest("InvalidArgument", "Part number must be between 1 and 10000")
+	if !core.ValidPartNumber(partNumber) {
+		err := badRequest("InvalidArgument", fmt.Sprintf("Part number must be between %d and %d", core.MinPartNumber, core.MaxPartNumber))
 		observe.MarkSpanError(span, err.Message)
 		return "", err
 	}
@@ -316,7 +316,7 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 // and size UploadPart handed the client rather than what the backend holds;
 // the two differ once the stored part is an encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
-	parts, _, err := mp.ListParts(ctx, bucket, key, uploadID, 0, MaxPartNumber)
+	parts, _, err := mp.ListParts(ctx, bucket, key, uploadID, 0, MaxPartCount)
 	return parts, err
 }
 
@@ -440,7 +440,7 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 // made ascending. A requested part that was never uploaded fails the
 // completion, naming every one missing.
 func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, uploadID string, partNumbers []int) ([]core.MultipartPart, error) {
-	allParts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartNumber)
+	allParts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartCount)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, err
@@ -498,7 +498,7 @@ func (mp *Manager) AbortMultipartUpload(ctx context.Context, bucket, key, upload
 // AbortMultipartUploadsOnBackend) bypass the bucket-scope check because
 // they operate on the entire upload set, not a per-request URL.
 func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUpload) error {
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+"AbortMultipartUpload",
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+s3op.AbortMultipartUpload.String(),
 		telemetry.AttrUploadID.String(mu.UploadID),
 	)
 	defer span.End()
@@ -766,7 +766,6 @@ func (mp *Manager) completeMultipartUploadLocked(
 	if err := mp.coord.ClaimWriteTarget(ctx, span, operation, intent, []string{mu.BackendName}); err != nil {
 		return "", err
 	}
-	intentID := intent.IntentID
 
 	// The pipe is fed by the part downloads, so the PUT's timeout covers the
 	// whole stream-parts, assemble and PUT pipeline. Assembled under the
@@ -789,7 +788,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 	pr.Close()
 
-	form = stampContentHash(form, hasher)
+	if hasher != nil {
+		form = storedform.WithContentHash(form, etag.Hex(hasher))
+	}
 	if identity.ETag == "" {
 		identity.ETag = etag.Single(etag.Hex(assemblyDigest))
 	}
@@ -797,10 +798,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// The create call's tags land in the same transaction, so a completed upload
 	// is never briefly untagged. The bytes are charged from the size the ledger
 	// records.
-	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, operation, &core.RecordObjectRequest{
-		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
-		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID, StorageKey: intent.StorageKey}},
-	}); err != nil {
+	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(form)); err != nil {
 		return "", err
 	}
 
@@ -858,23 +856,6 @@ func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, 
 	}
 	mp.coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
-}
-
-// stampContentHash finalises the hasher (when one was used) and writes
-// the resulting hex digest onto form. When integrity is disabled hasher
-// is nil and the original form is returned unchanged; when form is nil
-// and a hash was computed, a fresh StoredForm is allocated so the
-// store layer receives the hash.
-func stampContentHash(form *core.StoredForm, hasher hash.Hash) *core.StoredForm {
-	if hasher == nil {
-		return form
-	}
-	digest := etag.Hex(hasher)
-	if form == nil {
-		return &core.StoredForm{ContentHash: digest}
-	}
-	form.ContentHash = digest
-	return form
 }
 
 // sumPlaintextSize returns the total byte count the client uploaded across

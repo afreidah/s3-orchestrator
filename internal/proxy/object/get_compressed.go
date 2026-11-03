@@ -49,7 +49,7 @@ func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beNam
 	if err != nil {
 		return nil, err
 	}
-	discovered, err := reconcile.DiscoverBytes(ctx, be, o.codec, newest, size)
+	discovered, err := reconcile.DiscoverBytes(ctx, chargedReader{rt: o.core, name: beName, be: be}, o.codec, newest, size)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,7 @@ func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRang
 	size := loc.ObjectSize()
 	r := &s3be.GetObjectResult{Body: reader, Size: size}
 	if attrs := fetcher.objectAttrs(); attrs != nil {
-		r.ContentType, r.ETag = attrs.ContentType, attrs.ETag
-		r.LastModified, r.Metadata = attrs.LastModified, attrs.Metadata
+		r.ObjectAttrs = *attrs
 	}
 	r.LastModified = resolveLastModified(r.LastModified, loc)
 	if rangeHeader == "" {

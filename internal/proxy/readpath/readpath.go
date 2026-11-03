@@ -135,6 +135,15 @@ type readOp struct {
 	span      trace.Span
 }
 
+// won settles the read on the backend that answered: the operation metric,
+// the winner and its size on the span, and an Ok status. Each path adds only
+// the attributes that tell it apart.
+func (op readOp) won(rt ReadRuntime, name string, size int64) {
+	rt.Acct().Operation(op.operation, name, op.start, nil)
+	op.span.SetAttributes(telemetry.AttrBackendName.String(name), telemetry.AttrObjectSize.Int64(size))
+	op.span.SetStatus(codes.Ok, "")
+}
+
 // Read runs the read-with-failover protocol over the caller's location lookup:
 // it starts the span and tries each backend in turn. The caller looks the key
 // up so it can answer from the rows before any backend is touched. On
@@ -185,9 +194,9 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 		op.span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 		name := locations[i].BackendName
 
-		be, ok := f.core.Backends()[name]
-		if !ok {
-			lastErr = fmt.Errorf("backend %s not found", name)
+		be, err := f.core.GetBackend(name)
+		if err != nil {
+			lastErr = err
 			continue
 		}
 
@@ -206,12 +215,10 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 
 		// First success wins; it returns immediately, so there are no losers to
 		// clean up here. The winner's Value owns its own lifecycle.
-		f.core.Acct().Operation(op.operation, name, op.start, nil)
 		if i > 0 {
 			op.span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
-		op.span.SetAttributes(telemetry.AttrObjectSize.Int64(res.Size))
-		op.span.SetStatus(codes.Ok, "")
+		op.won(f.core, name, res.Size)
 		return res.Value, name, nil
 	}
 

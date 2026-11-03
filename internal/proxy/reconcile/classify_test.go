@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -90,9 +91,9 @@ func classify(t *testing.T, be *backendtest.InMemory, key string, locs []core.Ob
 		size = int64(len(obj.Data))
 	}
 	return ClassifyImport(context.Background(), ClassifyDeps{
-		Backend: be,
-		Stores:  siblingStub{locs: locs},
-		Source:  "test",
+		Reader: backend.DirectReader{Backend: be},
+		Stores: siblingStub{locs: locs},
+		Source: "test",
 	}, "b1", key, size)
 }
 

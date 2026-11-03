@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -64,7 +63,6 @@ func newTestCore(t *testing.T) *BackendRuntime {
 		RoutingStrategy: config.RoutingPack,
 		Profiles:        map[string]core.BackendProfile{"b2": {MaxObjectSize: 1024}},
 		AdmissionSem:    make(chan struct{}, 2),
-		Log:             slog.Default(),
 	})
 }
 
@@ -80,9 +78,6 @@ func TestCore_New_ExposesAcctAndRoutingStrategy(t *testing.T) {
 	}
 	if c.RoutingStrategy() != config.RoutingPack {
 		t.Errorf("RoutingStrategy = %q, want %q", c.RoutingStrategy(), config.RoutingPack)
-	}
-	if c.Log() == nil {
-		t.Error("Log() returned nil")
 	}
 }
 
@@ -294,10 +289,10 @@ func ep(name string, be backend.ObjectBackend) backend.Endpoint {
 	return backend.Endpoint{Name: name, Backend: be}
 }
 
-// copyReq is a verbatim copy of k on src to k!dst on dst, admitted against
-// sizeEstimate.
-func copyReq(src, dst backend.Endpoint, sizeEstimate int64) *backend.CopyRequest {
-	return &backend.CopyRequest{Src: src, Dst: dst, SrcKey: "k", DstKey: "k!dst", SizeEstimate: sizeEstimate}
+// copyReq is a verbatim copy of k on src to k!dst on dst, whose source row
+// records srcSize.
+func copyReq(src, dst backend.Endpoint, srcSize int64) *backend.CopyRequest {
+	return &backend.CopyRequest{Src: src, Dst: dst, SrcKey: "k", DstKey: "k!dst", SrcSize: srcSize}
 }
 
 func TestCore_StreamCopy_ReadSuccessThenWriteSuccess(t *testing.T) {
@@ -305,11 +300,30 @@ func TestCore_StreamCopy_ReadSuccessThenWriteSuccess(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	if _, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0)); err != nil {
+	etag, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 5))
+	if err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
-	if dst.putBodyLen != 5 {
-		t.Errorf("dst received %d bytes, want 5", dst.putBodyLen)
+	if etag != "etag" || dst.putBodyLen != 5 {
+		t.Errorf("etag = %q, dst received %d bytes, want the destination's etag and 5", etag, dst.putBodyLen)
+	}
+}
+
+// TestCore_StreamCopy_RefusesSourceOfWrongSize covers a source whose bytes are
+// not the size its row records: the read fails before anything is written, so
+// a truncated copy is never placed and the caller tries another source.
+func TestCore_StreamCopy_RefusesSourceOfWrongSize(t *testing.T) {
+	t.Parallel()
+	for _, payload := range [][]byte{nil, []byte("hel")} {
+		dst := &recordingBackend{}
+		c := newTestCore(t)
+		_, err := c.StreamCopy(context.Background(), copyReq(ep("src", &readableBackend{payload: payload}), ep("dst", dst), 5))
+		if !errors.Is(err, backend.ErrSourceSizeMismatch) || !backend.IsCopyPhase(err, backend.CopyPhaseRead) {
+			t.Errorf("%d-byte source: err = %v, want a read-phase size mismatch", len(payload), err)
+		}
+		if dst.putBodyLen != 0 {
+			t.Errorf("%d-byte source: destination received %d bytes, want none", len(payload), dst.putBodyLen)
+		}
 	}
 }
 
@@ -389,7 +403,7 @@ func TestCore_StreamCopy_SourceStallTaggedReadPhase(t *testing.T) {
 	src := &stallingSourceBackend{err: context.DeadlineExceeded}
 	dst := propagatingDstBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0))
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 100))
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -408,7 +422,7 @@ func TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := writeRejectingBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0))
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 5))
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -437,7 +451,6 @@ func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[str
 		Usage:           tracker,
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    make(chan struct{}, 2),
-		Log:             slog.Default(),
 	})
 }
 
@@ -506,12 +519,11 @@ func TestCore_StreamCopy_AdmitsWithinLimits(t *testing.T) {
 			"b2": {IngressByteLimit: 1 << 20},
 		}, nil)
 
-	moved, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", dst), 5))
-	if err != nil {
+	if _, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", dst), 5)); err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
-	if moved != 5 || dst.putBodyLen != 5 {
-		t.Errorf("moved = %d, destination got %d bytes, want 5 and 5", moved, dst.putBodyLen)
+	if dst.putBodyLen != 5 {
+		t.Errorf("destination got %d bytes, want 5", dst.putBodyLen)
 	}
 }
 
@@ -526,7 +538,6 @@ func newCopyRuntime(t *testing.T) (*BackendRuntime, *counter.LocalCounterBackend
 		BackendTimeout:  100 * time.Millisecond,
 		Usage:           counter.NewUsageTracker(counters, nil),
 		RoutingStrategy: config.RoutingPack,
-		Log:             slog.Default(),
 	}), counters
 }
 
@@ -598,8 +609,7 @@ func TestCore_StreamCopy_ChargesFailedLegs(t *testing.T) {
 
 // TestCore_StreamCopy_TransformReplacesTheBody verifies a transform sees the
 // object read, its body and size are what the destination gets and what the
-// destination is charged, the copy returns that size, and its release runs
-// after the write.
+// destination is charged, and its release runs after the write.
 func TestCore_StreamCopy_TransformReplacesTheBody(t *testing.T) {
 	t.Parallel()
 	c, counters := newCopyRuntime(t)
@@ -617,15 +627,14 @@ func TestCore_StreamCopy_TransformReplacesTheBody(t *testing.T) {
 		return strings.NewReader("HELLO!!"), 7, func() { released++ }, nil
 	}
 
-	written, err := c.StreamCopy(context.Background(), req)
-	if err != nil {
+	if _, err := c.StreamCopy(context.Background(), req); err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
 	if seen != "hello" {
 		t.Errorf("transform read %q, want the source bytes", seen)
 	}
-	if written != 7 || dst.putBodyLen != 7 {
-		t.Errorf("written = %d, destination got %d, want 7 and 7", written, dst.putBodyLen)
+	if dst.putBodyLen != 7 {
+		t.Errorf("destination got %d bytes, want 7", dst.putBodyLen)
 	}
 	if released != 1 {
 		t.Errorf("release ran %d times, want once", released)
@@ -644,8 +653,8 @@ func TestCore_StreamCopy_TransformWithoutRelease(t *testing.T) {
 	req.Transform = func(_ context.Context, read *backend.GetObjectResult) (io.Reader, int64, func(), error) {
 		return read.Body, read.Size, nil, nil
 	}
-	if written, err := c.StreamCopy(context.Background(), req); err != nil || written != 5 {
-		t.Fatalf("StreamCopy = %d, %v; want 5, nil", written, err)
+	if _, err := c.StreamCopy(context.Background(), req); err != nil {
+		t.Fatalf("StreamCopy: %v", err)
 	}
 }
 

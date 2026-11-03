@@ -154,7 +154,7 @@ var (
 func parsePartNumber(w http.ResponseWriter, r *http.Request) (int, int, error, bool) {
 	partNumberStr := r.URL.Query().Get("partNumber")
 	partNumber, err := strconv.Atoi(partNumberStr)
-	if err != nil || partNumber < multipart.MinPartNumber || partNumber > multipart.MaxPartNumber {
+	if err != nil || !core.ValidPartNumber(partNumber) {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
 		return 0, http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr), false
 	}

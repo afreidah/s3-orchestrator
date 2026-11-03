@@ -232,10 +232,10 @@ func (mr *MockOpsMockRecorder) ServedCalls(name any) *gomock.Call {
 }
 
 // StreamCopy mocks base method.
-func (m *MockOps) StreamCopy(ctx context.Context, req *backend.CopyRequest) (int64, error) {
+func (m *MockOps) StreamCopy(ctx context.Context, req *backend.CopyRequest) (string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "StreamCopy", ctx, req)
-	ret0, _ := ret[0].(int64)
+	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

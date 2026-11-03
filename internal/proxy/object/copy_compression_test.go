@@ -28,7 +28,7 @@ import (
 // -------------------------------------------------------------------------
 
 // The two ends of every copy here, plus the single backend both keys live on,
-// so one fixture drives the native fast path and the materialized fallback.
+// so one fixture drives the native fast path and the stream-copy fallback.
 const (
 	copySrcKey     = "compressed-src"
 	copyDstKey     = "compressed-dst"
@@ -60,7 +60,7 @@ func (r *copyResult) dest(t *testing.T) []byte {
 // only location, and copies it. The key, backend and size on loc are filled in
 // here so a caller states only what the row says about the bytes. native decides
 // whether the backend offers server-side copy, which is what selects the fast
-// path over the materialized fallback.
+// path over the stream-copy fallback.
 func copyThroughFleet(t *testing.T, loc *core.ObjectLocation, stored []byte, native bool) copyResult {
 	t.Helper()
 	be := backendtest.NewInMemory()

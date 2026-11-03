@@ -77,7 +77,7 @@ func (d *recordingDeleter) deleted() []string {
 func sweep(t *testing.T, s *Store, rules []config.LifecycleRule) []string {
 	t.Helper()
 	deleter := &recordingDeleter{}
-	m := expiry.New(s, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100}), nil)
+	m := expiry.New(s, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100}))
 	m.ProcessRules(context.Background(), rules, nil)
 	return deleter.deleted()
 }

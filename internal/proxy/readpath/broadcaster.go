@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -75,15 +74,13 @@ func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe
 	}()
 
 	if cachedBackend, ok := b.cache.Get(op.key); ok {
-		if be, exists := b.core.Backends()[cachedBackend]; exists {
+		if be, err := b.core.GetBackend(cachedBackend); err == nil {
 			// Degraded mode: no DB row available, probe must handle nil loc.
 			res, err := probe(ctx, cachedBackend, nil, be)
 			if err == nil {
 				// Cache hit is the sole winner; its Value owns its lifecycle.
-				b.core.Acct().Operation(op.operation, cachedBackend, op.start, nil)
 				op.span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
-				op.span.SetAttributes(telemetry.AttrObjectSize.Int64(res.Size))
-				op.span.SetStatus(codes.Ok, "")
+				op.won(b.core, cachedBackend, res.Size)
 				telemetry.DegradedCacheHitsTotal.Inc()
 				cacheHit = true
 				return res.Value, cachedBackend, nil
@@ -179,33 +176,28 @@ func (b *Broadcaster) tryAllBackends[T any](ctx context.Context, op readOp, prob
 }
 
 // eligibleBackends returns the pending probes in BackendOrder, skipping
-// any name absent from the backend map. The slice is the rolling-window
+// any name that does not resolve to a backend. The slice is the rolling-window
 // launcher's source of truth: launched indexes into it; on success the
 // remaining tail is simply never started.
 func (b *Broadcaster) eligibleBackends() []pendingProbe {
 	order := b.core.BackendOrder()
-	backends := b.core.Backends()
 	pending := make([]pendingProbe, 0, len(order))
 	for _, name := range order {
-		if be, ok := backends[name]; ok {
+		if be, err := b.core.GetBackend(name); err == nil {
 			pending = append(pending, pendingProbe{name: name, be: be})
 		}
 	}
 	return pending
 }
 
-// recordBroadcastWinner caches the winner's name for future degraded
-// reads, emits operation metrics, and sets the success-path span
-// attributes.
+// recordBroadcastWinner caches the winner's name for future degraded reads
+// and settles the read on it.
 func (b *Broadcaster) recordBroadcastWinner(op readOp, name string, size int64) {
 	b.cache.Set(op.key, name)
-	b.core.Acct().Operation(op.operation, name, op.start, nil)
-	op.span.SetAttributes(telemetry.AttrBackendName.String(name))
-	op.span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 	if b.parallel {
 		op.span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
 	}
-	op.span.SetStatus(codes.Ok, "")
+	op.won(b.core, name, size)
 }
 
 // broadcastAllFailed builds the error for a broadcast no backend answered. The

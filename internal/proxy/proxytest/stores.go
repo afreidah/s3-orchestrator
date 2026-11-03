@@ -11,7 +11,6 @@
 package proxytest
 
 import (
-	"log/slog"
 	"maps"
 	"testing"
 	"time"
@@ -21,7 +20,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -139,7 +137,6 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		Profiles:         opts.Profiles,
 		MetricsCollector: collector,
 		AdmissionSem:     opts.AdmissionSem,
-		Log:              slog.Default().With(logfmt.Component("proxytest")),
 	})
 }
 

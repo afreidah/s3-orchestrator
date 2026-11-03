@@ -582,7 +582,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 
 // TestReplicate_ChargesTheBytesTheCopyMoved verifies the usage a replica costs
 // is what the stream copy moved between the source it read and the target,
-// not a row's recorded size or the first listed copy's.
+// not the size the first listed copy's row records.
 func TestReplicate_ChargesTheBytesTheCopyMoved(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
@@ -598,7 +598,7 @@ func TestReplicate_ChargesTheBytesTheCopyMoved(t *testing.T) {
 	replicateSuccessStubs(store,
 		[]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 999},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 200},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 		},
 		rt)
 	storetest.Permissive(store)

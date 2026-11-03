@@ -9,7 +9,7 @@
 
 package cache
 
-import "time"
+import "github.com/afreidah/s3-orchestrator/internal/backend"
 
 // -------------------------------------------------------------------------
 // INTERFACE
@@ -60,13 +60,9 @@ func (e *Entry) Size() int64 {
 	return n
 }
 
-// EntryMeta holds the metadata to store alongside cached object data.
-type EntryMeta struct {
-	ContentType  string
-	ETag         string
-	LastModified time.Time
-	Metadata     map[string]string
-}
+// EntryMeta is the object metadata a cached entry is served with, as the
+// backend reported it.
+type EntryMeta = backend.ObjectAttrs
 
 // Stats reports current cache utilization. Hits and Misses are lifetime
 // process totals, mirroring the s3o_cache_hits_total / s3o_cache_misses_total

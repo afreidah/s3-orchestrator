@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // finalizeCopy closes out both copy paths. A server-side copy is charged as
-// one API call and marks its span; a materialized copy also charges the bytes
+// one API call and marks its span; a stream copy also charges the bytes
 // that crossed the orchestrator, egress on the source and ingress on the
 // destination. A record failure leaves both the counters and the location
 // hint alone.
@@ -58,15 +58,14 @@ func finalizeCopyFixture(t *testing.T, store storetest.MetadataStore, native boo
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 	_, span := tp.Tracer("test").Start(context.Background(), "copy")
 	etag, err := mgr.finalizeCopy(context.Background(), &copyContext{
-		span:            span,
-		sourceKey:       "source",
-		srcBackendName:  "src",
-		destKey:         copyDest,
-		destStorageKey:  copyDest + "!w1",
-		destBackendName: copyDest,
-		size:            copySize,
-		identity:        &core.ObjectIdentity{ETag: `"src-etag"`},
-		start:           time.Now(),
+		span: span,
+		intent: &core.PendingObject{
+			ObjectKey: copyDest, StorageKey: copyDest + "!w1", BackendName: copyDest,
+			SizeBytes: copySize, Identity: &core.ObjectIdentity{ETag: `"src-etag"`},
+		},
+		sourceKey:      "source",
+		srcBackendName: "src",
+		start:          time.Now(),
 	}, `"backend-etag"`, native)
 	span.End()
 	return mgr, sr.Ended()[0], etag, err
@@ -135,7 +134,7 @@ func TestFinalizeCopy_Materialized(t *testing.T) {
 		t.Fatalf("finalizeCopy: %v", err)
 	}
 	if nativeCopyAttr(span) {
-		t.Error("materialized copy marked as native")
+		t.Error("stream copy marked as native")
 	}
 	if got := usageOf(mgr, "src").EgressBytes; got != 0 {
 		t.Errorf("source egress = %d, want 0", got)

@@ -219,6 +219,20 @@ func Describe(form *core.StoredForm, level string, logicalSize int64) *core.Stor
 	return form
 }
 
+// WithContentHash records on form the integrity hash over what the client
+// sent, allocating a form when the caller has none yet. An empty digest, from
+// a deployment with integrity hashing off, leaves form as it is.
+func WithContentHash(form *core.StoredForm, digest string) *core.StoredForm {
+	if digest == "" {
+		return form
+	}
+	if form == nil {
+		form = &core.StoredForm{}
+	}
+	form.ContentHash = digest
+	return form
+}
+
 // Seal wraps body in an encryption envelope under key, or under a freshly
 // minted data key when key is nil. The returned body streams; a caller that
 // sends it more than once materializes it, since a second seal would draw a

@@ -66,10 +66,10 @@ func classifyWithCodec(t *testing.T, be *backendtest.InMemory, codec StoredInspe
 		t.Fatalf("no object %q seeded", key)
 	}
 	form, err := ClassifyImport(context.Background(), ClassifyDeps{
-		Backend: be,
-		Stores:  siblingStub{},
-		Codec:   codec,
-		Source:  "test",
+		Reader: backend.DirectReader{Backend: be},
+		Stores: siblingStub{},
+		Codec:  codec,
+		Source: "test",
 	}, "b1", key, int64(len(obj.Data)))
 	if err != nil {
 		t.Fatalf("ClassifyImport: %v", err)
@@ -210,10 +210,10 @@ func TestClassifyImport_ReadCost(t *testing.T) {
 			be := &countingBackend{InMemory: inner}
 			obj, _ := inner.Get(tt.key)
 			if _, err := ClassifyImport(context.Background(), ClassifyDeps{
-				Backend: be,
-				Stores:  siblingStub{},
-				Codec:   codec,
-				Source:  "test",
+				Reader: backend.DirectReader{Backend: be},
+				Stores: siblingStub{},
+				Codec:  codec,
+				Source: "test",
 			}, "b1", tt.key, int64(len(obj.Data))); err != nil {
 				t.Fatalf("ClassifyImport: %v", err)
 			}

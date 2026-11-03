@@ -59,7 +59,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	var selfMetered atomic.Bool
 	var wireBytes atomic.Int64
 	var served atomic.Pointer[core.ObjectLocation]
-	result, backendName, err := o.failover.Read(ctx, "GetObject", key, locs, lookupErr,
+	result, backendName, err := o.failover.Read(ctx, s3op.GetObject, key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
 			if err != nil {
@@ -122,12 +122,9 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 	pobserve.GetCompleted(ctx, key, "cache", int64(len(entry.Data)))
 	return &GetResult{
 		GetObjectResult: &s3be.GetObjectResult{
-			Body:         io.NopCloser(bytes.NewReader(entry.Data)),
-			Size:         int64(len(entry.Data)),
-			ContentType:  entry.ContentType,
-			ETag:         entry.ETag,
-			LastModified: entry.LastModified,
-			Metadata:     entry.Metadata,
+			ObjectAttrs: entry.EntryMeta,
+			Body:        io.NopCloser(bytes.NewReader(entry.Data)),
+			Size:        int64(len(entry.Data)),
 		},
 		TagCount: tagCountOf(locs),
 	}, true
@@ -364,12 +361,7 @@ func (o *Manager) populateObjectCache(path, rangeHeader string, result *s3be.Get
 	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 || !o.objectCache.Admit(result.Size) {
 		return
 	}
-	meta := objcache.EntryMeta{
-		ContentType:  result.ContentType,
-		ETag:         result.ETag,
-		LastModified: result.LastModified,
-		Metadata:     result.Metadata,
-	}
+	meta := result.ObjectAttrs
 	buf := bytes.NewBuffer(make([]byte, 0, result.Size))
 	result.Body = ioutilx.TeeOnComplete(result.Body, result.Size, buf, func() {
 		o.objectCache.PutBytes(path, buf.Bytes(), meta)

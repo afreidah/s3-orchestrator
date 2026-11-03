@@ -690,6 +690,20 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
+func TestWithContentHash(t *testing.T) {
+	t.Parallel()
+	if WithContentHash(nil, "") != nil {
+		t.Error("an empty digest allocated a form")
+	}
+	if got := WithContentHash(nil, "h"); got == nil || got.ContentHash != "h" {
+		t.Errorf("WithContentHash(nil) = %+v, want a form carrying the digest", got)
+	}
+	existing := &core.StoredForm{Encrypted: true}
+	if WithContentHash(existing, "h") != existing || existing.ContentHash != "h" || !existing.Encrypted {
+		t.Errorf("existing form = %+v, want the digest added in place", existing)
+	}
+}
+
 // -------------------------------------------------------------------------
 // SEAL
 // -------------------------------------------------------------------------

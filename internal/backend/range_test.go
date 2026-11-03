@@ -146,12 +146,12 @@ func TestGetObject_HonouredRangeUntouched(t *testing.T) {
 	}
 }
 
-// TestFetchEnvelopeHeader_IgnoredRange reads the header prefix of an object
+// TestReadEnvelopeHeader_IgnoredRange reads the header prefix of an object
 // whose backend ignores Range, and treats an empty object as having none.
-func TestFetchEnvelopeHeader_IgnoredRange(t *testing.T) {
+func TestReadEnvelopeHeader_IgnoredRange(t *testing.T) {
 	t.Parallel()
 	be := newTestBackend(t, ignoresRange)
-	hdr, err := FetchEnvelopeHeader(t.Context(), be, "obj")
+	hdr, err := ReadEnvelopeHeader(t.Context(), DirectReader{Backend: be}, "obj")
 	if err != nil || string(hdr) != rangePayload {
 		t.Errorf("header = %q, %v; want the %d-byte object", hdr, err, len(rangePayload))
 	}
@@ -160,7 +160,7 @@ func TestFetchEnvelopeHeader_IgnoredRange(t *testing.T) {
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 	})
-	hdr, err = FetchEnvelopeHeader(t.Context(), empty, "obj")
+	hdr, err = ReadEnvelopeHeader(t.Context(), DirectReader{Backend: empty}, "obj")
 	if err != nil || len(hdr) != 0 {
 		t.Errorf("empty object header = %q, %v; want none", hdr, err)
 	}

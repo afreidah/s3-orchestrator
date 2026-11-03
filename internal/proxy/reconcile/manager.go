@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -54,13 +55,15 @@ type BackendResolver interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 }
 
-// UsageRecorder admits and accounts backend API calls against the usage
-// quota, so a listing pass is held to the same limits as client traffic. Allow
-// is asked per page, so a walk of a large bucket stops at the limit instead of
-// spending the budget client requests need.
+// UsageRecorder admits and accounts backend calls against the usage quota, so
+// a listing pass and the reads that classify what it found are held to the
+// same limits as client traffic. Allow is asked per page, so a walk of a large
+// bucket stops at the limit instead of spending the budget client requests
+// need.
 type UsageRecorder interface {
 	Allow(backendName string, op s3op.Operation, egress, ingress int64) bool
 	APICall(ctx context.Context, op s3op.Operation, backendName string)
+	Egress(ctx context.Context, op s3op.Operation, backendName string, sizeBytes int64)
 }
 
 // errBudgetExhausted stops a listing walk that has spent the backend's API
@@ -97,7 +100,7 @@ func (b pageBudget) charge(ctx context.Context) bool {
 // counts are what the pass managed before stopping, not what the backend holds.
 func (m *Manager) reportBudgetStop(ctx context.Context, op, backendName string) {
 	telemetry.UsageLimitRejectionsTotal.WithLabelValues(op, "list").Inc()
-	m.logger().WarnContext(ctx, op+" stopped at the backend's API usage limit",
+	m.log.WarnContext(ctx, op+" stopped at the backend's API usage limit",
 		"backend", backendName,
 		"detail", "the pass covered only part of the bucket; it resumes on the next run once the budget allows")
 }
@@ -115,16 +118,14 @@ type Manager struct {
 	log      *slog.Logger
 }
 
-// Deps groups the reconcile manager's constructor parameters. Codec and Log are
-// optional: without a codec a rediscovered compressed object is imported as the
-// verbatim bytes it appears to be, and a nil logger resolves to the default at
-// call time.
+// Deps groups the reconcile manager's constructor parameters. Codec is
+// optional: without one a rediscovered compressed object is imported as the
+// verbatim bytes it appears to be.
 type Deps struct {
 	Backends BackendResolver
 	Stores   Stores
 	Usage    UsageRecorder
 	Codec    StoredInspector
-	Log      *slog.Logger
 }
 
 // NewManager builds a Manager.
@@ -138,16 +139,8 @@ func NewManager(d *Deps) *Manager {
 		stores:   d.Stores,
 		usage:    d.Usage,
 		codec:    d.Codec,
-		log:      d.Log,
+		log:      slog.Default().With(logfmt.Component("reconcile")),
 	}
-}
-
-// logger returns the configured logger or the default.
-func (m *Manager) logger() *slog.Logger {
-	if m.log == nil {
-		return slog.Default()
-	}
-	return m.log
 }
 
 // -------------------------------------------------------------------------
@@ -172,11 +165,11 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, k
 		return 0, 0, err
 	}
 
-	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName, "prefix", prefix)
+	m.log.InfoContext(ctx, "starting backend sync", "backend", backendName, "prefix", prefix)
 
 	pages := PageImporter{
 		Store:       m.stores,
-		Classify:    m.classifyDeps(s3b),
+		Classify:    m.classifyDeps(backendName, s3b),
 		BackendName: backendName,
 		Prefixes:    BucketPrefixes(knownBuckets),
 	}
@@ -189,7 +182,7 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, k
 		return total.Imported, total.Skipped, err
 	}
 
-	m.logger().InfoContext(ctx, "backend sync complete", "backend", backendName,
+	m.log.InfoContext(ctx, "backend sync complete", "backend", backendName,
 		"imported", total.Imported, "skipped", total.Skipped)
 	return total.Imported, total.Skipped, nil
 }
@@ -213,18 +206,19 @@ func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRe
 	if err != nil {
 		return core.ImportSkippedExisting, err
 	}
-	return importListed(ctx, m.classifyDeps(be), m.stores, req)
+	return importListed(ctx, m.classifyDeps(req.Backend, be), m.stores, req)
 }
 
 // classifyDeps is how this manager's passes reach a backend's bytes and the
-// ledger when classifying a discovered key.
-func (m *Manager) classifyDeps(be backend.ObjectBackend) ClassifyDeps {
+// ledger when classifying a discovered key. The reads are charged to the
+// backend's usage like the listing that found the key.
+func (m *Manager) classifyDeps(name string, be backend.ObjectBackend) ClassifyDeps {
 	return ClassifyDeps{
-		Backend: be,
-		Stores:  m.stores,
-		Codec:   m.codec,
-		Source:  "reconcile",
-		Log:     m.logger(),
+		Reader: meteredReader{be: be, name: name, usage: m.usage},
+		Stores: m.stores,
+		Codec:  m.codec,
+		Source: "reconcile",
+		Log:    m.log,
 	}
 }
 
@@ -255,8 +249,8 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 	res := &Result{}
 	mergeErr := Sorted(
 		ctx, s3, dbIter,
-		ImportHandler(m.logger(), backendName, m.importDiscovered, res),
-		DeleteHandler(m.logger(), backendName, m.deleter(), res, listedAt),
+		ImportHandler(m.log, backendName, m.importDiscovered, res),
+		DeleteHandler(m.log, backendName, m.deleter(), res, listedAt),
 	)
 
 	if errors.Is(mergeErr, errBudgetExhausted) {
@@ -286,7 +280,7 @@ func (m *Manager) deleter() DeleterFn {
 		// Any queued against the key's other writes name bytes still on the
 		// backend.
 		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, loc.StorageKey, loc.BackendName); err != nil {
-			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale copy",
+			m.log.WarnContext(ctx, "failed to sweep cleanup_queue rows for stale copy",
 				slog.String("key", loc.ObjectKey), slog.String("storage_key", loc.StorageKey),
 				slog.String("backend", loc.BackendName), "error", err)
 		}
