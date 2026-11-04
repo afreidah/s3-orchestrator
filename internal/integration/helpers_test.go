@@ -370,10 +370,6 @@ func TestMain(m *testing.M) {
 	})
 	testWorkers = workers
 
-	srv := &s3api.Server{
-		Objects:   stack.Objects,
-		Multipart: stack.Multipart,
-	}
 	// The root credential is what every admin request in these tests signs
 	// with, so the view has to declare it or they are all refused.
 	view := provisioning.Merge(cfg.Buckets, rootAuthConfig(), &provisioning.Snapshot{})
@@ -382,7 +378,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to build bucket registry: %v\n", err)
 		os.Exit(1)
 	}
-	srv.SetBucketAuth(bucketAuth)
+	srv := s3api.NewServer(stack.Objects, stack.Multipart, auth.NewLiveRegistry(bucketAuth), 0)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1343,6 +1339,22 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.Buck
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}
 	return br
+}
+
+// newS3Server builds an S3 server over stack, authenticating against a
+// registry built from buckets, with no object size ceiling.
+func newS3Server(tb testing.TB, stack *proxytest.Stack, buckets ...config.BucketConfig) *s3api.Server {
+	tb.Helper()
+	return s3api.NewServer(stack.Objects, stack.Multipart, auth.NewLiveRegistry(mustBucketRegistry(tb, buckets)), 0)
+}
+
+// virtualBucketFor is the bucket a hand-built server serves, reached with one
+// keypair.
+func virtualBucketFor(accessKey, secret string) config.BucketConfig {
+	return config.BucketConfig{
+		Name:        virtualBucket,
+		Credentials: []config.CredentialConfig{{AccessKeyID: accessKey, SecretAccessKey: secret}},
+	}
 }
 
 // declaredForConfig builds the live bucket set a hand-wired harness hands the

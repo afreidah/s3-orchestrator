@@ -8,7 +8,7 @@
 // Includes single-IP, multi-IP, and concurrent contention scenarios.
 // -------------------------------------------------------------------------------
 
-package s3api
+package httputil
 
 import (
 	"fmt"

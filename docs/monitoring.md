@@ -436,7 +436,7 @@ Key audit events:
 | `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it. The intent's bytes are queued for deletion |
 | `pending_reaper.companion_kept`, `pending_reaper.companion_discarded` | Pending reaper | An extra-copy intent (extra PUT copy, replica, move, rewrite or part) settled without being promoted: kept when a recorded copy sits at its path, otherwise discarded with its bytes queued for deletion |
 | `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
-| `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, and the panic value. The matching error-level slog entry carries the captured stack trace |
+| `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, `client_addr`, and the panic value. The matching error-level slog entry carries the captured stack trace |
 
 Each S3 API request produces correlated audit entries sharing the same `request_id`: the HTTP-level and storage-level entries, plus one `backend.*` entry per request it sent to a backend. A scheduled worker pass gets an ID of its own each tick, and a pass an admin request started keeps that request's ID, so a worker's `backend.*` entries share the ID of the operation that made them. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
 
@@ -450,15 +450,15 @@ The `<worker>.complete` audit entries carry a `usage` group with the requests, e
 
 ### HTTP panic recovery
 
-A panic inside an HTTP handler is caught by the panic-recovery middleware applied to the S3 and admin route groups. The recovery contract:
+A panic inside an HTTP handler is caught by the panic-recovery middleware applied to the S3, admin and dashboard route groups. The recovery contract:
 
-- The client gets a structured response, not a connection reset. S3 routes receive an XML `<Error><Code>InternalError</Code><Message>...Request ID: ...</Message></Error>` body with HTTP 500; admin routes receive the same shape as a JSON `{"error": "...Request ID: ..."}`.
-- The Prometheus counter `s3o_http_panic_recovered_total{route}` increments. A non-zero value is an immediate alert candidate.
-- A `slog.ErrorContext` line is written at level `ERROR` with `component=httputil`, the route, the method and path, the panic value, the captured Go stack, and a `trace_id` / `span_id` if a span was active when the panic occurred.
+- The client gets a structured response, not a connection reset. S3 routes receive an XML `<Error><Code>InternalError</Code><Message>...Request ID: ...</Message></Error>` body with HTTP 500; admin and dashboard routes receive the same shape as a JSON `{"error": "...Request ID: ..."}`.
+- The Prometheus counter `s3o_http_panic_recovered_total{route}` increments, with `route` one of `s3`, `admin` or `ui`. A non-zero value is an immediate alert candidate.
+- A `slog.ErrorContext` line is written at level `ERROR` with `component=httputil`, the route, the method, path and client address, the panic value, the captured Go stack, and a `trace_id` / `span_id` if a span was active when the panic occurred.
 - An `http.PanicRecovered` audit entry is emitted with the same correlation `request_id` as the failing request.
 - If an OpenTelemetry span was active on the request, it is marked as failed via `SetStatus(Error)` + `RecordError` so traces in Tempo highlight the failure.
 
-UI routes are intentionally not wrapped in the first iteration (mounted on the same mux as the S3 catch-all; the bulk of panic risk is on S3 and admin anyway). The recovery message deliberately does not echo the panic value to the client; only the request ID is returned so support tickets can be correlated back to the orchestrator log line.
+The recovery message deliberately does not echo the panic value to the client; only the request ID is returned so support tickets can be correlated back to the orchestrator log line.
 
 Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 

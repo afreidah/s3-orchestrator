@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // sigV4MaxSkew is the maximum allowed clock skew for SigV4 request timestamps.
@@ -128,6 +129,20 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 // that logs them at startup and after each reload.
 func (br *BucketRegistry) Notices() []provisioning.Notice {
 	return br.notices
+}
+
+// LiveRegistry holds the registry in force, which a reload or a provisioning
+// change swaps whole. Every surface that authenticates reads it per request, so
+// none of them misses a swap or depends on another surface to hold it.
+type LiveRegistry struct {
+	syncutil.AtomicConfig[BucketRegistry]
+}
+
+// NewLiveRegistry builds a holder serving br until the first swap.
+func NewLiveRegistry(br *BucketRegistry) *LiveRegistry {
+	live := &LiveRegistry{}
+	live.Store(br)
+	return live
 }
 
 // register adds every credential from one source, in the order that makes config

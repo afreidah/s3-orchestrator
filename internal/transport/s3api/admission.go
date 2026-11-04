@@ -14,13 +14,12 @@
 package s3api
 
 import (
-	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -30,12 +29,15 @@ import (
 // AdmissionController limits the number of concurrent in-flight requests.
 // When readSem and writeSem are set, reads and writes are tracked in
 // separate pools; otherwise the global sem is used for all requests.
+// shedThreshold is the pool fraction shedding starts at (0.8 sheds at 80%),
+// zero for none; admissionWait is how long a request waits for a slot, zero
+// to refuse at once.
 type AdmissionController struct {
-	sem           chan struct{} // global pool (nil when split pools are used)
-	readSem       chan struct{} // read pool (nil when global pool is used)
-	writeSem      chan struct{} // write pool (nil when global pool is used)
-	shedThreshold float64       // 0 = disabled, e.g. 0.8 = shed at 80%
-	admissionWait time.Duration // 0 = instant reject (default)
+	sem           chan struct{}
+	readSem       chan struct{}
+	writeSem      chan struct{}
+	shedThreshold float64
+	admissionWait time.Duration
 }
 
 // -------------------------------------------------------------------------
@@ -96,12 +98,7 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 
 		if ac.shedThreshold > 0 && ac.shouldShed(sem) {
 			telemetry.LoadShedTotal.Inc()
-			audit.Log(r.Context(), "s3.LoadShed",
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-			)
-			w.Header().Set("Retry-After", "1")
-			writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Server at capacity")
+			httputil.RefuseThrottled(w, r, WriteS3Error, &loadShed)
 			return
 		}
 
@@ -132,14 +129,20 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 		}
 
 		telemetry.AdmissionRejectionsTotal.Inc()
-		audit.Log(r.Context(), "s3.AdmissionRejected",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-		)
-		w.Header().Set("Retry-After", "1")
-		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Server at capacity")
+		httputil.RefuseThrottled(w, r, WriteS3Error, &admissionRejected)
 	})
 }
+
+// The two ways admission turns a request away: shed early under pressure, or
+// refused once the pool stayed full past the wait.
+var (
+	loadShed = httputil.Throttled{
+		Event: "s3.LoadShed", Status: http.StatusServiceUnavailable, Message: "Server at capacity",
+	}
+	admissionRejected = httputil.Throttled{
+		Event: "s3.AdmissionRejected", Status: http.StatusServiceUnavailable, Message: "Server at capacity",
+	}
+)
 
 // -------------------------------------------------------------------------
 // LOAD SHEDDING

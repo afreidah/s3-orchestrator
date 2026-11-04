@@ -48,7 +48,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // harnessSeq names each harness's database and buckets apart from every other
@@ -286,11 +285,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 // serve starts the harness's own S3 endpoint and returns its address.
 func (h *harness) serve(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	srv := &s3api.Server{Objects: h.stack.Objects, Multipart: h.stack.Multipart}
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
-		Name:        virtualBucket,
-		Credentials: []config.CredentialConfig{{AccessKeyID: "test", SecretAccessKey: "test"}},
-	}}))
+	srv := newS3Server(t, h.stack, virtualBucketFor("test", "test"))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

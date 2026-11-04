@@ -6,9 +6,9 @@
 // Bridges the auth-layer chunk reader into the request body and maps
 // chunk-validation errors to S3 XML error responses. Handler code reads
 // from the wrapped body as if it were a normal request body; integrity
-// failures surface as typed errors that streamingErrorResponse converts
-// to the spec-correct status code (403 SignatureDoesNotMatch, 400
-// InvalidRequest, 400 IncompleteBody).
+// failures surface as typed errors that streamingFaults maps to the
+// spec-correct status code (403 SignatureDoesNotMatch, 400 InvalidRequest,
+// 400 IncompleteBody).
 // -------------------------------------------------------------------------------
 
 package s3api
@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
@@ -36,40 +37,40 @@ func applyStreamingBody(r *http.Request, mat *auth.StreamingMaterial) {
 	telemetry.AuthStreamingRequestsTotal.WithLabelValues(mat.Variant.Label()).Inc()
 }
 
-// streamingErrorResponse maps an error returned during streaming-body
-// consumption to an S3 error response. Returns ok=false when the error
-// is not a streaming-validation error so the caller can fall through to
-// generic error handling.
-func streamingErrorResponse(err error) (status int, code, msg, reason string, ok bool) {
-	switch {
-	case errors.Is(err, auth.ErrChunkSignatureMismatch):
-		return http.StatusForbidden, "SignatureDoesNotMatch",
-			"The chunk signature does not match the signature derived from the request.",
-			"chunk_signature_mismatch", true
-	case errors.Is(err, auth.ErrTrailerSignatureMismatch):
-		return http.StatusForbidden, "SignatureDoesNotMatch",
-			"The trailer signature does not match the signature derived from the request.",
-			"trailer_signature_mismatch", true
-	case errors.Is(err, auth.ErrTrailerChecksumMismatch):
-		return http.StatusBadRequest, "BadDigest",
-			"The checksum you specified did not match what was received.",
-			"trailer_checksum_mismatch", true
-	case errors.Is(err, auth.ErrDecodedLengthMismatch):
-		return http.StatusBadRequest, "IncompleteBody",
-			"The decoded body length does not match x-amz-decoded-content-length.",
-			"decoded_length_mismatch", true
-	case errors.Is(err, auth.ErrChunkTooLarge):
-		return http.StatusBadRequest, "InvalidRequest",
-			"A streaming chunk exceeded the maximum permitted size.",
-			"chunk_too_large", true
-	case errors.Is(err, auth.ErrChunkMalformed):
-		return http.StatusBadRequest, "InvalidRequest",
-			"Streaming chunk framing is malformed.",
-			"chunk_malformed", true
-	case errors.Is(err, auth.ErrTrailerMalformed):
-		return http.StatusBadRequest, "InvalidRequest",
-			"Streaming trailer block is malformed.",
-			"trailer_malformed", true
+// streamingFault is one chunk-validation failure: the auth error that names
+// it, the S3 error it answers with, and the reason the rejection metric counts
+// it under.
+type streamingFault struct {
+	err    error
+	s3     *core.S3Error
+	reason string
+}
+
+// streamingFaults maps every chunk-validation failure onto its S3 error. A
+// tampered chunk answers 403 SignatureDoesNotMatch rather than InternalError.
+var streamingFaults = []streamingFault{
+	{auth.ErrChunkSignatureMismatch, s3Err(http.StatusForbidden, "SignatureDoesNotMatch",
+		"The chunk signature does not match the signature derived from the request."), "chunk_signature_mismatch"},
+	{auth.ErrTrailerSignatureMismatch, s3Err(http.StatusForbidden, "SignatureDoesNotMatch",
+		"The trailer signature does not match the signature derived from the request."), "trailer_signature_mismatch"},
+	{auth.ErrTrailerChecksumMismatch, s3Err(http.StatusBadRequest, "BadDigest",
+		"The checksum you specified did not match what was received."), "trailer_checksum_mismatch"},
+	{auth.ErrDecodedLengthMismatch, s3Err(http.StatusBadRequest, "IncompleteBody",
+		"The decoded body length does not match x-amz-decoded-content-length."), "decoded_length_mismatch"},
+	{auth.ErrChunkTooLarge, s3Err(http.StatusBadRequest, "InvalidRequest",
+		"A streaming chunk exceeded the maximum permitted size."), "chunk_too_large"},
+	{auth.ErrChunkMalformed, s3Err(http.StatusBadRequest, "InvalidRequest",
+		"Streaming chunk framing is malformed."), "chunk_malformed"},
+	{auth.ErrTrailerMalformed, s3Err(http.StatusBadRequest, "InvalidRequest",
+		"Streaming trailer block is malformed."), "trailer_malformed"},
+}
+
+// asStreamingFault reports the chunk-validation failure err is, if it is one.
+func asStreamingFault(err error) (streamingFault, bool) {
+	for _, f := range streamingFaults {
+		if errors.Is(err, f.err) {
+			return f, true
+		}
 	}
-	return 0, "", "", "", false
+	return streamingFault{}, false
 }

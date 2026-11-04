@@ -41,6 +41,13 @@ import (
 // code and write any headers before returning.
 type ErrorWriter func(w http.ResponseWriter, status int, errCode, message string)
 
+// WriteJSONCodedError is the ErrorWriter for the JSON surfaces, the admin API
+// and the dashboard. Their clients read the message alone, so the code is
+// dropped.
+func WriteJSONCodedError(w http.ResponseWriter, status int, _ string, message string) {
+	WriteJSONError(w, status, message)
+}
+
 // PanicRecover returns middleware that recovers panics from h, translates
 // them into a 500 response via writeErr, and records the panic in the log,
 // the audit trail, a Prometheus counter, and the active span if any.
@@ -78,21 +85,17 @@ func handleRecoveredPanic(r *http.Request, w http.ResponseWriter, log *slog.Logg
 
 	telemetry.HTTPPanicRecoveredTotal.WithLabelValues(route).Inc()
 
-	log.ErrorContext(ctx, "panic recovered in HTTP handler",
-		"route", route,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"panic", err.Error(),
-		"stack", string(stack),
-		"error", err,
-	)
-
-	audit.Log(ctx, "http.PanicRecovered",
+	log.LogAttrs(ctx, slog.LevelError, "panic recovered in HTTP handler", logfmt.Request(r,
 		slog.String("route", route),
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
 		slog.String("panic", err.Error()),
-	)
+		slog.String("stack", string(stack)),
+		logfmt.Err(err),
+	)...)
+
+	audit.Log(ctx, "http.PanicRecovered", logfmt.Request(r,
+		slog.String("route", route),
+		slog.String("panic", err.Error()),
+	)...)
 
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.SetStatus(codes.Error, "panic recovered")

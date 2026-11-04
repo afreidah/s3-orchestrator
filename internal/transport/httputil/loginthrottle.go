@@ -5,18 +5,14 @@
 //
 // Per-IP login attempt tracker with automatic lockout after repeated failures.
 // After MaxFailures consecutive bad attempts from an IP, that IP is locked out
-// for LockoutDuration. Successful login resets the counter. Stale entries are
-// cleaned up by a background goroutine.
+// for LockoutDuration. Successful login resets the counter. Entries whose
+// lockout has passed are swept in the background.
 // -------------------------------------------------------------------------------
 
 package httputil
 
 import (
-	"context"
-	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -25,11 +21,9 @@ import (
 
 // LoginThrottle tracks failed login attempts per IP and enforces lockout.
 type LoginThrottle struct {
-	mu              sync.Mutex
-	attempts        map[string]*loginAttempt
+	attempts        *ipTable[loginAttempt]
 	maxFailures     int
 	lockoutDuration time.Duration
-	stop            context.CancelFunc
 }
 
 // loginAttempt is the per-IP entry the throttle keeps in memory:
@@ -46,15 +40,13 @@ const loginThrottleSweep = 5 * time.Minute
 
 // NewLoginThrottle creates a login throttle with the given limits.
 func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThrottle {
-	ctx, stop := context.WithCancel(context.Background())
-	lt := &LoginThrottle{
-		attempts:        make(map[string]*loginAttempt),
+	return &LoginThrottle{
+		attempts: newIPTable(loginThrottleSweep, func(a *loginAttempt, now time.Time) bool {
+			return now.After(a.lockedUntil)
+		}),
 		maxFailures:     maxFailures,
 		lockoutDuration: lockoutDuration,
-		stop:            stop,
 	}
-	go syncutil.Every(ctx, loginThrottleSweep, func(context.Context) { lt.cleanup() })
-	return lt
 }
 
 // -------------------------------------------------------------------------
@@ -63,21 +55,19 @@ func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThro
 
 // Close stops the background cleanup goroutine. Safe to call multiple times.
 func (lt *LoginThrottle) Close() {
-	lt.stop()
+	lt.attempts.close()
 }
 
 // IsLockedOut returns true if the given IP is currently locked out.
 // Callers must pass a resolved client IP (e.g. from ExtractClientIP),
 // not a raw remoteAddr.
 func (lt *LoginThrottle) IsLockedOut(ip string) bool {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-
-	a, ok := lt.attempts[ip]
-	if !ok {
-		return false
-	}
-	return time.Now().Before(a.lockedUntil)
+	var locked bool
+	lt.attempts.visit(ip, func(a *loginAttempt) *loginAttempt {
+		locked = a != nil && time.Now().Before(a.lockedUntil)
+		return a
+	})
+	return locked
 }
 
 // RecordFailure increments the failure count for the given IP. If the count
@@ -85,37 +75,21 @@ func (lt *LoginThrottle) IsLockedOut(ip string) bool {
 // Callers must pass a resolved client IP (e.g. from ExtractClientIP),
 // not a raw remoteAddr.
 func (lt *LoginThrottle) RecordFailure(ip string) {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-
-	a, ok := lt.attempts[ip]
-	if !ok {
-		a = &loginAttempt{}
-		lt.attempts[ip] = a
-	}
-	a.failures++
-	if a.failures >= lt.maxFailures {
-		a.lockedUntil = time.Now().Add(lt.lockoutDuration)
-	}
+	lt.attempts.visit(ip, func(a *loginAttempt) *loginAttempt {
+		if a == nil {
+			a = &loginAttempt{}
+		}
+		a.failures++
+		if a.failures >= lt.maxFailures {
+			a.lockedUntil = time.Now().Add(lt.lockoutDuration)
+		}
+		return a
+	})
 }
 
 // RecordSuccess resets the failure counter for the given IP.
 // Callers must pass a resolved client IP (e.g. from ExtractClientIP),
 // not a raw remoteAddr.
 func (lt *LoginThrottle) RecordSuccess(ip string) {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	delete(lt.attempts, ip)
-}
-
-// cleanup removes entries whose lockout has expired.
-func (lt *LoginThrottle) cleanup() {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	now := time.Now()
-	for ip, a := range lt.attempts {
-		if now.After(a.lockedUntil) {
-			delete(lt.attempts, ip)
-		}
-	}
+	lt.attempts.visit(ip, func(*loginAttempt) *loginAttempt { return nil })
 }

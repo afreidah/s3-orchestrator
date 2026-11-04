@@ -8,8 +8,8 @@
 // set lives in the metadata store and every replica shares it.
 //
 // Validation, the key lock, and the refusal of a key that holds no copies all
-// live in the store layer. This file owns the wire format and the translation
-// of those refusals into S3 error codes.
+// live in the store layer. This file owns the wire format; classifyError
+// translates those refusals into S3 error codes with every other failure.
 // -------------------------------------------------------------------------------
 
 package s3api
@@ -18,10 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -130,41 +128,16 @@ func parseTaggingDirective(h http.Header) (replace bool, tags []core.Tag, err er
 var errInvalidTaggingDirective = errors.New("invalid tagging directive")
 
 // -------------------------------------------------------------------------
-// ERROR MAPPING
-// -------------------------------------------------------------------------
-
-// writeTaggingError renders a store-layer failure as the S3 error the spec
-// names for it, falling back to the shared storage-error mapping. Validation
-// errors keep their own message, which names the offending value.
-func writeTaggingError(w http.ResponseWriter, err error) int {
-	switch {
-	case errors.Is(err, core.ErrObjectNotFound):
-		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist")
-		return http.StatusNotFound
-	case errors.Is(err, core.ErrTooManyTags):
-		writeS3Error(w, http.StatusBadRequest, "BadRequest", err.Error())
-		return http.StatusBadRequest
-	case errors.Is(err, errInvalidTaggingDirective):
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
-		return http.StatusBadRequest
-	case core.IsTagValidationError(err):
-		writeS3Error(w, http.StatusBadRequest, "InvalidTag", err.Error())
-		return http.StatusBadRequest
-	}
-	return writeStorageError(w, err, "Failed to process object tagging")
-}
-
-// -------------------------------------------------------------------------
 // HANDLERS
 // -------------------------------------------------------------------------
 
 // handleGetObjectTagging returns the object's tag set as a Tagging document.
 // An untagged object answers 200 with an empty TagSet rather than 404: the
 // object exists and simply carries nothing.
-func (s *Server) handleGetObjectTagging(ctx context.Context, w http.ResponseWriter, key string) (int, error) {
-	tags, err := s.Objects.GetObjectTags(ctx, key)
+func (s *Server) handleGetObjectTagging(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	tags, err := s.Objects.GetObjectTags(ctx, t.internalKey)
 	if err != nil {
-		return writeTaggingError(w, err), err
+		return 0, err
 	}
 	return respondXML(w, taggingDocumentFrom(tags))
 }
@@ -172,33 +145,24 @@ func (s *Server) handleGetObjectTagging(ctx context.Context, w http.ResponseWrit
 // handlePutObjectTagging replaces the object's whole tag set with the one in
 // the request body. An empty TagSet removes every tag, which the spec defines
 // as the same outcome as DeleteObjectTagging.
-func (s *Server) handlePutObjectTagging(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
+func (s *Server) handlePutObjectTagging(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
 	var doc taggingDocument
-	if status, err := decodeXMLBody(w, r, maxTaggingBody, &doc); err != nil {
-		return status, fmt.Errorf("put object tagging: %w", err)
+	if err := decodeXMLBody(w, r, maxTaggingBody, &doc); err != nil {
+		return 0, err
 	}
-
-	tags := doc.toCoreTags()
-	if err := s.Objects.PutObjectTags(ctx, key, tags); err != nil {
-		return writeTaggingError(w, err), err
+	if err := s.Objects.PutObjectTags(ctx, t.internalKey, doc.toCoreTags()); err != nil {
+		return 0, err
 	}
-
-	audit.Log(ctx, "s3.PutObjectTagging",
-		slog.String("key", key),
-		slog.Int("tag_count", len(tags)),
-	)
 	w.WriteHeader(http.StatusOK)
 	return http.StatusOK, nil
 }
 
 // handleDeleteObjectTagging removes the object's whole tag set. Removing a set
 // that is already empty succeeds: the object is there and still has no tags.
-func (s *Server) handleDeleteObjectTagging(ctx context.Context, w http.ResponseWriter, key string) (int, error) {
-	if err := s.Objects.DeleteObjectTags(ctx, key); err != nil {
-		return writeTaggingError(w, err), err
+func (s *Server) handleDeleteObjectTagging(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	if err := s.Objects.DeleteObjectTags(ctx, t.internalKey); err != nil {
+		return 0, err
 	}
-
-	audit.Log(ctx, "s3.DeleteObjectTagging", slog.String("key", key))
 	w.WriteHeader(http.StatusNoContent)
 	return http.StatusNoContent, nil
 }

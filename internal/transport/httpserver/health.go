@@ -12,21 +12,26 @@
 package httpserver
 
 import (
-	"fmt"
-	"io"
 	"net/http"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
-// HealthDeps holds the signals the health and readiness handlers read.
-//
-// DBBreaker is a function rather than a reference so the handler reflects
-// breaker state without holding one past shutdown; nil reads as healthy.
+// HealthDeps holds the signals the health and readiness handlers read. Ready
+// reports initialization finished and traffic is accepted, served at
+// /health/ready. DBBreaker is a function rather than a reference so the
+// handler reflects breaker state without holding one past shutdown; nil reads
+// as healthy.
 type HealthDeps struct {
-	Ready     *atomic.Bool                   // initialization finished and accepting traffic; served at /health/ready
-	DBBreaker func() *breaker.CircuitBreaker // resolved lazily
+	Ready     *atomic.Bool
+	DBBreaker func() *breaker.CircuitBreaker
+}
+
+// healthStatus is the body both endpoints answer with.
+type healthStatus struct {
+	Status string `json:"status"`
 }
 
 // registerHealthEndpoints mounts /health and /health/ready on mux.
@@ -36,19 +41,14 @@ func registerHealthEndpoints(mux *http.ServeMux, deps HealthDeps) {
 		if cb := deps.DBBreaker(); cb != nil && !cb.IsHealthy() {
 			status = "degraded"
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":%q}`, status)
+		httputil.WriteJSON(w, http.StatusOK, healthStatus{Status: status})
 	})
 
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if !deps.Ready.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, `{"status":"not ready"}`)
+			httputil.WriteJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not ready"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"status":"ready"}`)
+		httputil.WriteJSON(w, http.StatusOK, healthStatus{Status: "ready"})
 	})
 }

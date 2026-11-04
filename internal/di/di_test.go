@@ -75,7 +75,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"Scrubber", func(i do.Injector) error { _, err := ProvideScrubber(i); return err }},
 		{"BackendStateManager", func(i do.Injector) error { _, err := ProvideBackendStateManager(i); return err }},
 		{"Reconciler", func(i do.Injector) error { _, err := ProvideReconciler(i); return err }},
-		{"BucketAuth", func(i do.Injector) error { _, err := ProvideBucketAuth(i); return err }},
+		{"LiveRegistry", func(i do.Injector) error { _, err := ProvideLiveRegistry(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
 		{"RateLimiter", func(i do.Injector) error { _, err := ProvideRateLimiter(i); return err }},
 		{"UIHandler", func(i do.Injector) error { _, err := ProvideUIHandler(i); return err }},
@@ -119,8 +119,9 @@ func TestProvideLoginThrottle(t *testing.T) {
 	lt.Close()
 }
 
-// TestProvideBucketAuth verifies the BucketRegistry is built from cfg.Buckets.
-func TestProvideBucketAuth(t *testing.T) {
+// TestProvideLiveRegistry verifies the registry in force is built from
+// cfg.Buckets.
+func TestProvideLiveRegistry(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{
@@ -133,12 +134,12 @@ func TestProvideBucketAuth(t *testing.T) {
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
 	do.Provide(inj, ProvideProvisioned)
 
-	reg, err := ProvideBucketAuth(inj)
+	reg, err := ProvideLiveRegistry(inj)
 	if err != nil {
-		t.Fatalf("ProvideBucketAuth: %v", err)
+		t.Fatalf("ProvideLiveRegistry: %v", err)
 	}
-	if reg == nil {
-		t.Fatal("ProvideBucketAuth returned nil registry")
+	if reg.Load() == nil {
+		t.Fatal("ProvideLiveRegistry holds no registry")
 	}
 	declared, err := ProvideDeclared(inj)
 	if err != nil || !slices.Contains(declared.Names(), "test") {
@@ -443,7 +444,7 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	for _, unwanted := range []string{
 		"internal/encryption.Encryptor",
 		"internal/counter.RedisCounterBackend",
-		"internal/transport/s3api.RateLimiter",
+		"internal/transport/httputil.RateLimiter",
 		"internal/transport/ui.Handler",
 		"internal/notify.Notifier",
 	} {
@@ -565,7 +566,7 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 	if _, err := do.Invoke[*admin.Handler](inj); err != nil {
 		t.Errorf("AdminHandler: %v", err)
 	}
-	if _, err := do.Invoke[*s3api.RateLimiter](inj); err != nil {
+	if _, err := do.Invoke[*httputil.RateLimiter](inj); err != nil {
 		t.Errorf("RateLimiter: %v", err)
 	}
 	if _, err := do.Invoke[*httputil.LoginThrottle](inj); err != nil {

@@ -14,37 +14,33 @@
 // method (the rightmost entry appended by your trusted proxy).
 // -------------------------------------------------------------------------------
 
-package s3api
+package httputil
 
 import (
-	"context"
-	"log/slog"
+	"cmp"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// RateLimiter provides per-IP token-bucket rate limiting.
+// RateLimiter provides per-IP token-bucket rate limiting. rate and burst are
+// read and changed under the visitor table's lock.
 type RateLimiter struct {
-	mu             sync.Mutex
-	limiters       map[string]*visitorLimiter
+	visitors       *ipTable[visitorLimiter]
 	rate           rate.Limit
 	burst          int
 	trustedProxies []*net.IPNet
-	stop           context.CancelFunc
 }
 
 // visitorLimiter is the per-IP token bucket plus the lastSeen
@@ -64,86 +60,65 @@ type visitorLimiter struct {
 // NewRateLimiter creates a rate limiter with the given configuration, whose
 // defaults the config loader filled.
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
-	ctx, stop := context.WithCancel(context.Background())
-	rl := &RateLimiter{
-		limiters:       make(map[string]*visitorLimiter),
+	return &RateLimiter{
+		visitors: newIPTable(cfg.CleanupInterval, func(v *visitorLimiter, now time.Time) bool {
+			return v.lastSeen.Before(now.Add(-cfg.CleanupMaxAge))
+		}),
 		rate:           rate.Limit(cfg.RequestsPerSec),
 		burst:          cfg.Burst,
-		trustedProxies: httputil.ParseTrustedProxies(cfg.TrustedProxies),
-		stop:           stop,
+		trustedProxies: ParseTrustedProxies(cfg.TrustedProxies),
 	}
-	go syncutil.Every(ctx, cfg.CleanupInterval, func(context.Context) { rl.cleanup(cfg.CleanupMaxAge) })
-	return rl
 }
 
 // Close stops the background cleanup goroutine. Safe to call multiple times.
 func (rl *RateLimiter) Close() {
-	rl.stop()
+	rl.visitors.close()
 }
 
 // UpdateLimits changes the rate and burst and resets all existing per-IP
 // limiters so the new limits take effect immediately.
 func (rl *RateLimiter) UpdateLimits(requestsPerSec float64, burst int) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	rl.rate = rate.Limit(requestsPerSec)
-	rl.burst = burst
-	rl.limiters = make(map[string]*visitorLimiter)
+	rl.visitors.reset(func() {
+		rl.rate = rate.Limit(requestsPerSec)
+		rl.burst = burst
+	})
 }
 
 // -------------------------------------------------------------------------
-// ALLOW / CLEANUP
+// ALLOW
 // -------------------------------------------------------------------------
 
 // Allow checks whether a request from the given IP is allowed.
 func (rl *RateLimiter) Allow(ip string) bool {
-	rl.mu.Lock()
-	v, ok := rl.limiters[ip]
-	if !ok {
-		v = &visitorLimiter{
-			limiter: rate.NewLimiter(rl.rate, rl.burst),
+	var limiter *rate.Limiter
+	rl.visitors.visit(ip, func(v *visitorLimiter) *visitorLimiter {
+		if v == nil {
+			v = &visitorLimiter{limiter: rate.NewLimiter(rl.rate, rl.burst)}
 		}
-		rl.limiters[ip] = v
-	}
-	v.lastSeen = time.Now()
-	rl.mu.Unlock()
-
-	return v.limiter.Allow()
-}
-
-// cleanup removes entries not seen within the given duration.
-func (rl *RateLimiter) cleanup(maxAge time.Duration) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	cutoff := time.Now().Add(-maxAge)
-	for ip, v := range rl.limiters {
-		if v.lastSeen.Before(cutoff) {
-			delete(rl.limiters, ip)
-		}
-	}
+		v.lastSeen = time.Now()
+		limiter = v.limiter
+		return v
+	})
+	return limiter.Allow()
 }
 
 // -------------------------------------------------------------------------
-// MIDDLEWARE AND IP EXTRACTION
+// MIDDLEWARE
 // -------------------------------------------------------------------------
 
 // Middleware returns per-IP rate limiting for one surface. A refused request
 // is answered through writeErr, in the format that surface's clients read, and
 // audited as route.RateLimitRejected, where route is "s3" or "admin".
-func (rl *RateLimiter) Middleware(route string, writeErr httputil.ErrorWriter) func(http.Handler) http.Handler {
+func (rl *RateLimiter) Middleware(route string, writeErr ErrorWriter) func(http.Handler) http.Handler {
 	event := route + ".RateLimitRejected"
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := rl.extractIP(r)
+			ip := ExtractClientIP(r, rl.trustedProxies)
 			if !rl.Allow(ip) {
 				telemetry.RateLimitRejectionsTotal.Inc()
-				audit.Log(r.Context(), event,
-					slog.String("client_ip", ip),
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path),
-				)
-				w.Header().Set("Retry-After", "1")
-				writeErr(w, http.StatusTooManyRequests, "SlowDown", "Rate limit exceeded")
+				RefuseThrottled(w, r, writeErr, &Throttled{
+					Event: event, Status: http.StatusTooManyRequests, Message: "Rate limit exceeded", Client: ip,
+				})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -151,8 +126,25 @@ func (rl *RateLimiter) Middleware(route string, writeErr httputil.ErrorWriter) f
 	}
 }
 
-// extractIP gets the client IP from the request, trusting X-Forwarded-For only
-// from the configured proxies.
-func (rl *RateLimiter) extractIP(r *http.Request) string {
-	return httputil.ExtractClientIP(r, rl.trustedProxies)
+// -------------------------------------------------------------------------
+// THROTTLED REFUSAL
+// -------------------------------------------------------------------------
+
+// Throttled is a request turned away for load before it reached its handler:
+// the audit event it is filed under, the status and message it answers with,
+// and the client address it names, r.RemoteAddr when empty.
+type Throttled struct {
+	Event   string
+	Status  int
+	Message string
+	Client  string
+}
+
+// RefuseThrottled audits t and answers SlowDown through writeErr, asking the
+// client to retry in a second. Every load refusal on every surface answers and
+// records the same way.
+func RefuseThrottled(w http.ResponseWriter, r *http.Request, writeErr ErrorWriter, t *Throttled) {
+	audit.Log(r.Context(), t.Event, logfmt.RequestFrom(r, cmp.Or(t.Client, r.RemoteAddr))...)
+	w.Header().Set("Retry-After", "1")
+	writeErr(w, t.Status, "SlowDown", t.Message)
 }

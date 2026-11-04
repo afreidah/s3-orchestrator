@@ -18,11 +18,13 @@ package ui
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -45,7 +47,7 @@ func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.Handle
 		user, ok := h.sessionUser(r)
 		if !ok || !canUseDashboard(user) {
 			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
-				h.log.WarnContext(r.Context(), "unauthorized API request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
+				h.log.LogAttrs(r.Context(), slog.LevelWarn, "unauthorized API request", logfmt.Request(r)...)
 				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
@@ -56,7 +58,7 @@ func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.Handle
 		// CSRF check on state-changing API requests
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 			if !h.validCSRFToken(r) {
-				h.log.WarnContext(r.Context(), "CSRF token mismatch", "path", r.URL.Path, "client_addr", r.RemoteAddr)
+				h.log.LogAttrs(r.Context(), slog.LevelWarn, "CSRF token mismatch", logfmt.Request(r)...)
 				httputil.WriteJSONError(w, http.StatusForbidden, "CSRF token missing or invalid")
 				return
 			}

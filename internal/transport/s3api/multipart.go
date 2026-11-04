@@ -14,7 +14,6 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -38,11 +37,11 @@ const listingPageLimit = 1000
 
 // initiateMultipartUploadResult is the XML response for CreateMultipartUpload.
 type initiateMultipartUploadResult struct {
-	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
-	Xmlns    string   `xml:"xmlns,attr"`
-	Bucket   string   `xml:"Bucket"`
-	Key      string   `xml:"Key"`
-	UploadId string   `xml:"UploadId"`
+	XMLName  xml.Name    `xml:"InitiateMultipartUploadResult"`
+	Xmlns    s3Namespace `xml:"xmlns,attr"`
+	Bucket   string      `xml:"Bucket"`
+	Key      string      `xml:"Key"`
+	UploadId string      `xml:"UploadId"`
 }
 
 // completeMultipartUploadRequest is the XML request body for CompleteMultipartUpload.
@@ -58,25 +57,25 @@ type completePart struct {
 
 // completeMultipartUploadResult is the XML response for CompleteMultipartUpload.
 type completeMultipartUploadResult struct {
-	XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Bucket  string   `xml:"Bucket"`
-	Key     string   `xml:"Key"`
-	ETag    string   `xml:"ETag"`
+	XMLName xml.Name    `xml:"CompleteMultipartUploadResult"`
+	Xmlns   s3Namespace `xml:"xmlns,attr"`
+	Bucket  string      `xml:"Bucket"`
+	Key     string      `xml:"Key"`
+	ETag    string      `xml:"ETag"`
 }
 
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
-	XMLName              xml.Name   `xml:"ListPartsResult"`
-	Xmlns                string     `xml:"xmlns,attr"`
-	Bucket               string     `xml:"Bucket"`
-	Key                  string     `xml:"Key"`
-	UploadId             string     `xml:"UploadId"`
-	PartNumberMarker     int        `xml:"PartNumberMarker"`
-	NextPartNumberMarker int        `xml:"NextPartNumberMarker"`
-	MaxParts             int        `xml:"MaxParts"`
-	IsTruncated          bool       `xml:"IsTruncated"`
-	Parts                []partInfo `xml:"Part"`
+	XMLName              xml.Name    `xml:"ListPartsResult"`
+	Xmlns                s3Namespace `xml:"xmlns,attr"`
+	Bucket               string      `xml:"Bucket"`
+	Key                  string      `xml:"Key"`
+	UploadId             string      `xml:"UploadId"`
+	PartNumberMarker     int         `xml:"PartNumberMarker"`
+	NextPartNumberMarker int         `xml:"NextPartNumberMarker"`
+	MaxParts             int         `xml:"MaxParts"`
+	IsTruncated          bool        `xml:"IsTruncated"`
+	Parts                []partInfo  `xml:"Part"`
 }
 
 // partInfo holds part metadata for the ListParts response.
@@ -91,25 +90,15 @@ type partInfo struct {
 // HANDLERS
 // -------------------------------------------------------------------------
 
-// handleCreateMultipartUpload handles POST /{bucket}/{key}?uploads
-// key is the user-facing key (for XML response), internalKey is the prefixed
-// key used for storage.
-func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, internalKey string) (int, error) {
-	contentType, metadata, status, err, ok := uploadHeaders(w, r)
-	if !ok {
-		return status, err
+// handleCreateMultipartUpload handles POST /{bucket}/{key}?uploads. The
+// response names the client's key; the upload is opened under the internal one.
+func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	contentType, metadata, err := uploadHeaders(r)
+	if err != nil {
+		return 0, err
 	}
-
-	// Check per-bucket multipart upload limit
-	if limit := s.GetBucketAuth().MaxMultipartUploads(bucket); limit > 0 {
-		count, err := s.Multipart.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
-		if err != nil {
-			return writeStorageError(w, err, "Failed to check multipart upload count"), err
-		}
-		if count >= int64(limit) {
-			writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Too many active multipart uploads")
-			return http.StatusServiceUnavailable, errors.New("multipart upload limit reached")
-		}
+	if err := s.checkUploadLimit(ctx, t.bucket); err != nil {
+		return 0, err
 	}
 
 	// Refused before the upload is opened, so an unusable tag set costs no
@@ -117,48 +106,61 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 	// after the client has transferred everything.
 	tags, err := parseTaggingHeader(r.Header.Get("x-amz-tagging"))
 	if err != nil {
-		return writeTaggingError(w, err), err
+		return 0, err
 	}
 
 	uploadID, _, err := s.Multipart.CreateMultipartUpload(ctx, &multipart.CreateUploadRequest{
-		Key:         internalKey,
+		Key:         t.internalKey,
 		ContentType: contentType,
 		Metadata:    metadata,
 		Tags:        tags,
 	})
 	if err != nil {
-		return writeStorageError(w, err, "Failed to create multipart upload"), err
+		return 0, err
 	}
 
-	result := initiateMultipartUploadResult{
-		Xmlns:    s3XMLNS,
-		Bucket:   bucket,
-		Key:      key,
-		UploadId: uploadID,
-	}
+	return respondXML(w, initiateMultipartUploadResult{Bucket: t.bucket, Key: t.key, UploadId: uploadID})
+}
 
-	return respondXML(w, result)
+// errUploadLimit refuses a new upload to a bucket already holding as many open
+// uploads as it allows.
+var errUploadLimit = s3Err(http.StatusServiceUnavailable, "SlowDown", "Too many active multipart uploads")
+
+// checkUploadLimit refuses a new upload to a bucket at its configured ceiling of
+// open uploads. A bucket with no ceiling is never counted.
+func (s *Server) checkUploadLimit(ctx context.Context, bucket string) error {
+	limit := s.registry.Load().MaxMultipartUploads(bucket)
+	if limit <= 0 {
+		return nil
+	}
+	count, err := s.Multipart.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
+	if err != nil {
+		return err
+	}
+	if count >= int64(limit) {
+		return errUploadLimit
+	}
+	return nil
 }
 
 // errCopyRangeMalformed and errCopyRangeUnsatisfiable separate a copy-source
 // range this server cannot read from one it reads fine but the source object
-// cannot satisfy. S3 answers the two with different status codes.
+// cannot satisfy: the caller's mistake, or a 416 against that object.
 var (
-	errCopyRangeMalformed     = errors.New("malformed x-amz-copy-source-range")
-	errCopyRangeUnsatisfiable = errors.New("x-amz-copy-source-range lies outside the source object")
+	errCopyRangeMalformed     = s3Err(http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source-range")
+	errCopyRangeUnsatisfiable = s3Err(http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+		"The x-amz-copy-source-range is not satisfiable for the source object")
 )
 
 // parsePartNumber reads the partNumber query parameter both part-upload forms
-// require. ok=false means the response has already been written and the caller
-// must propagate the (status, error) unchanged.
-func parsePartNumber(w http.ResponseWriter, r *http.Request) (int, int, error, bool) {
-	partNumberStr := r.URL.Query().Get("partNumber")
-	partNumber, err := strconv.Atoi(partNumberStr)
-	if err != nil || !core.ValidPartNumber(partNumber) {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
-		return 0, http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr), false
+// require. It is parsed at 32 bits because the stores keep it in an int32.
+func parsePartNumber(t *target) (int, error) {
+	raw := t.query.Get("partNumber")
+	partNumber, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || !core.ValidPartNumber(int(partNumber)) {
+		return 0, fmt.Errorf("%w: %q", s3Err(http.StatusBadRequest, "InvalidArgument", "Invalid part number"), raw)
 	}
-	return partNumber, 0, nil, true
+	return int(partNumber), nil
 }
 
 // parseCopySourceRange resolves an x-amz-copy-source-range against a source of
@@ -188,33 +190,19 @@ func parseCopySourceRange(spec string, sourceSize int64) (string, int64, error) 
 	return byterange.Header(first, last), last - first + 1, nil
 }
 
-// writeCopySourceRangeError renders a copy-source range failure: one this
-// server cannot parse is the caller's mistake, one the source cannot satisfy
-// is a 416 against that object.
-func writeCopySourceRangeError(w http.ResponseWriter, err error) (int, error) {
-	if errors.Is(err, errCopyRangeUnsatisfiable) {
-		writeS3Error(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
-			"The x-amz-copy-source-range is not satisfiable for the source object")
-		return http.StatusRequestedRangeNotSatisfiable, err
-	}
-	writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source-range")
-	return http.StatusBadRequest, err
-}
-
 // handleUploadPartCopy handles PUT /{bucket}/{key}?partNumber=N&uploadId=X
 // carrying X-Amz-Copy-Source: the part's bytes come from a range of an object
 // that already exists rather than from the request body. The bytes stream
 // through the orchestrator because the part is stored under the upload's own
 // part key, which no backend-side CopySource can name.
-func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey, copySource string) (int, error) {
-	partNumber, status, err, ok := parsePartNumber(w, r)
-	if !ok {
-		return status, err
+func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	partNumber, err := parsePartNumber(t)
+	if err != nil {
+		return 0, err
 	}
-
-	sourceKey, status, err, ok := resolveCopySource(w, rk.bucket, copySource)
-	if !ok {
-		return status, err
+	sourceKey, err := resolveCopySource(r, t)
+	if err != nil {
+		return 0, err
 	}
 
 	// HEAD first: the range is validated against the source's real length, so
@@ -222,21 +210,20 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 	// the request was wrong.
 	head, err := s.Objects.HeadObject(ctx, sourceKey)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to read copy source"), err
+		return 0, err
 	}
 
 	rangeHeader, size, err := parseCopySourceRange(r.Header.Get(headerCopySourceRange), head.Size)
 	if err != nil {
-		return writeCopySourceRangeError(w, err)
+		return 0, err
 	}
-	if s.MaxObjectSize > 0 && size > s.MaxObjectSize {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Part size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("copied part size %d exceeds max %d", size, s.MaxObjectSize)
+	if err := s.checkSize(size, "Part"); err != nil {
+		return 0, err
 	}
 
 	source, err := s.Objects.GetObject(ctx, sourceKey, rangeHeader)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to read copy source"), err
+		return 0, err
 	}
 	defer source.Body.Close()
 
@@ -249,9 +236,9 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 		partSize = size
 	}
 
-	etag, err := s.Multipart.UploadPart(ctx, rk.bucket, rk.key, rk.uploadID, partNumber, source.Body, partSize)
+	etag, err := s.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, source.Body, partSize)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to copy part"), err
+		return 0, err
 	}
 
 	return respondCopy(w, "CopyPartResult", etag, head.LastModified)
@@ -261,21 +248,18 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 // bucket and key scope the upload to the request URL so an attacker holding
 // credentials for one bucket cannot write parts to a multipart upload that
 // belongs to another (the manager rejects with 404 NoSuchUpload).
-func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
-	uploadID := r.URL.Query().Get("uploadId")
-
-	partNumber, status, err, ok := parsePartNumber(w, r)
-	if !ok {
-		return status, err
-	}
-
-	if status, err, ok := enforceContentLength(w, r, s.MaxObjectSize, "Part"); !ok {
-		return status, err
-	}
-
-	etag, err := s.Multipart.UploadPart(ctx, bucket, key, uploadID, partNumber, r.Body, r.ContentLength)
+func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	partNumber, err := parsePartNumber(t)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to upload part"), err
+		return 0, err
+	}
+	if err := s.acceptBody(w, r, "Part"); err != nil {
+		return 0, err
+	}
+
+	etag, err := s.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, r.Body, r.ContentLength)
+	if err != nil {
+		return 0, err
 	}
 
 	w.Header().Set("ETag", etag)
@@ -284,12 +268,10 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 }
 
 // handleCompleteMultipartUpload handles POST /{bucket}/{key}?uploadId=X
-func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
-	uploadID := r.URL.Query().Get("uploadId")
-
+func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
 	var req completeMultipartUploadRequest
-	if status, err := decodeXMLBody(w, r, maxCompleteMultipartBody, &req); err != nil {
-		return status, fmt.Errorf("complete multipart upload: %w", err)
+	if err := decodeXMLBody(w, r, maxCompleteMultipartBody, &req); err != nil {
+		return 0, err
 	}
 
 	// Carry the client's ETags through: the manager compares each one to the
@@ -301,45 +283,36 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		partNumbers[i] = p.PartNumber
 	}
 
-	if status, err := s.checkMultipartTotalSize(ctx, w, bucket, key, uploadID, partNumbers); err != nil {
-		return status, err
+	if err := s.checkAssemblySize(ctx, t, partNumbers); err != nil {
+		return 0, err
 	}
 
 	// CompleteMultipartUpload is the moment a multipart upload becomes a
 	// resolvable key, so the precondition is evaluated here, not at
 	// CreateMultipartUpload (parts can be uploaded against a key that is
 	// only later observed to already exist).
-	if status, err, done := s.checkIfNoneMatchStar(ctx, w, r, key); done {
-		return status, err
+	if err := s.checkIfNoneMatchStar(ctx, r, t.internalKey); err != nil {
+		return 0, err
 	}
 
-	etag, err := s.Multipart.CompleteMultipartUpload(ctx, bucket, key, uploadID, manifest)
+	etag, err := s.Multipart.CompleteMultipartUpload(ctx, t.bucket, t.key, t.uploadID, manifest)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to complete multipart upload"), err
+		return 0, err
 	}
 
-	result := completeMultipartUploadResult{
-		Xmlns:  s3XMLNS,
-		Bucket: bucket,
-		Key:    key,
-		ETag:   etag,
-	}
-
-	return respondXML(w, result)
+	return respondXML(w, completeMultipartUploadResult{Bucket: t.bucket, Key: t.key, ETag: etag})
 }
 
-// checkMultipartTotalSize validates the combined assembled size against
-// MaxObjectSize before the expensive reassembly path runs (read all
-// parts + re-upload combined object). Returns (0, nil) when the limit is
-// disabled or the assembly is within bounds. bucket/key scope the
-// underlying GetParts call to the request URL.
-func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWriter, bucket, key, uploadID string, partNumbers []int) (int, error) {
+// checkAssemblySize refuses a completion whose named parts add up past the
+// object ceiling, before the expensive reassembly reads them all back. Nothing
+// is fetched when no ceiling is configured.
+func (s *Server) checkAssemblySize(ctx context.Context, t *target, partNumbers []int) error {
 	if s.MaxObjectSize <= 0 {
-		return 0, nil
+		return nil
 	}
-	parts, err := s.Multipart.GetParts(ctx, bucket, key, uploadID)
+	parts, err := s.Multipart.GetParts(ctx, t.bucket, t.key, t.uploadID)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to get parts"), err
+		return err
 	}
 	requested := make(map[int]bool, len(partNumbers))
 	for _, pn := range partNumbers {
@@ -351,20 +324,15 @@ func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWri
 			totalSize += parts[i].SizeBytes
 		}
 	}
-	if totalSize > s.MaxObjectSize {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Combined object size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("combined size %d exceeds max %d", totalSize, s.MaxObjectSize)
-	}
-	return 0, nil
+	return s.checkSize(totalSize, "Combined object")
 }
 
 // handleAbortMultipartUpload handles DELETE /{bucket}/{key}?uploadId=X.
 // bucket and key scope the abort to the request URL so a caller for one
 // bucket cannot wipe an in-flight upload that belongs to another.
-func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.ResponseWriter, bucket, key, uploadID string) (int, error) {
-	err := s.Multipart.AbortMultipartUpload(ctx, bucket, key, uploadID)
-	if err != nil {
-		return writeStorageError(w, err, "Failed to abort multipart upload"), err
+func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	if err := s.Multipart.AbortMultipartUpload(ctx, t.bucket, t.key, t.uploadID); err != nil {
+		return 0, err
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -374,7 +342,7 @@ func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.Response
 // xmlListMultipartUploadsResult is the XML response for ListMultipartUploads.
 type xmlListMultipartUploadsResult struct {
 	XMLName     xml.Name    `xml:"ListMultipartUploadsResult"`
-	Xmlns       string      `xml:"xmlns,attr"`
+	Xmlns       s3Namespace `xml:"xmlns,attr"`
 	Bucket      string      `xml:"Bucket"`
 	MaxUploads  int         `xml:"MaxUploads"`
 	IsTruncated bool        `xml:"IsTruncated"`
@@ -391,24 +359,23 @@ type xmlUpload struct {
 // handleListMultipartUploads handles GET /{bucket}?uploads, returning active
 // multipart uploads scoped to the bucket. Strips the internal bucket prefix
 // from keys before returning to clients.
-func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	bucketPrefix := internalkey.Prefix(bucket)
+func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	bucketPrefix := internalkey.Prefix(t.bucket)
 
-	maxUploads, err := httputil.QueryCount(r.URL.Query(), "max-uploads", listingPageLimit, listingPageLimit)
+	maxUploads, err := queryCount(t, "max-uploads", listingPageLimit, listingPageLimit)
 	if err != nil {
-		return invalidArgument(w, err)
+		return 0, err
 	}
 
 	// Fetch one extra to detect truncation
 	uploads, err := s.Multipart.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to list multipart uploads"), err
+		return 0, err
 	}
 	uploads, truncated := core.TrimPage(uploads, maxUploads)
 
 	result := xmlListMultipartUploadsResult{
-		Xmlns:       s3XMLNS,
-		Bucket:      bucket,
+		Bucket:      t.bucket,
 		MaxUploads:  maxUploads,
 		IsTruncated: truncated,
 	}
@@ -430,29 +397,25 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 // user-facing key for the XML response. NextPartNumberMarker is the last part
 // returned, or 0 when the page is empty, and is reported even when the page is
 // not truncated, as S3 does.
-func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
-	q := r.URL.Query()
-	uploadID := q.Get("uploadId")
-
-	maxParts, err := httputil.QueryCount(q, "max-parts", listingPageLimit, listingPageLimit)
+func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	maxParts, err := queryCount(t, "max-parts", listingPageLimit, listingPageLimit)
 	if err != nil {
-		return invalidArgument(w, err)
+		return 0, err
 	}
-	marker, err := httputil.QueryCount(q, "part-number-marker", 0, httputil.NoCeiling)
+	marker, err := queryCount(t, "part-number-marker", 0, httputil.NoCeiling)
 	if err != nil {
-		return invalidArgument(w, err)
+		return 0, err
 	}
 
-	parts, truncated, err := s.Multipart.ListParts(ctx, bucket, key, uploadID, marker, maxParts)
+	parts, truncated, err := s.Multipart.ListParts(ctx, t.bucket, t.key, t.uploadID, marker, maxParts)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to list parts"), err
+		return 0, err
 	}
 
 	result := listPartsResult{
-		Xmlns:            s3XMLNS,
-		Bucket:           bucket,
-		Key:              key,
-		UploadId:         uploadID,
+		Bucket:           t.bucket,
+		Key:              t.key,
+		UploadId:         t.uploadID,
 		PartNumberMarker: marker,
 		MaxParts:         maxParts,
 		IsTruncated:      truncated,

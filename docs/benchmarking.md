@@ -34,7 +34,7 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 |------|---------------|
 | `internal/transport/auth/auth_bench_test.go` | SigV4 verification, secret-keypair (dashboard login) auth, canonical request building |
 | `internal/transport/s3api/admission_bench_test.go` | Admission gate, split read/write pools |
-| `internal/transport/s3api/ratelimit_bench_test.go` | Per-credential rate limit checks |
+| `internal/transport/httputil/ratelimit_bench_test.go` | Per-IP rate limit checks |
 | `internal/transport/s3api/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
 | `internal/proxy/object/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
 | `internal/proxy/infra/streaming_bench_test.go` | Raw io.Copy throughput, StreamCopy end-to-end with mock backends |

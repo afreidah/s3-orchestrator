@@ -9,13 +9,15 @@
 // type whose underlying struct lacks JSON tags, which downstream JS log
 // viewers render as "[object Object]" and operators cannot grep. Using
 // err.Error() guarantees a printable string in every handler. Component pins
-// the canonical key documented in docs/contributing/logging.md.
+// the canonical key documented in docs/contributing/logging.md, and Request
+// names an inbound HTTP request the same way on every surface.
 // -------------------------------------------------------------------------------
 
 package logfmt
 
 import (
 	"log/slog"
+	"net/http"
 )
 
 // Err returns a slog.Attr carrying err.Error() under the canonical "error"
@@ -33,6 +35,23 @@ func Err(err error) slog.Attr {
 // the same component label, not in the message string.
 func Component(name string) slog.Attr {
 	return slog.String("component", name)
+}
+
+// Request returns the method, path and client address that name an inbound
+// HTTP request in a log line or audit entry, followed by extra. Every surface
+// starts its request records with these three, so one query reads them all.
+func Request(r *http.Request, extra ...slog.Attr) []slog.Attr {
+	return RequestFrom(r, r.RemoteAddr, extra...)
+}
+
+// RequestFrom is Request naming client, an address the caller resolved through
+// its trusted proxies, in place of r.RemoteAddr.
+func RequestFrom(r *http.Request, client string, extra ...slog.Attr) []slog.Attr {
+	return append([]slog.Attr{
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("client_addr", client),
+	}, extra...)
 }
 
 // TransformAttr returns a with an error value replaced by its Error() string,

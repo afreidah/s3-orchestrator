@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// What the admin API and the dashboard record when a user's grants do not
-// carry a request: one warning and one audit entry, naming what was asked of
-// which resource, what that required against what the user held, and why. Both
-// surfaces record through here, so an operator reading either can fix the
-// grant without a second lookup.
+// What the S3 API, the admin API and the dashboard record when a user's grants
+// do not carry a request: one warning and one audit entry, naming what was asked
+// of which resource, what that required against what the user held, and why.
+// Every surface records through here, so an operator reading any of them can
+// fix the grant without a second lookup.
 // -------------------------------------------------------------------------------
 
 package auth
@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -40,16 +41,13 @@ type Denial struct {
 // Record logs the denial as a warning and writes its audit entry, both naming
 // the request's method, path and client address.
 func (d *Denial) Record(r *http.Request, log *slog.Logger) {
-	attrs := []slog.Attr{
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
+	attrs := logfmt.Request(r,
 		slog.String("operation", d.Operation),
 		slog.String("resource", d.Resource.String()),
 		slog.String("required", d.Required.String()),
 		slog.String("held", d.held().String()),
 		slog.String("reason", d.Reason),
-	}
+	)
 	log.LogAttrs(r.Context(), slog.LevelWarn, "request not permitted by grant",
 		append(attrs, slog.String("event", d.Event), slog.String("user", d.userID()))...)
 	audit.Log(r.Context(), d.Event, append(attrs, slog.Int("status", http.StatusForbidden))...)

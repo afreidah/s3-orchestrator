@@ -26,7 +26,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // resolutionError wraps a failed Optional[T] resolution with the subsystem's
@@ -144,7 +143,7 @@ func (h *rateLimitHook) Apply(_ context.Context, cfg *config.Config) (HookStatus
 	if !cfg.RateLimit.Enabled {
 		return HookSkipped, nil
 	}
-	return applyResolved(h.inj, "rate limiter", func(rl *s3api.RateLimiter) error {
+	return applyResolved(h.inj, "rate limiter", func(rl *httputil.RateLimiter) error {
 		rl.UpdateLimits(cfg.RateLimit.RequestsPerSec, cfg.RateLimit.Burst)
 		return nil
 	})

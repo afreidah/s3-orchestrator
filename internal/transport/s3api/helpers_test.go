@@ -132,30 +132,6 @@ func TestIsValidRequestID(t *testing.T) {
 	}
 }
 
-// TestXmlEscape verifies the xml escape contract.
-// Asserts that xmlEscape() = , want.
-func TestXmlEscape(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"hello", "hello"},
-		{"a&b", "a&amp;b"},
-		{"<tag>", "&lt;tag&gt;"},
-		{`"quoted"`, "&quot;quoted&quot;"},
-		{"it's", "it&apos;s"},
-		{"a&b<c>d\"e'f", "a&amp;b&lt;c&gt;d&quot;e&apos;f"},
-	}
-
-	for _, tt := range tests {
-		got := xmlEscape(tt.input)
-		if got != tt.want {
-			t.Errorf("xmlEscape(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 // -------------------------------------------------------------------------
 // extractUserMetadata
 // -------------------------------------------------------------------------
@@ -348,15 +324,15 @@ func TestFindInvalidMetadataByte_RejectsHeaderInjection(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// writeS3Error
+// WriteS3Error
 // -------------------------------------------------------------------------
 
-// TestWriteS3Error_SetsContentLength verifies the write s3 error sets content length contract.
-// Asserts that status = , want.
+// TestWriteS3Error_SetsContentLength verifies the error body is sent with a
+// Content-Length matching it.
 func TestWriteS3Error_SetsContentLength(t *testing.T) {
 	t.Parallel()
 	w := httptest.NewRecorder()
-	writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+	WriteS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusNotFound {
@@ -376,15 +352,23 @@ func TestWriteS3Error_SetsContentLength(t *testing.T) {
 	}
 }
 
-// TestWriteS3Error_EscapesXML verifies the write s3 error escapes xml path by exercising httptest.NewRecorder, strings.Contains.
+// TestWriteS3Error_EscapesXML verifies a message carrying markup is escaped,
+// and that the body reads back as the code and message written.
 func TestWriteS3Error_EscapesXML(t *testing.T) {
 	t.Parallel()
 	w := httptest.NewRecorder()
-	writeS3Error(w, http.StatusBadRequest, "Test", "<script>alert('xss')</script>")
+	msg := "<script>alert('xss')</script> & more"
+	WriteS3Error(w, http.StatusBadRequest, "Test", msg)
 
-	body := w.Body.String()
-	if strings.Contains(body, "<script>") {
+	if strings.Contains(w.Body.String(), "<script>") {
 		t.Error("XML special characters not escaped in error body")
+	}
+	var doc errorDocument
+	if err := xml.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("error body does not parse: %v", err)
+	}
+	if doc.Code != "Test" || doc.Message != msg {
+		t.Errorf("error body = %+v, want code Test and the message as written", doc)
 	}
 }
 
@@ -408,14 +392,18 @@ type decodeTarget struct {
 	Keys    []string `xml:"Object>Key"`
 }
 
-// decodeBody runs decodeXMLBody against body with the given limit.
+// decodeBody runs decodeXMLBody against body with the given limit, and reports
+// the status a failure answers with.
 func decodeBody(t *testing.T, body string, limit int64) (int, *decodeTarget, error) {
 	t.Helper()
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mybucket?delete", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	var got decodeTarget
-	status, err := decodeXMLBody(w, r, limit, &got)
-	return status, &got, err
+	if err := decodeXMLBody(w, r, limit, &got); err != nil {
+		s3e, _ := classifyError(err)
+		return s3e.StatusCode, &got, err
+	}
+	return http.StatusOK, &got, nil
 }
 
 // TestDecodeXMLBody_AcceptsOneDocument verifies an ordinary request decodes.

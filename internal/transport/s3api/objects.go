@@ -13,7 +13,6 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,14 +25,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
-// errIfNoneMatchExists is returned by handlePut when the request carries
-// `If-None-Match: *` and a location row already exists for the target key.
-// Used so the audit log captures a typed reason for the 412 response.
-var errIfNoneMatchExists = errors.New("If-None-Match: * precondition failed: object exists")
+// errIfNoneMatchExists refuses a write carrying `If-None-Match: *` to a key
+// that already holds an object.
+var errIfNoneMatchExists = s3Err(http.StatusPreconditionFailed, "PreconditionFailed",
+	"At least one of the pre-conditions you specified did not hold")
 
 // -------------------------------------------------------------------------
 // XML TYPES
@@ -45,16 +43,15 @@ var errIfNoneMatchExists = errors.New("If-None-Match: * precondition failed: obj
 // what SDKs read the validator out of.
 type copyResult struct {
 	XMLName      xml.Name
-	Xmlns        string `xml:"xmlns,attr"`
-	ETag         string `xml:"ETag"`
-	LastModified string `xml:"LastModified"`
+	Xmlns        s3Namespace `xml:"xmlns,attr"`
+	ETag         string      `xml:"ETag"`
+	LastModified string      `xml:"LastModified"`
 }
 
 // respondCopy writes the copy response rooted at root.
 func respondCopy(w http.ResponseWriter, root, etag string, modified time.Time) (int, error) {
 	return respondXML(w, copyResult{
 		XMLName:      xml.Name{Local: root},
-		Xmlns:        s3XMLNS,
 		ETag:         etag,
 		LastModified: modified.UTC().Format(time.RFC3339),
 	})
@@ -84,7 +81,7 @@ type deleteObjectEntry struct {
 // deleteObjectsResult is the XML response for DeleteObjects.
 type deleteObjectsResult struct {
 	XMLName xml.Name            `xml:"DeleteResult"`
-	Xmlns   string              `xml:"xmlns,attr"`
+	Xmlns   s3Namespace         `xml:"xmlns,attr"`
 	Deleted []deletedObject     `xml:"Deleted,omitempty"`
 	Errors  []deleteObjectError `xml:"Error,omitempty"`
 }
@@ -110,22 +107,21 @@ type deleteObjectError struct {
 
 // handlePut processes PUT requests. Requires Content-Length header to enforce
 // size-based policies in later phases.
-func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	if status, err, ok := enforceContentLength(w, r, s.MaxObjectSize, "Object"); !ok {
-		return status, err
+func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	if err := s.acceptBody(w, r, "Object"); err != nil {
+		return 0, err
 	}
-
-	contentType, metadata, status, err, ok := uploadHeaders(w, r)
-	if !ok {
-		return status, err
+	contentType, metadata, err := uploadHeaders(r)
+	if err != nil {
+		return 0, err
 	}
 
 	// Best-effort precondition check before the body upload so a doomed
 	// request does not transmit. Matches AWS S3's documented behavior:
 	// the check is not a hard guarantee under contention, but eliminates
 	// the common case of a client trying to avoid clobbering a known key.
-	if status, err, done := s.checkIfNoneMatchStar(ctx, w, r, key); done {
-		return status, err
+	if err := s.checkIfNoneMatchStar(ctx, r, t.internalKey); err != nil {
+		return 0, err
 	}
 
 	// Check backend capacity before reading the request body. When the
@@ -138,8 +134,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		if hint := formatCapacityHint(s.Objects.BackendCapacityStats(ctx)); hint != "" {
 			msg += "; backend usage: " + hint
 		}
-		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", msg)
-		return http.StatusInsufficientStorage, fmt.Errorf("no backend capacity for %d bytes", r.ContentLength)
+		return 0, s3Err(http.StatusInsufficientStorage, "InsufficientStorage", msg)
 	}
 
 	// Refused alongside the capacity check and for the same reason: an
@@ -147,13 +142,13 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 	// transfer and left an object on a backend to clean up.
 	tags, err := parseTaggingHeader(r.Header.Get("x-amz-tagging"))
 	if err != nil {
-		return writeTaggingError(w, err), err
+		return 0, err
 	}
 
 	annotateObject(ctx, r.ContentLength, contentType)
 
 	etag, err := s.Objects.PutObject(ctx, &object.PutObjectRequest{
-		Key:         key,
+		Key:         t.internalKey,
 		Body:        r.Body,
 		Size:        r.ContentLength,
 		ContentType: contentType,
@@ -161,7 +156,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		Tags:        tags,
 	})
 	if err != nil {
-		return writeStorageError(w, err, "Failed to store object"), err
+		return 0, err
 	}
 
 	if etag != "" {
@@ -174,7 +169,9 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 // handleGet processes GET requests. Streams the response body directly to avoid
 // buffering large objects in memory. Supports Range requests  -  when the client
 // sends a Range header, the response is 206 Partial Content with Content-Range.
-func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
+// The bytes sent are returned for the request log.
+func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, int64, error) {
+	key := t.internalKey
 	if status, done := s.answerConditionalFromHead(ctx, w, r, key); done {
 		return status, 0, nil
 	}
@@ -183,7 +180,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	result, err := s.Objects.GetObject(ctx, key, rangeHeader)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to retrieve object"), 0, err
+		return 0, 0, err
 	}
 	defer func() { _ = result.Body.Close() }()
 	annotateObject(ctx, result.Size, result.ContentType)
@@ -208,7 +205,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		_ = result.Body.Close()
 		full, ferr := s.Objects.GetObject(ctx, key, "")
 		if ferr != nil {
-			return writeStorageError(w, ferr, "Failed to retrieve object"), 0, ferr
+			return 0, 0, ferr
 		}
 		result = full
 		setValidatorHeaders(w, result.ETag, result.LastModified)
@@ -257,10 +254,10 @@ func (s *Server) answerConditionalFromHead(ctx context.Context, w http.ResponseW
 }
 
 // handleHead processes HEAD requests.
-func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	result, err := s.Objects.HeadObject(ctx, key)
+func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	result, err := s.Objects.HeadObject(ctx, t.internalKey)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
+		return 0, err
 	}
 	annotateObject(ctx, result.Size, result.ContentType)
 
@@ -279,63 +276,61 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 
 // handleDelete processes DELETE requests. The manager treats missing objects as
 // success (S3 idempotent delete), so any error returned is a real backend failure.
-func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
-	if err := s.Objects.DeleteObject(ctx, key); err != nil {
-		return writeStorageError(w, err, "Failed to delete object"), err
+func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
+	if err := s.Objects.DeleteObject(ctx, t.internalKey); err != nil {
+		return 0, err
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 	return http.StatusNoContent, nil
 }
 
-// resolveCopySource turns an x-amz-copy-source header into the internal key it
+// resolveCopySource turns the x-amz-copy-source header into the internal key it
 // names, for both CopyObject and UploadPartCopy. A source in another bucket is
-// refused. ok=false means the response has already been written and the caller
-// must propagate the (status, error) unchanged.
-func resolveCopySource(w http.ResponseWriter, bucket, copySource string) (string, int, error, bool) {
+// refused.
+func resolveCopySource(r *http.Request, t *target) (string, error) {
+	copySource := r.Header.Get(headerCopySource)
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source encoding")
-		return "", http.StatusBadRequest, fmt.Errorf("invalid copy source encoding: %w", err), false
+		return "", fmt.Errorf("%w: %w", s3Err(http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source encoding"), err)
 	}
 	source := strings.TrimPrefix(decoded, "/")
 	sourceBucket, sourceKey, ok := parsePath("/" + source)
 	if !ok || sourceKey == "" {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source")
-		return "", http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource), false
+		return "", fmt.Errorf("%w: %q", s3Err(http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source"), copySource)
 	}
-	if sourceBucket != bucket {
-		writeS3Error(w, http.StatusForbidden, s3CodeAccessDenied, "Cross-bucket copy is not allowed")
-		return "", http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket), false
+	if sourceBucket != t.bucket {
+		return "", fmt.Errorf("%w: %s != %s", s3Err(http.StatusForbidden, s3CodeAccessDenied, "Cross-bucket copy is not allowed"),
+			sourceBucket, t.bucket)
 	}
-	return internalkey.Make(bucket, sourceKey), 0, nil, true
+	return internalkey.Make(t.bucket, sourceKey), nil
 }
 
 // handleCopyObject processes PUT requests with the x-amz-copy-source header.
 // Copies an object from the source key to the destination key, potentially
 // across backends, with atomic quota tracking. Only same-bucket copies are
 // allowed (no cross-bucket copying).
-func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
-	sourceInternalKey, status, err, ok := resolveCopySource(w, bucket, copySource)
-	if !ok {
-		return status, err
+func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
+	sourceInternalKey, err := resolveCopySource(r, t)
+	if err != nil {
+		return 0, err
 	}
 
 	// Refused before the copy so an unusable directive or tag set costs no
 	// transfer, matching how the header is handled on a plain PUT.
 	replaceTags, tags, err := parseTaggingDirective(r.Header)
 	if err != nil {
-		return writeTaggingError(w, err), err
+		return 0, err
 	}
 
 	etag, err := s.Objects.CopyObject(ctx, &object.CopyObjectRequest{
 		SourceKey:   sourceInternalKey,
-		DestKey:     destInternalKey,
+		DestKey:     t.internalKey,
 		ReplaceTags: replaceTags,
 		Tags:        tags,
 	})
 	if err != nil {
-		return writeStorageError(w, err, "Failed to copy object"), err
+		return 0, err
 	}
 
 	return respondCopy(w, "CopyObjectResult", etag, time.Now())
@@ -344,43 +339,34 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 // handleDeleteObjects processes POST /{bucket}?delete requests. Deletes up to
 // 1000 objects per request and returns per-key results in an XML response.
 // Per the S3 spec, HTTP 200 is always returned even when individual keys fail.
-func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
+func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
 	var req deleteObjectsRequest
-	if status, err := decodeXMLBody(w, r, maxDeleteObjectsBody, &req); err != nil {
-		return status, fmt.Errorf("delete objects: %w", err)
+	if err := decodeXMLBody(w, r, maxDeleteObjectsBody, &req); err != nil {
+		return 0, err
 	}
 
 	if len(req.Objects) == 0 {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "No objects specified for deletion")
-		return http.StatusBadRequest, fmt.Errorf("empty delete request")
+		return 0, s3Err(http.StatusBadRequest, "MalformedXML", "No objects specified for deletion")
 	}
 	if len(req.Objects) > 1000 {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML",
-			"DeleteObjects request may contain a maximum of 1000 objects")
-		return http.StatusBadRequest, fmt.Errorf("too many objects: %d", len(req.Objects))
+		return 0, s3Err(http.StatusBadRequest, "MalformedXML", "DeleteObjects request may contain a maximum of 1000 objects")
 	}
 
-	// Prefix each key with the bucket for internal storage
 	keys := make([]string, len(req.Objects))
 	for i, obj := range req.Objects {
-		keys[i] = internalkey.Make(bucket, obj.Key)
+		keys[i] = internalkey.Make(t.bucket, obj.Key)
 	}
 
 	results := s.Objects.DeleteObjects(ctx, keys)
 
-	// Build XML response with per-key outcomes
-	resp := deleteObjectsResult{
-		Xmlns: s3XMLNS,
-	}
+	// A per-key failure answers with the same S3 error the whole request would
+	// have, so a client reads one vocabulary.
+	var resp deleteObjectsResult
 	for i, res := range results {
 		userKey := req.Objects[i].Key
 		if res.Err != nil {
-			code, msg := deleteObjectErrorFor(res.Err)
-			resp.Errors = append(resp.Errors, deleteObjectError{
-				Key:     userKey,
-				Code:    code,
-				Message: msg,
-			})
+			s3e, _ := classifyError(res.Err)
+			resp.Errors = append(resp.Errors, deleteObjectError{Key: userKey, Code: s3e.Code, Message: s3e.Message})
 		} else if !req.Quiet {
 			resp.Deleted = append(resp.Deleted, deletedObject{Key: userKey})
 		}
@@ -389,41 +375,26 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 	return respondXML(w, resp)
 }
 
-// deleteObjectErrorFor extracts the S3-compatible error code and message for
-// a per-key DeleteObjects failure. Typed *store.S3Error values surface their
-// canonical Code/Message (e.g. NoSuchKey, ServiceUnavailable); generic errors
-// fall back to InternalError so clients still see a valid S3 error envelope.
-func deleteObjectErrorFor(err error) (code, message string) {
-	if s3err, ok := errors.AsType[*core.S3Error](err); ok {
-		return s3err.Code, s3err.Message
-	}
-	return "InternalError", "Failed to delete object"
-}
-
 // -------------------------------------------------------------------------
 // CONDITIONAL REQUEST HELPERS
 // -------------------------------------------------------------------------
 
-// checkIfNoneMatchStar evaluates a write-side `If-None-Match: *`
-// precondition before a body upload starts. Returns (status, err, true)
-// when the response has already been written and the caller must
-// return immediately, or (0, nil, false) when the request should
-// proceed normally. AWS S3 only honors the `*` form for write
-// preconditions; specific-etag values are not interpreted on write.
-func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error, bool) {
+// checkIfNoneMatchStar refuses a write carrying `If-None-Match: *` to a key
+// that already holds an object, before the body upload starts. AWS S3 only
+// honors the `*` form for write preconditions; specific-etag values are not
+// interpreted on write.
+func (s *Server) checkIfNoneMatchStar(ctx context.Context, r *http.Request, key string) error {
 	if r.Header.Get(headerIfNoneMatch) != "*" {
-		return 0, nil, false
+		return nil
 	}
 	exists, err := s.Objects.ObjectExists(ctx, key)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to evaluate conditional write"), err, true
+		return err
 	}
 	if exists {
-		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed",
-			"At least one of the pre-conditions you specified did not hold")
-		return http.StatusPreconditionFailed, errIfNoneMatchExists, true
+		return errIfNoneMatchExists
 	}
-	return 0, nil, false
+	return nil
 }
 
 // setValidatorHeaders writes the ETag and Last-Modified that identify the

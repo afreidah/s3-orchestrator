@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -167,18 +168,16 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 		CORS: []config.CORSRule{{AllowedOrigins: []string{"https://app.example.com"}, AllowedMethods: []string{"GET"}}},
 	}}})
 
-	srv := &s3api.Server{}
-	do.ProvideValue(inj, srv)
+	registry := auth.NewLiveRegistry(nil)
+	do.ProvideValue(inj, registry)
 	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
 	do.ProvideValue(inj, policy)
 
-	before := srv.GetBucketAuth()
 	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
 		t.Fatalf("Republish: %v", err)
 	}
-	after := srv.GetBucketAuth()
-	if after == nil || after == before {
-		t.Fatal("the server is still serving the registry it had before")
+	if _, ok := registry.Load().UserByAccessKey("AK"); !ok {
+		t.Fatal("the instance is still serving the registry it had before")
 	}
 
 	preflight := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "/photos/key", http.NoBody)
@@ -206,8 +205,8 @@ func TestRegistryPublisher_WorkerModeRefreshesTheRegistry(t *testing.T) {
 	do.ProvideValue(inj, config.ModeWorker)
 	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "startup"}}})
 	liveConfig(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
-	srv := &s3api.Server{}
-	do.ProvideValue(inj, srv)
+	registry := auth.NewLiveRegistry(nil)
+	do.ProvideValue(inj, registry)
 	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
 	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
@@ -216,7 +215,7 @@ func TestRegistryPublisher_WorkerModeRefreshesTheRegistry(t *testing.T) {
 	if got := declared.Buckets(); len(got) != 1 || got[0].Name != "photos" {
 		t.Errorf("declared buckets = %+v, want photos", got)
 	}
-	if srv.GetBucketAuth() == nil {
+	if registry.Load() == nil {
 		t.Error("the worker's registry was not installed")
 	}
 }
@@ -241,7 +240,7 @@ func TestRegistryPublisher_MissingDependencyFails(t *testing.T) {
 			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
 			do.ProvideValue(i, provisioning.NewDeclared())
 		}},
-		{"no server", func(i do.Injector) {
+		{"no registry", func(i do.Injector) {
 			liveConfig(i, &config.Config{})
 			do.ProvideValue(i, config.ModeAPI)
 			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
@@ -252,7 +251,7 @@ func TestRegistryPublisher_MissingDependencyFails(t *testing.T) {
 			do.ProvideValue(i, config.ModeAPI)
 			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
 			do.ProvideValue(i, provisioning.NewDeclared())
-			do.ProvideValue(i, &s3api.Server{})
+			do.ProvideValue(i, auth.NewLiveRegistry(nil))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

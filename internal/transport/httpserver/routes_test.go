@@ -20,6 +20,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -35,7 +36,7 @@ var errRateLimiterBoom = errors.New("rate limiter boom")
 // provider with one that errors, modelling a configured-but-broken
 // optional dependency.
 func overrideFailingRateLimiter(inj do.Injector) {
-	do.Override(inj, func(do.Injector) (*s3api.RateLimiter, error) {
+	do.Override(inj, func(do.Injector) (*httputil.RateLimiter, error) {
 		return nil, errRateLimiterBoom
 	})
 }

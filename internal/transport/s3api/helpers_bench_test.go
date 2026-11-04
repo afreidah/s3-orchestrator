@@ -134,7 +134,7 @@ func BenchmarkValidateUserMetadata(b *testing.B) {
 func BenchmarkWriteS3Error(b *testing.B) {
 	for b.Loop() {
 		w := httptest.NewRecorder()
-		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+		WriteS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
 	}
 }
 
@@ -159,18 +159,14 @@ func BenchmarkWriteXML_ListV2(b *testing.B) {
 		contents, _ := buildListContents(objects, nil, len("mybucket/"))
 
 		result := xmlListResultV2{
-			Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
-			Name:     "mybucket",
-			Prefix:   "photos/",
-			MaxKeys:  n,
+			listPage: listPage{Name: "mybucket", Prefix: "photos/", MaxKeys: n, Contents: contents},
 			KeyCount: n,
-			Contents: contents,
 		}
 
 		b.Run(fmt.Sprintf("%d_objects", n), func(b *testing.B) {
 			for b.Loop() {
 				w := httptest.NewRecorder()
-				_ = writeXML(w, http.StatusOK, result)
+				_, _ = writeXML(w, http.StatusOK, result)
 			}
 		})
 	}

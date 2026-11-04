@@ -36,7 +36,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 
 	// -------------------------------------------------------------------------
 	// CRUD
@@ -938,18 +937,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	})
 	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
-	spreadSrv := &s3api.Server{
-		Objects:   spreadStack.Objects,
-		Multipart: spreadStack.Multipart,
-	}
-	_ = spreadSrv
-	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
-		Name: virtualBucket,
-		Credentials: []config.CredentialConfig{{
-			AccessKeyID:     "test",
-			SecretAccessKey: "test",
-		}},
-	}}))
+	spreadSrv := newS3Server(t, spreadStack, virtualBucketFor("test", "test"))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -1033,18 +1021,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	})
 	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
-	spreadSrv := &s3api.Server{
-		Objects:   spreadStack.Objects,
-		Multipart: spreadStack.Multipart,
-	}
-	_ = spreadSrv
-	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
-		Name: virtualBucket,
-		Credentials: []config.CredentialConfig{{
-			AccessKeyID:     "test",
-			SecretAccessKey: "test",
-		}},
-	}}))
+	spreadSrv := newS3Server(t, spreadStack, virtualBucketFor("test", "test"))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -1116,18 +1093,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	})
 	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
-	spreadSrv := &s3api.Server{
-		Objects:   spreadStack.Objects,
-		Multipart: spreadStack.Multipart,
-	}
-	_ = spreadSrv
-	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
-		Name: virtualBucket,
-		Credentials: []config.CredentialConfig{{
-			AccessKeyID:     "test",
-			SecretAccessKey: "test",
-		}},
-	}}))
+	spreadSrv := newS3Server(t, spreadStack, virtualBucketFor("test", "test"))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -3267,22 +3233,7 @@ func TestAuthSigV4_ValidCredentials(t *testing.T) {
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-	authSrv := &s3api.Server{
-		Objects:   testStack.Objects,
-		Multipart: testStack.Multipart,
-	}
-	_ = authSrv
-	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{
-					AccessKeyID:     authKey,
-					SecretAccessKey: authSecret,
-				},
-			},
-		},
-	}))
+	authSrv := newS3Server(t, testStack, virtualBucketFor(authKey, authSecret))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -3345,22 +3296,7 @@ func TestAuthSigV4_WrongCredentials403(t *testing.T) {
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-	authSrv := &s3api.Server{
-		Objects:   testStack.Objects,
-		Multipart: testStack.Multipart,
-	}
-	_ = authSrv
-	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{
-					AccessKeyID:     authKey,
-					SecretAccessKey: authSecret,
-				},
-			},
-		},
-	}))
+	authSrv := newS3Server(t, testStack, virtualBucketFor(authKey, authSecret))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -3405,22 +3341,7 @@ func TestAuthSigV4_UnsignedRequest403(t *testing.T) {
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-	authSrv := &s3api.Server{
-		Objects:   testStack.Objects,
-		Multipart: testStack.Multipart,
-	}
-	_ = authSrv
-	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{
-					AccessKeyID:     authKey,
-					SecretAccessKey: authSecret,
-				},
-			},
-		},
-	}))
+	authSrv := newS3Server(t, testStack, virtualBucketFor(authKey, authSecret))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -3468,22 +3389,7 @@ func TestAuthSigV4_SpecialCharKeysSigV4(t *testing.T) {
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-	authSrv := &s3api.Server{
-		Objects:   testStack.Objects,
-		Multipart: testStack.Multipart,
-	}
-	_ = authSrv
-	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{
-					AccessKeyID:     authKey,
-					SecretAccessKey: authSecret,
-				},
-			},
-		},
-	}))
+	authSrv := newS3Server(t, testStack, virtualBucketFor(authKey, authSecret))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -3553,22 +3459,7 @@ func TestAuthSigV4_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-	authSrv := &s3api.Server{
-		Objects:   testStack.Objects,
-		Multipart: testStack.Multipart,
-	}
-	_ = authSrv
-	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{
-				{
-					AccessKeyID:     authKey,
-					SecretAccessKey: authSecret,
-				},
-			},
-		},
-	}))
+	authSrv := newS3Server(t, testStack, virtualBucketFor(authKey, authSecret))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)

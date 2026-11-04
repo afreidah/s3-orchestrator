@@ -139,7 +139,7 @@ func registerWorkers(inj do.Injector, mode config.Mode) {
 func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideProvisioned)
 	do.Provide(inj, ProvideDeclared)
-	do.Provide(inj, ProvideBucketAuth)
+	do.Provide(inj, ProvideLiveRegistry)
 	do.Provide(inj, ProvideCORS)
 	do.Provide(inj, ProvideS3Server)
 	do.Provide(inj, ProvideOps)

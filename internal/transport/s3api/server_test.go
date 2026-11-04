@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -36,80 +35,41 @@ func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{Metrics: mockStore}),
 	})
-	srv := NewServer(st.Objects, st.Multipart, 1024)
+	srv := NewServer(st.Objects, st.Multipart, auth.NewLiveRegistry(nil), 1024)
 	if srv.log == nil {
 		t.Fatal("NewServer left log field nil")
 	}
 }
 
-// TestSetGetBucketAuth_RoundTrip verifies the set get bucket auth round trip path by exercising auth.NewBucketRegistry, srv.SetBucketAuth, srv.GetBucketAuth.
-func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
+// TestServer_FollowsTheRegistrySwap verifies a credential added by swapping the
+// live registry is honored on the next request, with no handle on the server.
+func TestServer_FollowsTheRegistrySwap(t *testing.T) {
 	t.Parallel()
-	srv := &Server{}
+	ctrl := gomock.NewController(t)
+	registry := auth.NewLiveRegistry(mustBucketRegistry(t, nil))
+	ts := httptest.NewServer(NewServer(NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl), registry, 0))
+	t.Cleanup(ts.Close)
 
-	buckets := []config.BucketConfig{
-		{Name: "b1", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AKID1", SecretAccessKey: "secret1"},
-		}},
-	}
-	br := mustBucketRegistry(t, buckets)
-	srv.SetBucketAuth(br)
-
-	got := srv.GetBucketAuth()
-	if got != br {
-		t.Error("GetBucketAuth should return the same registry that was set")
-	}
-}
-
-// TestSetBucketAuth_ConcurrentAccess verifies the set bucket auth concurrent access path by exercising auth.NewBucketRegistry, srv.SetBucketAuth, wg.Add.
-func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
-	srv := &Server{}
-
-	// Set an initial registry
-	initial := mustBucketRegistry(t, []config.BucketConfig{
-		{Name: "init", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AKID0", SecretAccessKey: "secret0"},
-		}},
-	})
-	srv.SetBucketAuth(initial)
-
-	var wg sync.WaitGroup
-	const goroutines = 50
-
-	// Concurrent readers
-	wg.Add(goroutines)
-	for range goroutines {
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				br := srv.GetBucketAuth()
-				if br == nil {
-					t.Error("GetBucketAuth returned nil during concurrent access")
-					return
-				}
-			}
-		}()
+	headBucket := func() int {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodHead, ts.URL+"/mybucket", nil)
+		signRequest(t, req)
+		resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
 	}
 
-	// Concurrent writers
-	wg.Add(goroutines)
-	for i := range goroutines {
-		go func(n int) {
-			defer wg.Done()
-			for range 100 {
-				br := mustBucketRegistry(t, []config.BucketConfig{
-					{Name: "b", Credentials: []config.CredentialConfig{
-						{AccessKeyID: "AKID", SecretAccessKey: "secret"},
-					}},
-				})
-				srv.SetBucketAuth(br)
-			}
-		}(i)
+	if got := headBucket(); got != http.StatusForbidden {
+		t.Fatalf("before the swap: status = %d, want 403", got)
 	}
-
-	wg.Wait()
-	// Test passes if no race detector violations
+	registry.Store(mustBucketRegistry(t, []config.BucketConfig{
+		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
+	}))
+	if got := headBucket(); got != http.StatusOK {
+		t.Fatalf("after the swap: status = %d, want 200", got)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -199,11 +159,9 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 	ctrl := gomock.NewController(t)
 	objects, multipart := NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl)
 
-	srv := NewServer(objects, multipart, 10*1024*1024)
-	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
+	ts := httptest.NewServer(NewServer(objects, multipart, mustLiveRegistry(t, []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
-	}))
-	ts := httptest.NewServer(srv)
+	}), 10*1024*1024))
 	t.Cleanup(ts.Close)
 	return ts, objects, multipart
 }
@@ -218,4 +176,10 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.Buck
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}
 	return br
+}
+
+// mustLiveRegistry is mustBucketRegistry as the holder a server reads.
+func mustLiveRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.LiveRegistry {
+	tb.Helper()
+	return auth.NewLiveRegistry(mustBucketRegistry(tb, buckets))
 }

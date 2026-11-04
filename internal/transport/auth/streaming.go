@@ -358,11 +358,9 @@ func (r *chunkReader) advance() error {
 	}
 
 	if r.variant == StreamingSigned || r.variant == StreamingSignedTrailer {
-		expected := r.computeChunkSig(body)
-		if !hmac.Equal([]byte(expected), []byte(chunkSig)) {
-			return ErrChunkSignatureMismatch
+		if err := r.verifyChunk(body, chunkSig); err != nil {
+			return err
 		}
-		r.prevSig = expected
 	}
 	if r.variant == StreamingUnsignedTrailer {
 		if r.checksumInitErr != nil {
@@ -428,19 +426,25 @@ func (r *chunkReader) expectCRLF() error {
 	return nil
 }
 
-// computeChunkSig builds the per-chunk string-to-sign and returns the
-// hex-encoded HMAC-SHA256 over it.
-func (r *chunkReader) computeChunkSig(body []byte) string {
+// verifyChunk authenticates one chunk's body against its signature. The final
+// chunk is verified the same way over an empty body.
+func (r *chunkReader) verifyChunk(body []byte, provided string) error {
 	chunkHash := sha256.Sum256(body)
-	stringToSign := strings.Join([]string{
-		"AWS4-HMAC-SHA256-PAYLOAD",
-		r.amzDate,
-		r.credScope,
-		r.prevSig,
-		emptyStringSHA256,
-		hex.EncodeToString(chunkHash[:]),
-	}, "\n")
-	return hex.EncodeToString(hmacSHA256(r.signingKey, stringToSign))
+	return r.verifyLink(provided, ErrChunkSignatureMismatch,
+		"AWS4-HMAC-SHA256-PAYLOAD", emptyStringSHA256, hex.EncodeToString(chunkHash[:]))
+}
+
+// verifyLink checks one link of the signature chain: the string-to-sign is the
+// algorithm, date, scope and previous signature followed by the link's hashes.
+// A match becomes the previous signature for the next link; otherwise mismatch.
+func (r *chunkReader) verifyLink(provided string, mismatch error, algorithm string, hashes ...string) error {
+	fields := append([]string{algorithm, r.amzDate, r.credScope, r.prevSig}, hashes...)
+	expected := hex.EncodeToString(hmacSHA256(r.signingKey, strings.Join(fields, "\n")))
+	if !hmac.Equal([]byte(expected), []byte(provided)) {
+		return mismatch
+	}
+	r.prevSig = expected
+	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -474,7 +478,7 @@ func (r *chunkReader) finalize(finalChunkSig string) error {
 // finalizeSigned verifies the terminating empty chunk and consumes the final
 // empty line for the signed streaming form that does not carry trailers.
 func (r *chunkReader) finalizeSigned(finalChunkSig string) error {
-	if err := r.verifyFinalChunkSignature(finalChunkSig); err != nil {
+	if err := r.verifyChunk(nil, finalChunkSig); err != nil {
 		return err
 	}
 	return r.expectCRLF()
@@ -483,18 +487,16 @@ func (r *chunkReader) finalizeSigned(finalChunkSig string) error {
 // finalizeSignedTrailer verifies the terminating chunk followed by the
 // SigV4-authenticated trailer block.
 func (r *chunkReader) finalizeSignedTrailer(finalChunkSig string) error {
-	if err := r.verifyFinalChunkSignature(finalChunkSig); err != nil {
+	if err := r.verifyChunk(nil, finalChunkSig); err != nil {
 		return err
 	}
 	headers, providedSig, err := r.readTrailerBlock(true)
 	if err != nil {
 		return err
 	}
-	expected := r.computeTrailerSig(canonicalizeTrailers(headers))
-	if !hmac.Equal([]byte(expected), []byte(providedSig)) {
-		return ErrTrailerSignatureMismatch
-	}
-	return nil
+	canonicalHash := sha256.Sum256([]byte(canonicalizeTrailers(headers)))
+	return r.verifyLink(providedSig, ErrTrailerSignatureMismatch,
+		"AWS4-HMAC-SHA256-TRAILER", hex.EncodeToString(canonicalHash[:]))
 }
 
 // finalizeUnsignedTrailer validates the AWS unsigned trailer framing and
@@ -508,17 +510,6 @@ func (r *chunkReader) finalizeUnsignedTrailer() error {
 		return err
 	}
 	return r.verifyUnsignedTrailerChecksums(headers)
-}
-
-// verifyFinalChunkSignature authenticates the zero-size terminating chunk and
-// advances the signature chain for the signed streaming variants.
-func (r *chunkReader) verifyFinalChunkSignature(finalChunkSig string) error {
-	expected := r.computeChunkSig(nil)
-	if !hmac.Equal([]byte(expected), []byte(finalChunkSig)) {
-		return ErrChunkSignatureMismatch
-	}
-	r.prevSig = expected
-	return nil
 }
 
 // trailerKV holds one parsed trailer header line.
@@ -708,20 +699,6 @@ func canonicalizeTrailers(headers []trailerKV) string {
 		canonical.WriteByte('\n')
 	}
 	return canonical.String()
-}
-
-// computeTrailerSig builds the trailer string-to-sign and returns the
-// hex-encoded HMAC-SHA256 over it.
-func (r *chunkReader) computeTrailerSig(canonical string) string {
-	canonicalHash := sha256.Sum256([]byte(canonical))
-	stringToSign := strings.Join([]string{
-		"AWS4-HMAC-SHA256-TRAILER",
-		r.amzDate,
-		r.credScope,
-		r.prevSig,
-		hex.EncodeToString(canonicalHash[:]),
-	}, "\n")
-	return hex.EncodeToString(hmacSHA256(r.signingKey, stringToSign))
 }
 
 // -------------------------------------------------------------------------

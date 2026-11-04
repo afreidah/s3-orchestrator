@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------
@@ -129,7 +130,11 @@ func TestAudit_BucketDeniedNamesTheUserOnce(t *testing.T) {
 	if denied[0]["user"] == nil || denied[0]["user"] == "" {
 		t.Error("the refusal does not name who was refused")
 	}
-	if denied[0]["requested_bucket"] != "other-bucket" {
-		t.Errorf("requested_bucket = %v, want other-bucket", denied[0]["requested_bucket"])
+	if denied[0]["resource"] != "bucket:other-bucket" || denied[0]["reason"] != auth.ReasonNoGrant {
+		t.Errorf("resource, reason = %v, %v; want bucket:other-bucket, %q",
+			denied[0]["resource"], denied[0]["reason"], auth.ReasonNoGrant)
+	}
+	if denied[0]["request_id"] == nil {
+		t.Error("the refusal does not carry the request id")
 	}
 }

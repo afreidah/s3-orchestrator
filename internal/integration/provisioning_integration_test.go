@@ -90,7 +90,8 @@ func setupProvEnv(t *testing.T) *provEnv {
 	// with, so it has to be declared or they are all refused.
 	cfg.Auth = rootAuthConfig()
 
-	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
+	registry := auth.NewLiveRegistry(nil)
+	srv := s3api.NewServer(st.Objects, st.Multipart, registry, 0)
 	declared := provisioning.NewDeclared()
 
 	inj := do.New()
@@ -99,7 +100,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue[core.ProvisioningStore](inj, testStore)
 	do.ProvideValue(inj, declared)
-	do.ProvideValue(inj, srv)
+	do.ProvideValue(inj, registry)
 	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
 	publisher := di.NewRegistryPublisher(inj)
@@ -127,13 +128,13 @@ func setupProvEnv(t *testing.T) *provEnv {
 
 	env := &provEnv{declared: declared, cfg: cfg}
 	env.proxyAddr = serveHTTP(t, srv)
-	env.adminAddr = serveHTTP(t, provAdminMux(t, opsSvc, st, srv))
+	env.adminAddr = serveHTTP(t, provAdminMux(t, opsSvc, st, registry))
 	return env
 }
 
 // provAdminMux builds the admin handler's mux with the provisioning service
 // wired, which is the dependency the hand-built harness has to supply.
-func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, srv *s3api.Server) http.Handler {
+func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, registry *auth.LiveRegistry) http.Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
@@ -144,7 +145,7 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, srv *
 		StateStore: testStore,
 		DBHealthy:  testDatabaseCB.IsHealthy,
 		Cleanup:    testStore,
-		Registry:   func() *auth.BucketRegistry { return srv.GetBucketAuth() },
+		Registry:   registry.Load,
 		Config:     st.Config,
 		LogLevel:   &lv,
 	})

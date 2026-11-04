@@ -42,7 +42,8 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector) error {
 	adminHandler.Register(adminMux)
 	// Wraps the rate limiter too, so a panic anywhere in the admin chain
 	// returns a JSON 500 with a request id instead of a reset connection.
-	adminHTTP := httputil.PanicRecover("admin", adminErrorWriter)(withRateLimit(inj, "admin", adminErrorWriter, adminMux))
+	adminHTTP := httputil.PanicRecover("admin", httputil.WriteJSONCodedError)(
+		withRateLimit(inj, "admin", httputil.WriteJSONCodedError, adminMux))
 	mux.Handle("/admin/", adminHTTP)
 	slog.InfoContext(context.Background(), "admin API enabled",
 		logfmt.Component("httpserver"),
@@ -55,7 +56,7 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector) error {
 // through writeErr in the surface's own error format. A failed resolution is
 // logged and leaves the surface unlimited rather than failing startup.
 func withRateLimit(inj do.Injector, route string, writeErr httputil.ErrorWriter, h http.Handler) http.Handler {
-	rlRes := di.Optional[*s3api.RateLimiter](inj)
+	rlRes := di.Optional[*httputil.RateLimiter](inj)
 	if rlRes.Failed() {
 		slog.WarnContext(context.Background(),
 			"rate limiter resolution failed; the surface will run without rate limiting",
@@ -69,9 +70,9 @@ func withRateLimit(inj do.Injector, route string, writeErr httputil.ErrorWriter,
 	return h
 }
 
-// registerUIHandler mounts the optional web UI dashboard. Panic recovery is
-// not applied here: UI routes register directly on the shared mux, so they
-// cannot be wrapped as one handler.
+// registerUIHandler mounts the optional web UI dashboard under its path, on a
+// mux of its own so a panic in any of its routes answers a JSON 500 with a
+// request id like the admin API does.
 func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
 	if !cfg.UI.Enabled {
 		return nil
@@ -80,7 +81,9 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	if err != nil {
 		return fmt.Errorf("initialize UI handler: %w", err)
 	}
-	h.Register(mux, cfg.UI.Path)
+	uiMux := http.NewServeMux()
+	h.Register(uiMux, cfg.UI.Path)
+	mux.Handle(cfg.UI.Path+"/", httputil.PanicRecover("ui", httputil.WriteJSONCodedError)(uiMux))
 	slog.InfoContext(context.Background(), "web UI enabled",
 		logfmt.Component("httpserver"),
 		"path", cfg.UI.Path,
@@ -151,14 +154,4 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 
 	mux.Handle("/", s3Handler)
 	return nil
-}
-
-// -------------------------------------------------------------------------
-// ERROR WRITERS
-// -------------------------------------------------------------------------
-
-// adminErrorWriter writes the admin surface's middleware refusals and panic
-// responses as the JSON error its clients parse.
-func adminErrorWriter(w http.ResponseWriter, status int, _ string, message string) {
-	httputil.WriteJSONError(w, status, message)
 }

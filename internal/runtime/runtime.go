@@ -37,7 +37,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httpserver"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
 
@@ -292,7 +291,7 @@ func (r *Runtime) shutdown() {
 	r.http.Shutdown(shutdownCtx)
 	r.drainDetachedUploads(ctx)
 
-	if rl, _ := do.Invoke[*s3api.RateLimiter](r.inj); rl != nil {
+	if rl, _ := do.Invoke[*httputil.RateLimiter](r.inj); rl != nil {
 		rl.Close()
 	}
 	if lt, _ := do.Invoke[*httputil.LoginThrottle](r.inj); lt != nil {
