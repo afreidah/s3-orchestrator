@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // rebalanceFleet is the two-backend fleet most rebalance tests plan across,
@@ -138,6 +139,90 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 		if mv.Source.BackendName != "b1" || mv.ToBackend != "b2" {
 			t.Errorf("move should be b1->b2, got %s->%s", mv.Source.BackendName, mv.ToBackend)
 		}
+	}
+}
+
+// rebalancerListing builds a rebalancer over b1, b2 and b3 whose store lists
+// objects per backend and reports copies as where each key lives.
+func rebalancerListing(t *testing.T, objects map[string][]core.ObjectLocation, copies map[string][]string) *Rebalancer {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	ops := newMockOps(ctrl)
+	order := []string{"b1", "b2", "b3"}
+	expectBackendOrder(ops, order, order)
+	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
+	ms := &mockMetadataStore{objectsByBackend: objects, getBackendsForKeysResp: copies}
+	return NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultRebalance})
+}
+
+// replicatedOnTwoSources lists one key held on b1 and b2.
+func replicatedOnTwoSources() (map[string][]core.ObjectLocation, map[string][]string) {
+	return map[string][]core.ObjectLocation{
+		"b1": {{ObjectKey: "k", BackendName: "b1", SizeBytes: 100}},
+		"b2": {{ObjectKey: "k", BackendName: "b2", SizeBytes: 100}},
+	}, map[string][]string{"k": {"b1", "b2"}}
+}
+
+// TestPlanSpreadEven_PlansAKeyOntoADestinationOnce verifies two sources holding
+// one key do not both plan it onto the under-filled destination, since the
+// second move would pay for a transfer the target can only refuse.
+func TestPlanSpreadEven_PlansAKeyOntoADestinationOnce(t *testing.T) {
+	t.Parallel()
+	objects, copies := replicatedOnTwoSources()
+	r := rebalancerListing(t, objects, copies)
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 700, BytesLimit: 1000},
+		"b3": {BytesUsed: 0, BytesLimit: 1000},
+	}
+	plan, err := r.planSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) != 1 || plan[0].ToBackend != "b3" {
+		t.Errorf("plan = %+v, want the one move onto b3", plan)
+	}
+}
+
+// TestPlanPackTight_PlansAKeyOntoADestinationOnce is the same run under
+// pack-tight, where the fullest backend is the destination.
+func TestPlanPackTight_PlansAKeyOntoADestinationOnce(t *testing.T) {
+	t.Parallel()
+	objects, copies := replicatedOnTwoSources()
+	r := rebalancerListing(t, objects, copies)
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+		"b3": {BytesUsed: 800, BytesLimit: 1000},
+	}
+	plan, err := r.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 1 || plan[0].ToBackend != "b3" {
+		t.Errorf("plan = %+v, want the one move onto b3", plan)
+	}
+}
+
+// TestPlanPackTight_PlansACopyOnce verifies one source copy offered two
+// destinations leaves for only one of them. The source list is reused across
+// destinations, and a second move of the copy would find it already gone.
+func TestPlanPackTight_PlansACopyOnce(t *testing.T) {
+	t.Parallel()
+	r := rebalancerListing(t, map[string][]core.ObjectLocation{
+		"b3": {{ObjectKey: "k", BackendName: "b3", SizeBytes: 100}},
+	}, map[string][]string{"k": {"b3"}})
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 700, BytesLimit: 1000},
+		"b3": {BytesUsed: 100, BytesLimit: 1000},
+	}
+	plan, err := r.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 1 {
+		t.Errorf("plan = %+v, want the copy moved once", plan)
 	}
 }
 
@@ -310,7 +395,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 
 	r := NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultRebalance})
 	move := planMove("key1", "b1", "b2", 100)
-	if !r.executeOneMove(context.Background(), move, "spread") {
+	if r.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemSucceeded {
 		t.Error("expected successful move")
 	}
 	if got == nil {
@@ -341,7 +426,7 @@ func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("stream copy: timeout"))
 
 	r := NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultRebalance})
-	if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
+	if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread").Outcome != batch.ItemFailed {
 		t.Error("expected failed move on MoveObject error")
 	}
 }
@@ -366,8 +451,8 @@ func TestExecuteOneMove_PlacementDeclined(t *testing.T) {
 				Return(int64(0), fmt.Errorf("place copy b1 -> b2: %w", declined))
 
 			r := NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: &mockMetadataStore{}, Config: defaultRebalance})
-			if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
-				t.Error("expected no move when the placement is declined")
+			if r.executeOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread").Outcome != batch.ItemSkipped {
+				t.Error("expected a skip when the placement is declined")
 			}
 		})
 	}

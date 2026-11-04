@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -150,7 +151,7 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
-	if !d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
+	if d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2).Outcome != batch.ItemSucceeded {
 		t.Fatal("drainOne failed with a copy on another backend")
 	}
 	if src.Has("key1") {
@@ -181,7 +182,7 @@ func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if !d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
+	if d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2).Outcome != batch.ItemSucceeded {
 		t.Fatal("drainOne failed to move the object once its other copy was gone")
 	}
 	if moves != 1 {
@@ -202,7 +203,7 @@ func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
-	if d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
+	if d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2).Outcome != batch.ItemFailed {
 		t.Fatal("drainOne dropped the copy holding the only usable key")
 	}
 	if !src.Has("key1") {
@@ -230,7 +231,7 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
 	obj := drainedObject()
-	if !d.drainOne(context.Background(), "b1", obj, onlyOnB1) {
+	if d.drainOne(context.Background(), "b1", obj, onlyOnB1).Outcome != batch.ItemSucceeded {
 		t.Fatal("drainOne failed to move the only copy")
 	}
 	if placed.Source != obj || placed.Intent == nil || placed.Intent.BackendName != "b2" || !placed.RemoveSource {
@@ -271,8 +272,8 @@ func TestDrainOne_RefusedMove_SettlesTheCopyItLeft(t *testing.T) {
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-			if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1) {
-				t.Fatal("drainOne reported success")
+			if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1).Outcome != batch.ItemSkipped {
+				t.Fatal("a declined move should count as a skip")
 			}
 			if dst.Has(path) {
 				t.Error("the refused copy is still on the destination")
@@ -304,8 +305,8 @@ func TestDrainOne_PlacementError_LeavesTheCopyForTheReaper(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1) {
-		t.Fatal("drainOne reported success")
+	if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1).Outcome != batch.ItemFailed {
+		t.Fatal("drainOne did not report the failure")
 	}
 	if !dst.Has(path) {
 		t.Error("the unplaced copy was deleted; the reaper resolves it through its intent")
@@ -349,8 +350,8 @@ func TestDrainOne_Failures(t *testing.T) {
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, backends, nil)
-			if d.drainOne(context.Background(), "b1", drainedObject(), tc.copies) {
-				t.Error("drainOne reported success")
+			if d.drainOne(context.Background(), "b1", drainedObject(), tc.copies).Outcome != batch.ItemFailed {
+				t.Error("drainOne did not report the failure")
 			}
 		})
 	}
@@ -400,7 +401,7 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 	f.Placement = placement
 	d := NewDrainer(DrainerDeps{Fleet: f, Store: store, AbortUploads: func(context.Context, string) {}})
 	obj := &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}
-	if !d.moveOff(context.Background(), "src", obj) {
+	if d.moveOff(context.Background(), "src", obj).Outcome != batch.ItemSucceeded {
 		t.Fatal("moveOff reported failure")
 	}
 	if got == nil || got.Profile != writepath.DrainMove || got.Source != obj || got.DestName != "dest" {

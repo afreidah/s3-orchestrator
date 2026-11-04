@@ -15,11 +15,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// TestPlacementSet_Has covers the O(1) membership check: present keys/backends
+// TestPlacementSet_Has covers the membership check: present keys/backends
 // report true, absent keys or backends report false (including a missing key).
 func TestPlacementSet_Has(t *testing.T) {
 	t.Parallel()
-	ps := newPlacementSet(map[string][]string{
+	ps := placementSet{}
+	ps.addAll(map[string][]string{
 		"k1": {"b1", "b2"},
 		"k2": {"b3"},
 	})
@@ -41,19 +42,23 @@ func TestPlacementSet_Has(t *testing.T) {
 	}
 }
 
-// TestNewPlacementSet_Empty verifies a nil/empty copy map yields a set that
-// reports no membership rather than panicking.
-func TestNewPlacementSet_Empty(t *testing.T) {
+// TestPlacementSet_AddAllKeepsRecordedCopies verifies a later copy map adds to
+// the set, since a planned move is recorded only there: a fresh listing of the
+// same key must not forget it.
+func TestPlacementSet_AddAllKeepsRecordedCopies(t *testing.T) {
 	t.Parallel()
-	ps := newPlacementSet(nil)
-	if ps.Has("k", "b") {
-		t.Error("empty PlacementSet reported membership")
+	ps := placementSet{}
+	ps.add("k", "planned")
+	ps.addAll(map[string][]string{"k": {"b1"}})
+	ps.addAll(nil)
+	if !ps.Has("k", "planned") || !ps.Has("k", "b1") {
+		t.Errorf("set = %v, want both copies", ps)
 	}
 }
 
 // TestCandidateCache_MemoizesPerSource verifies the cache fetches a source's
 // candidates once: a second forBackend for the same source returns the cached
-// objects + placement without re-querying the (expensive) backend copy map.
+// objects without re-querying the (expensive) backend copy map.
 func TestCandidateCache_MemoizesPerSource(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -65,13 +70,13 @@ func TestCandidateCache_MemoizesPerSource(t *testing.T) {
 	}
 
 	r := NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultRebalance})
-	cc := r.newCandidateCache(10)
+	holders := placementSet{}
+	cc := r.newCandidateCache(10, holders)
 
-	sc1, err := cc.forBackend(context.Background(), "b1")
-	if err != nil {
+	if _, err := cc.forBackend(context.Background(), "b1"); err != nil {
 		t.Fatalf("forBackend (first): %v", err)
 	}
-	sc2, err := cc.forBackend(context.Background(), "b1")
+	objects, err := cc.forBackend(context.Background(), "b1")
 	if err != nil {
 		t.Fatalf("forBackend (second): %v", err)
 	}
@@ -79,10 +84,10 @@ func TestCandidateCache_MemoizesPerSource(t *testing.T) {
 	if ms.getBackendsForKeysCalls != 1 {
 		t.Errorf("GetObjectBackendsForKeys called %d times, want 1 (second lookup must hit the cache)", ms.getBackendsForKeysCalls)
 	}
-	if !sc1.Placement.Has("k1", "b2") {
-		t.Error("placement set missing k1 -> b2")
+	if !holders.Has("k1", "b2") {
+		t.Error("holders missing k1 -> b2")
 	}
-	if len(sc2.Objects) != 1 || sc2.Objects[0].ObjectKey != "k1" {
-		t.Errorf("cached objects = %+v, want one object k1", sc2.Objects)
+	if len(objects) != 1 || objects[0].ObjectKey != "k1" {
+		t.Errorf("cached objects = %+v, want one object k1", objects)
 	}
 }

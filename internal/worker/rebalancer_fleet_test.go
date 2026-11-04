@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -705,7 +706,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if !w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemSucceeded {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
@@ -727,7 +728,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"src": src}, &fleetOpts{Order: []string{"src"}})
 
 	move := planMove("key", "src", "nonexistent", 4)
-	if w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemFailed {
 		t.Error("expected false when dest backend not found")
 	}
 }
@@ -745,7 +746,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemFailed {
 		t.Error("expected false when source get fails")
 	}
 }
@@ -764,7 +765,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemFailed {
 		t.Error("expected false when dest put fails")
 	}
 }
@@ -789,7 +790,7 @@ func TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemFailed {
 		t.Error("expected false when PlaceCopy fails")
 	}
 	if !dest.HasCopyOf("key") {
@@ -823,8 +824,8 @@ func TestExecuteOneMove_RefusalSettleFails_RetriesTheRow(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
-	if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
-		t.Error("expected false")
+	if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread").Outcome != batch.ItemSkipped {
+		t.Error("expected a skip")
 	}
 	if len(reasons) != 1 || reasons[0] != writepath.RebalanceMove.Reasons {
 		t.Errorf("placement reasons = %+v, want the rebalancer's", reasons)
@@ -855,8 +856,8 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 				&fleetOpts{Order: []string{"src", "dest"}})
 			w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
-			if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
-				t.Error("expected false when the placement is declined")
+			if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread").Outcome != batch.ItemSkipped {
+				t.Error("expected a skip when the placement is declined")
 			}
 			if len(dest.Objects) != 0 {
 				t.Errorf("destination holds %d objects, want the orphan cleaned up", len(dest.Objects))
@@ -891,7 +892,7 @@ func TestExecuteOneMove_SourceDeleteFails_RetriesTheRow(t *testing.T) {
 	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
-	if !w.executeOneMove(context.Background(), move, "spread") {
+	if w.executeOneMove(context.Background(), move, "spread").Outcome != batch.ItemSucceeded {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
 	if len(rr.ids) != 1 || rr.ids[0] != rebalCleanupID {
