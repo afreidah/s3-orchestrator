@@ -39,6 +39,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 // -------------------------------------------------------------------------
@@ -818,7 +819,7 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode purge: %v", err)
 	}
-	if resp.Status != adminapi.StatusOK || resp.Backend != "b1" {
+	if resp.Status != adminstream.OutcomeOK || resp.Backend != "b1" {
 		t.Errorf("got status=%q backend=%q, want {ok b1}", resp.Status, resp.Backend)
 	}
 }

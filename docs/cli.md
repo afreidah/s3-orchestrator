@@ -320,7 +320,7 @@ s3-orchestrator admin workers
 s3-orchestrator admin instances
 
 # List dead-lettered cleanup rows, or one backend's; requeue retries them
-s3-orchestrator admin cleanup-dlq [-backend NAME]
+s3-orchestrator admin cleanup-dlq list [-backend NAME]
 s3-orchestrator admin cleanup-dlq requeue [-backend NAME]
 
 # Show the outcome of the last SIGHUP config reload

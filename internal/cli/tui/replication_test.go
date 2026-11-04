@@ -35,13 +35,15 @@ var errNope = errors.New("nope")
 // TestLoadReplication covers both delivery paths of the fetch command.
 func TestLoadReplication(t *testing.T) {
 	t.Parallel()
-	ok := initialModel(&fakeLister{replic: &adminapi.ReplicationStatusResponse{Factor: 2}}).loadReplication()
-	if _, isMsg := ok().(loadedMsg[*adminapi.ReplicationStatusResponse]); !isMsg {
-		t.Errorf("success cmd = %#v, want loadedMsg[*adminapi.ReplicationStatusResponse]", ok())
+	m := initialModel(&fakeLister{replic: &adminapi.ReplicationStatusResponse{Factor: 2}})
+	m.Update(m.loadReplication()())
+	if m.replication.snap == nil || m.replication.snap.Factor != 2 {
+		t.Errorf("snap = %+v, want the served snapshot", m.replication.snap)
 	}
-	fail := initialModel(errLister{}).loadReplication()
-	if _, isMsg := fail().(loadErrMsg[*adminapi.ReplicationStatusResponse]); !isMsg {
-		t.Errorf("error cmd = %#v, want loadErrMsg[*adminapi.ReplicationStatusResponse]", fail())
+	m = initialModel(errLister{})
+	m.Update(m.loadReplication()())
+	if m.replication.err == nil {
+		t.Error("a failed first fetch should surface on the pane")
 	}
 }
 
@@ -69,8 +71,9 @@ func TestApplyReplicationErr(t *testing.T) {
 // spinner on a later visit once a snapshot exists.
 func TestEnterReplication(t *testing.T) {
 	t.Parallel()
-	m := initialModel(&fakeLister{})
-	if _, cmd := m.selectSection(sectionReplication); cmd == nil {
+	m := initialModel(&fakeLister{replic: &adminapi.ReplicationStatusResponse{Factor: 2}})
+	_, first := m.selectSection(sectionReplication)
+	if first == nil {
 		t.Fatal("first enter: expected a fetch")
 	}
 	if !m.replication.loading {
@@ -80,7 +83,7 @@ func TestEnterReplication(t *testing.T) {
 		t.Error("re-entering while the first fetch is in flight should not send another")
 	}
 
-	m.Update(loadedMsg[*adminapi.ReplicationStatusResponse]{resp: &adminapi.ReplicationStatusResponse{Factor: 2}})
+	m.Update(first())
 	if _, cmd := m.selectSection(sectionReplication); cmd == nil {
 		t.Error("re-entering after the fetch landed should refresh")
 	}

@@ -80,17 +80,17 @@ func TestPoller_WaitsOutTheInterval(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	start := time.Now()
 	m.onPollTick(start)
-	m.Update(loadedMsg[*adminapi.StatusResponse]{resp: &adminapi.StatusResponse{}})
+	m.Update(m.loadStatus()())
 	if m.poll.inFlight[pollStatus] {
 		t.Fatal("a status result should clear the in-flight mark")
 	}
 
-	m.onPollTick(start.Add(pollIntervals[pollStatus] - time.Second))
+	m.onPollTick(start.Add(pollSources[pollStatus].every - time.Second))
 	if m.poll.inFlight[pollStatus] {
 		t.Error("status was fetched again before its interval passed")
 	}
 
-	m.onPollTick(start.Add(pollIntervals[pollStatus]))
+	m.onPollTick(start.Add(pollSources[pollStatus].every))
 	if !m.poll.inFlight[pollStatus] {
 		t.Error("status should be fetched again once its interval passed")
 	}
@@ -108,11 +108,11 @@ func TestPoller_FollowsADrainOnAnyPane(t *testing.T) {
 	m.Update(drainProgressMsg{backend: "minio-a", progress: &adminapi.DrainProgressResponse{Active: true}})
 	m.section = sectionFiles
 
-	m.onPollTick(time.Now().Add(pollIntervals[pollDrain]))
+	m.onPollTick(time.Now().Add(pollSources[pollDrain].every))
 	if !m.poll.inFlight[pollDrain] {
 		t.Fatal("a followed drain should be read while another pane is showing")
 	}
-	if msg, ok := m.loadCmd(pollDrain)().(drainProgressMsg); !ok || msg.backend != "minio-a" {
+	if msg, ok := m.loadDrain()().(drainProgressMsg); !ok || msg.backend != "minio-a" {
 		t.Errorf("drain poll = %#v, want a progress reading for minio-a", msg)
 	}
 
@@ -135,30 +135,32 @@ func TestPoller_ManualRefreshSkipsAnInFlightRequest(t *testing.T) {
 	}
 }
 
-// TestPollTargetOf_MapsEveryResult verifies each loaded and failed message
-// clears the in-flight mark of the target that sent it, and that messages the
-// poller did not send clear nothing.
-func TestPollTargetOf_MapsEveryResult(t *testing.T) {
+// TestPollSources_ResultsClearTheirTarget verifies every source's result, a
+// success or a failure, clears the in-flight mark of the target that sent it.
+func TestPollSources_ResultsClearTheirTarget(t *testing.T) {
 	t.Parallel()
-	cases := map[pollTarget][]any{
-		pollStatus:      {loadedMsg[*adminapi.StatusResponse]{}, loadErrMsg[*adminapi.StatusResponse]{}},
-		pollReplication: {loadedMsg[*adminapi.ReplicationStatusResponse]{}, loadErrMsg[*adminapi.ReplicationStatusResponse]{}},
-		pollCleanup:     {cleanupLoadedMsg{}, cleanupErrMsg{}},
-		pollBuckets:     {loadedMsg[*adminapi.ProvisioningResponse]{}, loadErrMsg[*adminapi.ProvisioningResponse]{}},
-		pollWorkers:     {loadedMsg[*adminapi.WorkersResponse]{}, loadErrMsg[*adminapi.WorkersResponse]{}},
-		pollCache:       {loadedMsg[*adminapi.CacheStatsResponse]{}, loadErrMsg[*adminapi.CacheStatsResponse]{}},
-		pollDrain:       {drainProgressMsg{}},
-		pollLogs:        {logsLoadedMsg{}, logsErrMsg{}},
-	}
-	for want, msgs := range cases {
-		for _, msg := range msgs {
-			if got, ok := pollTargetOf(msg); !ok || got != want {
-				t.Errorf("pollTargetOf(%T) = %d, %v; want %d", msg, got, ok, want)
+	for _, client := range []adminClient{&fakeLister{}, errLister{}} {
+		for target := range pollTargetCount {
+			m := initialModel(client)
+			m.backends.drain.backend = "minio-a"
+			m.poll.inFlight[target] = true
+			m.Update(pollSources[target].load(m)())
+			if m.poll.inFlight[target] {
+				t.Errorf("%T target %d: result left the in-flight mark set", client, target)
 			}
 		}
 	}
-	if _, ok := pollTargetOf(loadedMsg[*adminapi.ConfigResponse]{}); ok {
-		t.Error("config is not polled, so its result should map to no target")
+}
+
+// TestLoadDone_UnpolledClearsNothing verifies a fetch the poller did not send
+// leaves every in-flight mark alone.
+func TestLoadDone_UnpolledClearsNothing(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.poll.inFlight[pollStatus] = true
+	m.Update(m.loadConfig()())
+	if !m.poll.inFlight[pollStatus] {
+		t.Error("an unpolled result cleared a poll target's mark")
 	}
 }
 

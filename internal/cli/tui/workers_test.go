@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Deterministic tests for the worker health pane: the health-to-row mapping,
-// the never-ticked formatter, body rendering per state, key handling, and the
+// body rendering per state, key handling, and the
 // split between a real fetch failure and a deployment that registers no
 // workers at all.
 // -------------------------------------------------------------------------------
@@ -25,22 +25,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-func TestTickAge(t *testing.T) {
+func TestWorkerRow(t *testing.T) {
 	t.Parallel()
-	if got := tickAge(time.Time{}); got != "-" {
-		t.Errorf("zero time = %q, want -", got)
-	}
-	if got := tickAge(time.Now().Add(-90 * time.Second)); got != "1m ago" {
-		t.Errorf("90s ago = %q, want 1m ago", got)
-	}
-}
-
-func TestRowsFromWorkers(t *testing.T) {
-	t.Parallel()
-	rows := rowsFromWorkers([]adminapi.WorkerHealth{
+	rows := rowsOf([]adminapi.WorkerHealth{
 		{Name: "replicator", LastSuccess: time.Now().Add(-30 * time.Second)},
 		{Name: "cleanup_queue", LastFailure: time.Now().Add(-2 * time.Minute), LastError: "connection refused", ConsecutiveFailures: 3},
-	})
+	}, workerRow)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
@@ -155,15 +145,16 @@ func TestHandleWorkersKey_BackAndReload(t *testing.T) {
 	if !m.workers.loading || cmd == nil {
 		t.Fatalf("reload: loading=%v cmd=%v", m.workers.loading, cmd)
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.WorkersResponse]); !ok {
-		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.WorkersResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 }
 
 func TestLoadWorkers_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadWorkers()
-	if _, ok := cmd().(loadErrMsg[*adminapi.WorkersResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.WorkersResponse]", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadWorkers()())
+	if m.workers.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }

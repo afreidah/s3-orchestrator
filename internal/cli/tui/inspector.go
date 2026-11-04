@@ -15,7 +15,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -53,9 +52,9 @@ type inspector struct {
 // loop.
 func (m *model) loadLocations(key string) tea.Cmd {
 	client := m.client
-	return fetchCmd(func(ctx context.Context) (*adminapi.ObjectLocationsResponse, error) {
+	return fetchCmd(noPoll, func(ctx context.Context) (*adminapi.ObjectLocationsResponse, error) {
 		return client.GetObjectLocations(ctx, key)
-	})
+	}, (*model).applyLocations, func(m *model, err error) { m.insp.failed(err) })
 }
 
 // tagsLoadedMsg carries an object's tag set, or the error that prevented
@@ -110,7 +109,7 @@ func (m *model) openInspector(key string) (tea.Model, tea.Cmd) {
 // applyLocations folds a loaded ledger into the inspector state.
 func (m *model) applyLocations(resp *adminapi.ObjectLocationsResponse) {
 	m.insp.locations = resp.Locations
-	m.insp.table.SetRows(rowsFromLocations(resp.Locations))
+	m.insp.table.SetRows(rowsOf(resp.Locations, locationRow))
 	m.insp.table.SetCursor(0)
 	m.insp.loaded()
 }
@@ -161,9 +160,9 @@ func (m *model) armScrubKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.startAction(adminAction{
-		confirm: "Verify every copy of " + m.insp.key + " now? A copy that fails is discarded and rebuilt.",
-		before:  func(m *model) { m.insp.scrubbing = true },
-		run:     m.scrubKey(m.insp.key),
+		text:   "Verify every copy of " + m.insp.key + " now? A copy that fails is discarded and rebuilt.",
+		before: func(m *model) { m.insp.scrubbing = true },
+		run:    m.scrubKey(m.insp.key),
 	})
 }
 
@@ -205,7 +204,7 @@ func (m *model) armClearTags() (tea.Model, tea.Cmd) {
 	key := m.insp.key
 	client := m.client
 	return m.startAction(adminAction{
-		confirm: "Clear every tag on " + key + "?",
+		text: "Clear every tag on " + key + "?",
 		run: runAction("clear tags on "+key,
 			func(ctx context.Context) (*adminapi.ObjectTagsResponse, error) {
 				return client.DeleteObjectTags(ctx, key)
@@ -257,7 +256,7 @@ func scrubSummary(copies []adminapi.CopyScrubResult) (bool, string) {
 	}
 
 	if len(bad) == 0 {
-		return true, "scrub: " + countOf(verified, "copy", "copies") + " verified"
+		return true, "scrub: " + humanize.Count(int64(verified), "copy", "copies") + " verified"
 	}
 	return false, fmt.Sprintf("scrub: %d of %d verified - %s",
 		verified, len(copies), strings.Join(bad, ", "))
@@ -283,25 +282,19 @@ var inspectorColumns = []columnSpec{
 	{title: "VERIFIED", min: 10, max: 10, priority: 6},
 }
 
-// rowsFromLocations builds inspector rows in the same order as the ledger so
-// the table cursor indexes straight into the copies.
-func rowsFromLocations(locations []adminapi.ObjectLocation) []table.Row {
-	rows := make([]table.Row, 0, len(locations))
-	for i := range locations {
-		l := &locations[i]
-		rows = append(rows, table.Row{
-			l.Backend,
-			humanize.Bytes(l.SizeBytes),
-			logicalSize(l),
-			compressionMark(l),
-			relativeAge(l.CreatedAt),
-			yesNo(l.Encrypted),
-			truncate(l.KeyID, 10),
-			truncate(l.ContentHash, 16),
-			verifiedAge(l.LastScrubbedAt),
-		})
+// locationRow renders one copy from the ledger.
+func locationRow(l *adminapi.ObjectLocation) table.Row {
+	return table.Row{
+		l.Backend,
+		humanize.Bytes(l.SizeBytes),
+		logicalSize(l),
+		compressionMark(l),
+		humanize.Ago(l.CreatedAt),
+		yesNo(l.Encrypted),
+		truncate(l.KeyID, 10),
+		truncate(l.ContentHash, 16),
+		verifiedAge(l.LastScrubbedAt),
 	}
-	return rows
 }
 
 // logicalSize renders the size the client wrote, which differs from the stored
@@ -334,13 +327,13 @@ func (m *model) inspectHeaderView() string {
 	if m.insp.scrubbing {
 		title += "   verifying..."
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(title)
 }
 
 // inspectBody renders the current content: an error, the loading indicator, an
 // empty notice, or the tag line above the copy table.
 func (m *model) inspectBody() []pane {
-	return m.paneBody(m.insp.err, "", m.insp.loading, func() []pane {
+	return m.paneBody(&m.insp.loadState, func() []pane {
 		if len(m.insp.locations) == 0 {
 			return []pane{textPane(pathStyle.Render("(no copies found)"))}
 		}
@@ -367,25 +360,6 @@ func (m *model) inspectTagsView() string {
 // FORMATTING HELPERS
 // -------------------------------------------------------------------------
 
-// relativeAge renders how long ago t was in a compact, coarse form. A zero time
-// renders as a dash.
-func relativeAge(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return strconv.Itoa(int(d.Minutes())) + "m ago"
-	case d < 24*time.Hour:
-		return strconv.Itoa(int(d.Hours())) + "h ago"
-	default:
-		return strconv.Itoa(int(d.Hours()/24)) + "d ago"
-	}
-}
-
 // verifiedAge renders when a copy was last checked against its stored hash.
 // "never" is its own answer, not a missing value: a recorded hash only says
 // what the bytes were meant to be, and until something reads them back nobody
@@ -394,7 +368,7 @@ func verifiedAge(t *time.Time) string {
 	if t == nil {
 		return "never"
 	}
-	return relativeAge(*t)
+	return humanize.Ago(*t)
 }
 
 // yesNo renders a boolean as a compact yes/no.

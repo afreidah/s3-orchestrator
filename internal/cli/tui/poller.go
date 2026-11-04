@@ -6,8 +6,8 @@
 // One refresh loop for every pane. A single tick runs once a second and asks
 // each poll target whether it is due: its interval has passed since it was
 // last requested, no request for it is still in flight, and it is wanted right
-// now. Each target is fetched by its pane's existing load command, so the
-// panes keep applying results exactly as they did when they loaded themselves.
+// now. pollSources declares all of that per target, and each target is fetched
+// by its pane's load command.
 //
 // Targets whose data is fleet-wide (status, replication, cleanup, buckets, and
 // a drain being followed) are polled on every pane, so a pane is current the
@@ -26,8 +26,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // pollTarget is one endpoint the poller keeps fresh.
@@ -46,20 +44,45 @@ const (
 	pollTargetCount
 )
 
+// noPoll marks a fetch the poller did not send and does not track.
+const noPoll pollTarget = -1
+
 // pollTickInterval is how often the poller checks which targets are due. It
 // bounds how late a target can be, not how often anything is fetched.
 const pollTickInterval = time.Second
 
-// pollIntervals is how long each target waits between requests.
-var pollIntervals = [pollTargetCount]time.Duration{
-	pollStatus:      10 * time.Second,
-	pollReplication: 3 * time.Second,
-	pollCleanup:     10 * time.Second,
-	pollBuckets:     30 * time.Second,
-	pollWorkers:     5 * time.Second,
-	pollCache:       5 * time.Second,
-	pollDrain:       2 * time.Second,
-	pollLogs:        2 * time.Second,
+// pollSource is one target's refresh: how long it waits between requests,
+// whether it is wanted right now (always, when nil), and the command that
+// fetches it.
+type pollSource struct {
+	every  time.Duration
+	wanted func(*model) bool
+	load   func(*model) tea.Cmd
+}
+
+// pollSources declares every target.
+var pollSources = [pollTargetCount]pollSource{
+	pollStatus:      {every: 10 * time.Second, load: (*model).loadStatus},
+	pollReplication: {every: 3 * time.Second, load: (*model).loadReplication},
+	pollCleanup:     {every: 10 * time.Second, load: (*model).loadCleanup},
+	pollBuckets:     {every: 30 * time.Second, load: (*model).loadBuckets},
+	pollWorkers:     {every: 5 * time.Second, wanted: showing(sectionWorkers), load: (*model).loadWorkers},
+	pollCache:       {every: 5 * time.Second, wanted: showing(sectionCache), load: (*model).loadCache},
+	pollDrain: {
+		every:  2 * time.Second,
+		wanted: func(m *model) bool { return m.backends.drain.following },
+		load:   (*model).loadDrain,
+	},
+	pollLogs: {
+		every:  2 * time.Second,
+		wanted: func(m *model) bool { return m.section == sectionLogs && m.logs.following },
+		load:   (*model).loadLogs,
+	},
+}
+
+// showing wants a target only while its pane is on screen.
+func showing(s section) func(*model) bool {
+	return func(m *model) bool { return m.section == s }
 }
 
 // poller records, per target, when it was last requested and whether that
@@ -82,7 +105,7 @@ func pollTick() tea.Cmd {
 func (m *model) onPollTick(now time.Time) (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{pollTick()}
 	for t := range pollTargetCount {
-		if !m.pollWanted(t) || m.poll.inFlight[t] || now.Sub(m.poll.last[t]) < pollIntervals[t] {
+		if !m.pollWanted(t) || m.poll.inFlight[t] || now.Sub(m.poll.last[t]) < pollSources[t].every {
 			continue
 		}
 		if cmd := m.fetchAt(t, now); cmd != nil {
@@ -94,18 +117,8 @@ func (m *model) onPollTick(now time.Time) (tea.Model, tea.Cmd) {
 
 // pollWanted reports whether a target should be kept fresh right now.
 func (m *model) pollWanted(t pollTarget) bool {
-	switch t {
-	case pollWorkers:
-		return m.section == sectionWorkers
-	case pollCache:
-		return m.section == sectionCache
-	case pollDrain:
-		return m.backends.drain.following
-	case pollLogs:
-		return m.section == sectionLogs && m.logs.following
-	default:
-		return true
-	}
+	wanted := pollSources[t].wanted
+	return wanted == nil || wanted(m)
 }
 
 // fetch requests a target now, for a pane being opened or an operator
@@ -120,7 +133,7 @@ func (m *model) fetch(t pollTarget) tea.Cmd {
 
 // fetchAt marks a target in flight and returns its pane's load command.
 func (m *model) fetchAt(t pollTarget, now time.Time) tea.Cmd {
-	cmd := m.loadCmd(t)
+	cmd := pollSources[t].load(m)
 	if cmd == nil {
 		return nil
 	}
@@ -129,52 +142,9 @@ func (m *model) fetchAt(t pollTarget, now time.Time) tea.Cmd {
 	return cmd
 }
 
-// loadCmd returns the load command that fetches a target.
-func (m *model) loadCmd(t pollTarget) tea.Cmd {
-	switch t {
-	case pollStatus:
-		return m.loadStatus()
-	case pollReplication:
-		return m.loadReplication()
-	case pollCleanup:
-		return m.loadCleanup()
-	case pollBuckets:
-		return m.loadBuckets()
-	case pollWorkers:
-		return m.loadWorkers()
-	case pollCache:
-		return m.loadCache()
-	case pollDrain:
-		if m.backends.drain.backend == "" {
-			return nil
-		}
-		return m.pollDrain(m.backends.drain.backend)
-	case pollLogs:
-		return m.loadLogs()
+// landed clears a target's in-flight mark once its result has arrived.
+func (p *poller) landed(t pollTarget) {
+	if t != noPoll {
+		p.inFlight[t] = false
 	}
-	return nil
-}
-
-// pollTargetOf names the target a loaded or failed message answers, so its
-// in-flight mark can be cleared. Messages the poller did not send report false.
-func pollTargetOf(msg tea.Msg) (pollTarget, bool) {
-	switch msg.(type) {
-	case loadedMsg[*adminapi.StatusResponse], loadErrMsg[*adminapi.StatusResponse]:
-		return pollStatus, true
-	case loadedMsg[*adminapi.ReplicationStatusResponse], loadErrMsg[*adminapi.ReplicationStatusResponse]:
-		return pollReplication, true
-	case cleanupLoadedMsg, cleanupErrMsg:
-		return pollCleanup, true
-	case loadedMsg[*adminapi.ProvisioningResponse], loadErrMsg[*adminapi.ProvisioningResponse]:
-		return pollBuckets, true
-	case loadedMsg[*adminapi.WorkersResponse], loadErrMsg[*adminapi.WorkersResponse]:
-		return pollWorkers, true
-	case loadedMsg[*adminapi.CacheStatsResponse], loadErrMsg[*adminapi.CacheStatsResponse]:
-		return pollCache, true
-	case drainProgressMsg:
-		return pollDrain, true
-	case logsLoadedMsg, logsErrMsg:
-		return pollLogs, true
-	}
-	return 0, false
 }

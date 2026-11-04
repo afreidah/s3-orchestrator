@@ -54,7 +54,7 @@ func (m *model) refreshVisible() {
 		}
 	}
 	sortEntries(m.visible, m.sort)
-	m.table.SetRows(rowsFromEntries(m.visible))
+	m.table.SetRows(rowsOf(m.visible, entryRow))
 }
 
 // sortEntries orders rows in place: directories first, then the sort field

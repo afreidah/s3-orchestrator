@@ -56,17 +56,9 @@ type param struct {
 	Type        string
 }
 
-// Parameter names and descriptions shared by more than one entry, named so
-// the same parameter cannot be described two ways on two routes.
+// Parameter descriptions shared by more than one entry, named so the same
+// parameter cannot be described two ways on two routes.
 const (
-	paramName       = "name"
-	paramID         = "id"
-	paramKind       = "kind"
-	paramBackend    = "backend"
-	paramBatchSize  = "batch_size"
-	paramMax        = "max"
-	paramKey        = "key"
-	paramPrefix     = "prefix"
 	descBackendName = "Backend name"
 	descObjectKey   = "Object key, including its bucket prefix"
 	descBucketName  = "Virtual bucket name"
@@ -91,12 +83,12 @@ const (
 // The parameters more than one entry declares, built once so a route cannot
 // describe a shared parameter differently from its siblings.
 var (
-	objectKeyPath     = param{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey}
-	backendScope      = param{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope}
-	bucketNamePath    = param{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName}
-	userIDPath        = param{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID}
-	resourceNamePath  = param{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descResourceName}
-	resourceKindQuery = param{Name: paramKind, In: inQuery, Type: typeString, Description: descResourceKind}
+	objectKeyPath     = param{Name: adminapi.ParamKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey}
+	backendScope      = param{Name: adminapi.ParamBackend, In: inQuery, Type: typeString, Description: descBackendScope}
+	bucketNamePath    = param{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBucketName}
+	userIDPath        = param{Name: adminapi.ParamID, In: inPath, Required: true, Type: typeString, Description: descUserID}
+	resourceNamePath  = param{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descResourceName}
+	resourceKindQuery = param{Name: adminapi.ParamKind, In: inQuery, Type: typeString, Description: descResourceKind}
 )
 
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
@@ -183,11 +175,11 @@ func (h *Handler) routes() []route {
 			Summary:  "Recent records from the in-memory log buffer",
 			Response: adminapi.LogsResponse{},
 			Params: []param{
-				{Name: "level", In: inQuery, Type: typeString, Description: "Minimum level to return: debug, info, warn or error"},
+				{Name: adminapi.ParamLevel, In: inQuery, Type: typeString, Description: "Minimum level to return: debug, info, warn or error"},
 				{Name: "since", In: inQuery, Type: typeString, Description: "RFC3339 timestamp; only records at or after it"},
 				{Name: "before", In: inQuery, Type: typeString, Description: "RFC3339 timestamp; only records before it"},
 				{Name: "component", In: inQuery, Type: typeString, Description: "Only records from this component"},
-				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum records to return, newest kept (default 200, max 1000)"},
+				{Name: adminapi.ParamLimit, In: inQuery, Type: typeInteger, Description: "Maximum records to return, newest kept (default 200, max 1000)"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminLogs,
 		},
@@ -196,20 +188,20 @@ func (h *Handler) routes() []route {
 			Summary:  "Backend placement for one object key",
 			Response: adminapi.ObjectLocationsResponse{},
 			Params: []param{
-				{Name: paramKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
+				{Name: adminapi.ParamKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
 			},
-			Perm: core.PermRead, Resource: paramKey,
+			Perm: core.PermRead, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathObjects, Handler: h.handleListObjects,
 			Summary:  "Page of stored objects",
 			Response: adminapi.ObjectListResponse{},
 			Params: []param{
-				{Name: paramPrefix, In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
-				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; omitted defaults to /, empty lists every key flat"},
-				{Name: "continuation", In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
+				{Name: adminapi.ParamPrefix, In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
+				{Name: adminapi.ParamDelimiter, In: inQuery, Type: typeString, Description: "Grouping delimiter; omitted defaults to /, empty lists every key flat"},
+				{Name: adminapi.ParamContinuation, In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
 			},
-			Perm: core.PermList, Resource: paramPrefix,
+			Perm: core.PermList, Resource: adminapi.ParamPrefix,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathObject, Handler: h.handleGetObject,
@@ -218,7 +210,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermRead, Resource: paramKey,
+			Perm: core.PermRead, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodPut, Pattern: pathObject, Handler: h.handlePutObject,
@@ -228,7 +220,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermWrite, Resource: paramKey,
+			Perm: core.PermWrite, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathObjectTags, Handler: h.handleGetObjectTags,
@@ -237,7 +229,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermRead, Resource: paramKey,
+			Perm: core.PermRead, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodPut, Pattern: pathObjectTags, Handler: h.handlePutObjectTags,
@@ -247,7 +239,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermTags, Resource: paramKey,
+			Perm: core.PermTags, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathObjectTags, Handler: h.handleDeleteObjectTags,
@@ -256,7 +248,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermTags, Resource: paramKey,
+			Perm: core.PermTags, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathObject, Handler: h.handleDeleteObject,
@@ -265,16 +257,16 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				objectKeyPath,
 			},
-			Perm: core.PermDelete, Resource: paramKey,
+			Perm: core.PermDelete, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: adminapi.PathObjects, Handler: h.handleDeletePrefix,
 			Summary:  "Delete every object under a prefix",
 			Response: adminapi.ObjectDeleteResponse{},
 			Params: []param{
-				{Name: paramPrefix, In: inQuery, Required: true, Type: typeString, Description: "Prefix whose objects are removed"},
+				{Name: adminapi.ParamPrefix, In: inQuery, Required: true, Type: typeString, Description: "Prefix whose objects are removed"},
 			},
-			Perm: core.PermDelete, Resource: paramPrefix,
+			Perm: core.PermDelete, Resource: adminapi.ParamPrefix,
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathCleanupQueue, Handler: h.handleCleanupQueue,
@@ -287,8 +279,8 @@ func (h *Handler) routes() []route {
 			Summary:  "Dead-lettered cleanup depth and a page of rows",
 			Response: adminapi.CleanupDLQResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the listing to one backend"},
-				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum rows to return"},
+				{Name: adminapi.ParamBackend, In: inQuery, Type: typeString, Description: "Restrict the listing to one backend"},
+				{Name: adminapi.ParamLimit, In: inQuery, Type: typeInteger, Description: "Maximum rows to return"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
@@ -297,9 +289,9 @@ func (h *Handler) routes() []route {
 			Summary:  "Move dead-lettered cleanups back into the queue",
 			Response: adminapi.CleanupDLQRequeueResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the requeue to one backend"},
+				{Name: adminapi.ParamBackend, In: inQuery, Type: typeString, Description: "Restrict the requeue to one backend"},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
+			Kind: core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: adminapi.ParamBackend,
 		},
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathUsageFlush, Handler: h.handleUsageFlush,
@@ -351,7 +343,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Run one over-replication cleanup pass",
 			Response: adminapi.OverReplicationCleanResponse{},
 			Params: []param{
-				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Override the configured batch size for this run"},
+				{Name: adminapi.ParamBatchSize, In: inQuery, Type: typeInteger, Description: "Override the configured batch size for this run"},
 			},
 			Stream: adminstream.Event{},
 			Kind:   core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
@@ -374,58 +366,58 @@ func (h *Handler) routes() []route {
 			Summary:  "Start draining a backend",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminDrain, Resource: paramName,
+			Kind: core.ResourceBackend, Perm: core.PermAdminDrain, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathBackendDrain, Handler: h.handleDrainProgress,
 			Summary:  "Progress of an in-flight drain",
 			Response: adminapi.DrainProgressResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminRead, Resource: paramName,
+			Kind: core.ResourceBackend, Perm: core.PermAdminRead, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathBackendDrain, Handler: h.handleCancelDrain,
 			Summary:  "Cancel an active drain",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminDrain, Resource: paramName,
+			Kind: core.ResourceBackend, Perm: core.PermAdminDrain, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodPost, Pattern: pathBackendCordon, Handler: h.handleCordon,
 			Summary:  "Cordon a backend: stop new copies landing on it",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: paramName,
+			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathBackendCordon, Handler: h.handleUncordon,
 			Summary:  "Uncordon a backend: let new copies land on it again",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
-			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: paramName,
+			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathBackend, Handler: h.handleRemoveBackend,
 			Summary:  "Remove a backend, optionally purging its objects",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
-				{Name: "purge", In: inQuery, Type: typeBoolean, Description: "Also delete the backend's objects from its storage"},
-				{Name: "confirm", In: inQuery, Type: typeString, Description: "Confirmation token from the preview call; required to execute a purge"},
+				{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: adminapi.ParamPurge, In: inQuery, Type: typeBoolean, Description: "Also delete the backend's objects from its storage"},
+				{Name: adminapi.ParamConfirm, In: inQuery, Type: typeString, Description: "Confirmation token from the preview call; required to execute a purge"},
 			},
 			Alt:    adminapi.RemoveBackendPreview{},
 			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminDecommission, Resource: paramName,
+			Kind:   core.ResourceBackend, Perm: core.PermAdminDecommission, Resource: adminapi.ParamName,
 		},
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathRotateKey, Handler: h.handleRotateEncryptionKey,
@@ -448,19 +440,19 @@ func (h *Handler) routes() []route {
 			Response: adminapi.ScrubResponse{},
 			Params: []param{
 				backendScope,
-				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects verified in this pass"},
+				{Name: adminapi.ParamBatchSize, In: inQuery, Type: typeInteger, Description: "Objects verified in this pass"},
 			},
 			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
+			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: adminapi.ParamBackend,
 		},
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathObjectScrub, Handler: h.handleScrubKey,
 			Summary:  "Verify every copy of one object now",
 			Response: adminapi.ScrubKeyResponse{},
 			Params: []param{
-				{Name: paramKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to verify"},
+				{Name: adminapi.ParamKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to verify"},
 			},
-			Perm: core.PermRead, Resource: paramKey,
+			Perm: core.PermRead, Resource: adminapi.ParamKey,
 		},
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathBackfillChecksums, Handler: h.handleBackfillChecksums,
@@ -468,19 +460,19 @@ func (h *Handler) routes() []route {
 			Response: adminapi.BackfillChecksumsResponse{},
 			Params: []param{
 				backendScope,
-				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
-				{Name: "delay_ms", In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
+				{Name: adminapi.ParamBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
+				{Name: adminapi.ParamMax, In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
+				{Name: adminapi.ParamDelayMS, In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
 			},
 			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
+			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: adminapi.ParamBackend,
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathUnreadable, Handler: h.handleListUnreadable,
 			Summary:  "List copies that are encrypted with no key",
 			Response: adminapi.UnreadableListResponse{},
 			Params: []param{
-				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum copies to return"},
+				{Name: adminapi.ParamLimit, In: inQuery, Type: typeInteger, Description: "Maximum copies to return"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
@@ -489,7 +481,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Delete every copy that is encrypted with no key",
 			Response: adminapi.UnreadablePurgeResponse{},
 			Params: []param{
-				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Copies purged per pass"},
+				{Name: adminapi.ParamBatchSize, In: inQuery, Type: typeInteger, Description: "Copies purged per pass"},
 			},
 			Stream: adminstream.Event{},
 			Kind:   core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
@@ -502,7 +494,7 @@ func (h *Handler) routes() []route {
 				backendScope,
 			},
 			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
+			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: adminapi.ParamBackend,
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathCache, Handler: h.handleCacheStats,
@@ -521,7 +513,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Drop one key from the object data cache",
 			Response: adminapi.CacheInvalidateKeyResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: "Full internal object key, slashes included"},
+				{Name: adminapi.ParamKey, In: inPath, Required: true, Type: typeString, Description: "Full internal object key, slashes included"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminCache,
 		},
@@ -530,7 +522,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Drop every cache entry under a key prefix",
 			Response: adminapi.CacheInvalidateResponse{},
 			Params: []param{
-				{Name: paramPrefix, In: inQuery, Required: true, Type: typeString, Description: "Key prefix to invalidate"},
+				{Name: adminapi.ParamPrefix, In: inQuery, Required: true, Type: typeString, Description: "Key prefix to invalidate"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminCache,
 		},
@@ -610,7 +602,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Revoke one keypair, leaving its siblings working",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: "Access key ID to revoke"},
+				{Name: adminapi.ParamID, In: inPath, Required: true, Type: typeString, Description: "Access key ID to revoke"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -657,10 +649,10 @@ func bulkRewriteRoute(pattern string, handler http.HandlerFunc, summary string, 
 		Response: response,
 		Params: []param{
 			backendScope,
-			{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
+			{Name: adminapi.ParamMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 		},
 		Stream: adminstream.Event{},
-		Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
+		Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: adminapi.ParamBackend,
 	}
 }
 

@@ -94,7 +94,7 @@ func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Reques
 		h.writeCacheDisabled(w)
 		return
 	}
-	key := r.PathValue(paramKey)
+	key := r.PathValue(adminapi.ParamKey)
 	if key == "" {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "key is required")
 		return
@@ -118,7 +118,7 @@ func (h *Handler) handleCacheInvalidatePrefix(w http.ResponseWriter, r *http.Req
 		h.writeCacheDisabled(w)
 		return
 	}
-	prefix := r.URL.Query().Get(paramPrefix)
+	prefix := r.URL.Query().Get(adminapi.ParamPrefix)
 	if prefix == "" {
 		httputil.WriteJSONError(w, http.StatusBadRequest,
 			"prefix query parameter is required (use POST /admin/api/cache/flush to drop every entry)")

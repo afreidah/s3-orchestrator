@@ -18,11 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
-
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
@@ -74,7 +71,9 @@ func (c *client) renderStreamEvent(e *adminstream.Event) bool {
 	case adminstream.KindStart:
 		fmt.Fprintf(c.stdout, "%s started\n", e.Op)
 	case adminstream.KindStepStart:
-		c.renderStepStart(e)
+		// The label prints the moment the item begins, and its step_end
+		// completes the line.
+		fmt.Fprint(c.stdout, output.StepLabel(e.Message))
 	case adminstream.KindStepEnd:
 		c.renderStepEnd(e)
 	case adminstream.KindResult:
@@ -83,58 +82,23 @@ func (c *client) renderStreamEvent(e *adminstream.Event) bool {
 	return false
 }
 
-// stepLabelWidth is the column the step status ("OK"/"FAIL") is dotted out to,
-// so per-object status markers line up regardless of key length.
-const stepLabelWidth = 56
-
-// renderStepStart writes the leading "<verb> <item> ......" with no newline and
-// no trailing status, so the line appears the moment the item begins. The label
-// (verb + item) is supplied whole by the server.
-func (c *client) renderStepStart(e *adminstream.Event) {
-	label := e.Message + " "
-	dots := max(stepLabelWidth-len(label), 3)
-	fmt.Fprintf(c.stdout, "  %s%s ", label, strings.Repeat(".", dots))
-}
-
-// renderStepEnd completes the current step line with the status marker and the
-// per-object duration.
+// renderStepEnd completes the step line with its status. A concurrent pass
+// sends no step_start, so its step_end carries the label and prints it too.
 func (c *client) renderStepEnd(e *adminstream.Event) {
-	status := strings.ToUpper(e.Outcome)
-	if status == "" {
-		status = "OK"
-	}
-	dur := output.FormatDuration(time.Duration(e.DurationMs) * time.Millisecond)
 	if e.Message != "" {
-		// Concurrent op: the whole line arrives at once with no preceding
-		// step_start prefix, so render the label and dots here too.
-		label := e.Message + " "
-		dots := max(stepLabelWidth-len(label), 3)
-		fmt.Fprintf(c.stdout, "  %s%s %-6s (%s)\n", label, strings.Repeat(".", dots), status, dur)
-		return
+		fmt.Fprint(c.stdout, output.StepLabel(e.Message))
 	}
-	fmt.Fprintf(c.stdout, "%-6s (%s)\n", status, dur)
+	fmt.Fprintln(c.stdout, output.StepStatus(e))
 }
 
-// renderStreamResult prints the terminal result line in text mode, returning
-// true on a failed outcome. A non-drained backfill hints to re-run.
+// renderStreamResult prints the terminal result line, a failure to stderr,
+// returning true on a failed outcome.
 func (c *client) renderStreamResult(e *adminstream.Event) bool {
-	switch e.Outcome {
-	case adminstream.OutcomeFailed:
-		fmt.Fprintf(c.stderr, "error: %s\n", e.Error)
-		return true
-	case adminstream.OutcomeSkipped:
-		fmt.Fprintf(c.stdout, "skipped: %s\n", e.Message)
-	default:
-		dur := output.FormatDuration(time.Duration(e.DurationMs) * time.Millisecond)
-		summary := e.Message
-		if summary == "" {
-			summary = fmt.Sprintf("processed %d", e.Processed)
-		}
-		msg := fmt.Sprintf("done: %s (%s)", summary, dur)
-		if drained, ok := e.Fields["done"].(bool); ok && !drained {
-			msg += " - more remain, re-run to continue"
-		}
-		fmt.Fprintln(c.stdout, msg)
+	line, failed := output.Result(e)
+	w := c.stdout
+	if failed {
+		w = c.stderr
 	}
-	return false
+	fmt.Fprintln(w, line)
+	return failed
 }

@@ -37,7 +37,7 @@ type replicationView struct {
 // loadReplication returns a command that fetches the replication snapshot off
 // the main loop.
 func (m *model) loadReplication() tea.Cmd {
-	return fetchCmd(m.client.GetReplicationStatus)
+	return fetchCmd(pollReplication, m.client.GetReplicationStatus, (*model).applyReplication, (*model).applyReplicationErr)
 }
 
 // -------------------------------------------------------------------------
@@ -56,7 +56,7 @@ func (m *model) applyReplication(resp *adminapi.ReplicationStatusResponse) {
 func (m *model) applyReplicationErr(err error) {
 	m.replication.loading = false
 	if m.replication.snap == nil {
-		m.replication.err = err
+		m.replication.failed(err)
 	}
 }
 
@@ -66,14 +66,13 @@ func (m *model) applyReplicationErr(err error) {
 
 // replicationHeaderView renders the title bar with the auto-refresh cadence.
 func (m *model) replicationHeaderView() string {
-	title := fmt.Sprintf("replication   auto-refresh %ds", int(pollIntervals[pollReplication]/time.Second))
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(fmt.Sprintf("replication   auto-refresh %ds", int(pollSources[pollReplication].every/time.Second)))
 }
 
 // replicationBody renders the current content: an error, the first-load
 // indicator, an empty notice, or the snapshot summary.
 func (m *model) replicationBody() []pane {
-	return m.paneBody(m.replication.err, "", m.replication.loading, func() []pane {
+	return m.paneBody(&m.replication.loadState, func() []pane {
 		if m.replication.snap == nil {
 			return []pane{textPane(pathStyle.Render("(no replication data)"))}
 		}

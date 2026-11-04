@@ -13,6 +13,7 @@ package tui
 import (
 	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
@@ -58,7 +60,6 @@ type adminClient interface {
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	GetProvisioning(ctx context.Context) (*adminapi.ProvisioningResponse, error)
-	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
 	ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, error)
@@ -69,7 +70,6 @@ type adminClient interface {
 	DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error)
 	CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
 	SetCordon(ctx context.Context, backend string, cordoned bool) (*adminapi.BackendOperationResponse, error)
-	ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -103,7 +103,7 @@ type model struct {
 	more        bool            // a load-more (append) request is in flight
 	err         error           // last load error, if any
 	spinner     spinner.Model   // animated indicator shown while loading
-	confirm     *confirmPrompt  // armed confirmation for a pending write action, if any
+	confirm     *adminAction    // write action armed behind a y/N confirmation, if any
 	prompt      *inputPrompt    // armed input prompt for an action that needs a value, if any
 	status      *actionStatus   // result of the last action, shown until the next keypress
 	actionLog   []loggedAction  // every action result this session, oldest first
@@ -250,15 +250,11 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(m.loadObjects(m.prefix, ""), m.refreshDashboard(), m.spinner.Tick, pollTick())
 }
 
-// Update handles one message and returns the next state. A result the poller
-// was waiting on clears its in-flight mark first, whichever pane applies it.
-// The backends pane's own messages are dispatched next, by the pane, so its
-// drain bookkeeping lives with the code that reads it rather than swelling
-// this switch.
+// Update handles one message and returns the next state. A finished fetch folds
+// itself in, so this switch never names a pane's response. The backends pane's
+// own messages are dispatched first, by the pane, so its drain bookkeeping
+// lives with the code that reads it rather than swelling this switch.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if t, ok := pollTargetOf(msg); ok {
-		m.poll.inFlight[t] = false
-	}
 	if model, cmd, handled := m.updateBackends(msg); handled {
 		return model, cmd
 	}
@@ -267,6 +263,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case loadDone:
+		m.poll.landed(msg.target)
+		msg.apply(m)
+		return m, nil
 	case objectsLoadedMsg:
 		m.applyPage(msg)
 		return m, nil
@@ -274,70 +274,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		return m, nil
-	case loadedMsg[*adminapi.ObjectLocationsResponse]:
-		m.applyLocations(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.ObjectLocationsResponse]:
-		m.insp.fail(msg.err)
-		return m, nil
 	case tagsLoadedMsg:
 		m.applyTags(msg)
 		return m, nil
 	case scrubKeyMsg:
 		return m.applyScrubKey(msg)
-	case loadedMsg[*adminapi.StatusResponse]:
-		m.applyStatus(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.StatusResponse]:
-		m.backends.fail(msg.err)
-		return m, nil
-	case logsLoadedMsg:
-		m.applyLogs(msg)
-		return m, nil
-	case logsErrMsg:
-		m.logs.fail(msg.err)
-		return m, nil
-	case loadedMsg[*adminapi.ConfigResponse]:
-		m.applyConfig(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.ConfigResponse]:
-		m.config.fail(msg.err)
-		return m, nil
-	case loadedMsg[*adminapi.ReplicationStatusResponse]:
-		m.applyReplication(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.ReplicationStatusResponse]:
-		m.applyReplicationErr(msg.err)
-		return m, nil
 	case pollTickMsg:
 		return m.onPollTick(msg.now)
-	case loadedMsg[*adminapi.WorkersResponse]:
-		m.applyWorkers(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.WorkersResponse]:
-		m.workers.failed(msg.err)
-		return m, nil
-	case cleanupLoadedMsg:
-		m.applyCleanup(msg)
-		return m, nil
-	case cleanupErrMsg:
-		m.cleanup.loading = false
-		m.cleanup.err = msg.err
-		return m, nil
 	case actionDoneMsg:
 		return m.applyActionDone(msg)
-	case loadedMsg[*adminapi.CacheStatsResponse]:
-		m.applyCache(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.CacheStatsResponse]:
-		m.cache.failed(msg.err)
-		return m, nil
-	case loadedMsg[*adminapi.ProvisioningResponse]:
-		m.applyBuckets(msg.resp)
-		return m, nil
-	case loadErrMsg[*adminapi.ProvisioningResponse]:
-		m.buckets.failed(msg.err)
-		return m, nil
 	case runStreamMsg:
 		return m.applyRunStream(msg)
 	case runEventMsg:
@@ -378,9 +323,9 @@ func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 
-	for _, s := range sectionKeys {
-		if s.key == key.String() {
-			model, cmd := m.selectSection(s.sec)
+	for i, spec := range sectionSpecs() {
+		if spec.jump == key.String() {
+			model, cmd := m.selectSection(section(i))
 			return model, cmd, true
 		}
 	}
@@ -429,15 +374,14 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handlePaneKey routes a key to the active section's pane, or to the run's
-// output while that pane is showing it. Files has two panes, the listing and
-// the inspector, chosen by mode.
+// output while that pane is showing it. A pane that does not own esc and "r"
+// goes back to the nav and reloads the same way as every other.
 func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.showingRun() {
 		return m.handleRunKey(key)
 	}
-	// Files, Logs and Ops give esc and "r" their own meaning; every other pane
-	// goes back to the nav and reloads the same way.
-	if m.section != sectionFiles && m.section != sectionLogs && m.section != sectionOps {
+	spec := m.spec()
+	if !spec.ownsBack {
 		switch key.String() {
 		case "esc", "left", "h":
 			return m.navBack()
@@ -446,24 +390,15 @@ func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
-	switch m.section {
-	case sectionLogs:
-		return m.handleLogsKey(key)
-	case sectionOps:
-		return m.handleOpsKey(key)
-	case sectionBackends:
-		return m.handleBackendsKey(key)
-	case sectionBuckets:
-		return m.handleBucketsKey(key)
-	case sectionWorkers:
-		return m.handleWorkersKey(key)
-	case sectionCleanup:
-		return m.handleCleanupKey(key)
-	case sectionDashboard, sectionReplication, sectionCache:
+	if spec.handle == nil {
 		return m, nil
-	case sectionConfig:
-		return m.handleConfigKey(key)
 	}
+	return spec.handle(m, key)
+}
+
+// handleFilesKey routes a key to the Files section's two panes, the listing and
+// the inspector, chosen by mode.
+func (m *model) handleFilesKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeInspect {
 		return m.handleInspectKey(key)
 	}
@@ -572,18 +507,12 @@ var fileColumns = []columnSpec{
 	{title: "SIZE", min: 12, max: 12, priority: 2},
 }
 
-// rowsFromEntries builds table rows from the domain entries, in the same order
-// so the table cursor indexes straight into entries.
-func rowsFromEntries(entries []entry) []table.Row {
-	rows := make([]table.Row, 0, len(entries))
-	for _, e := range entries {
-		if e.isDir {
-			rows = append(rows, table.Row{e.name, "dir", ""})
-			continue
-		}
-		rows = append(rows, table.Row{e.name, "obj", humanize.Bytes(e.size)})
+// entryRow renders one listing entry.
+func entryRow(e *entry) table.Row {
+	if e.isDir {
+		return table.Row{e.name, "dir", ""}
 	}
-	return rows
+	return table.Row{e.name, "obj", humanize.Bytes(e.size)}
 }
 
 // parentPrefix returns the parent of a delimiter-terminated prefix, or "" when
@@ -613,8 +542,8 @@ func (m *model) contentView() string {
 	if m.showingRun() {
 		return m.runPaneView()
 	}
-	if header, body, ok := m.sectionParts(); ok {
-		return m.frame(header, m.hintFooter(), body...)
+	if spec := m.spec(); spec.header != nil {
+		return m.frame(spec.header(m), m.hintFooter(), spec.body(m)...)
 	}
 	if m.mode == modeInspect {
 		return m.inspectView()
@@ -622,46 +551,18 @@ func (m *model) contentView() string {
 	return m.frame(m.headerView(), m.footerView(), m.body()...)
 }
 
-// sectionParts is the header and body of the section on screen, or false for
-// the file browser, which draws its own footer and inspector.
-func (m *model) sectionParts() (string, []pane, bool) {
-	switch m.section {
-	case sectionDashboard:
-		return m.dashboardHeaderView(), m.dashboardBody(), true
-	case sectionLogs:
-		return m.logsHeaderView(), m.logsBody(), true
-	case sectionReplication:
-		return m.replicationHeaderView(), m.replicationBody(), true
-	case sectionOps:
-		return m.opsHeaderView(), []pane{textPane(m.opsMenuView())}, true
-	case sectionBackends:
-		return m.backendsHeaderView(), m.backendsBody(), true
-	case sectionBuckets:
-		return m.bucketsHeaderView(), m.bucketsBody(), true
-	case sectionWorkers:
-		return m.workersHeaderView(), m.workersBody(), true
-	case sectionCleanup:
-		return m.cleanupHeaderView(), m.cleanupBody(), true
-	case sectionCache:
-		return m.cacheHeaderView(), m.cacheBody(), true
-	case sectionConfig:
-		return m.configHeaderView(), m.configBody(), true
-	}
-	return "", nil, false
-}
-
 // paneBody renders the three states every pane reports the same way - a load
 // that failed, a pane this deployment did not wire, and a load still in flight
 // - and defers to content for the pane's own panes. Panes whose data is
 // always present pass an empty unavailable. Shared so the states a user reads
 // as "something is wrong" cannot drift apart between panes.
-func (m *model) paneBody(err error, unavailable string, loading bool, content func() []pane) []pane {
+func (m *model) paneBody(s *loadState, content func() []pane) []pane {
 	switch {
-	case err != nil:
-		return []pane{textPane(errStyle.Render("error: " + err.Error()))}
-	case unavailable != "":
-		return []pane{textPane(pathStyle.Render("(" + unavailable + ")"))}
-	case loading:
+	case s.err != nil:
+		return []pane{textPane(errStyle.Render("error: " + s.err.Error()))}
+	case s.unavailable != "":
+		return []pane{textPane(pathStyle.Render("(" + s.unavailable + ")"))}
+	case s.loading:
 		return []pane{textPane(m.spinner.View() + " loading...")}
 	default:
 		return content()
@@ -679,12 +580,17 @@ func (m *model) contentTitleStyle() lipgloss.Style {
 	return titleStyle
 }
 
+// titleBar renders text as the content pane's full-width title bar.
+func (m *model) titleBar(text string) string {
+	return m.contentTitleStyle().Width(m.contentWidth()).Render(text)
+}
+
 func (m *model) headerView() string {
 	loc := m.prefix
 	if loc == "" {
 		loc = "/"
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render("s3-orchestrator tui   " + loc)
+	return m.titleBar("s3-orchestrator tui   " + loc)
 }
 
 // footerView renders the status line (sort, filter, paging) above the key-hint
@@ -703,7 +609,7 @@ func (m *model) footerView() string {
 // body renders the current content: an error, the loading indicator, an
 // empty or no-matches notice, or the row list.
 func (m *model) body() []pane {
-	return m.paneBody(m.err, "", m.loading, func() []pane {
+	return m.paneBody(&loadState{err: m.err, loading: m.loading}, func() []pane {
 		switch {
 		case len(m.entries) == 0:
 			return []pane{textPane(pathStyle.Render("(empty)"))}
@@ -722,12 +628,15 @@ func (m *model) body() []pane {
 // parseArgs parses the tui flags into the theme to draw with and the admin
 // target. The theme spec comes from -theme, else $S3O_TUI_THEME, and is
 // checked first, so a bad one is reported whatever else is missing.
-func parseArgs(args []string) (admintarget.Target, theme, error) {
-	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+func parseArgs(args []string, stderr io.Writer) (admintarget.Target, theme, error) {
+	fs := flagset.New("tui", io.Discard)
 	targetFlags := admintarget.RegisterFlags(fs)
 	themeSpec := fs.String("theme", "", "Colour theme: a preset, then slot:colour overrides (overrides $S3O_TUI_THEME)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(stderr)
+			fs.Usage()
+		}
 		return admintarget.Target{}, theme{}, err
 	}
 	th, err := parseTheme(cmp.Or(*themeSpec, os.Getenv(EnvTheme)))
@@ -741,7 +650,10 @@ func parseArgs(args []string) (admintarget.Target, theme, error) {
 // Run resolves the admin target and theme, starts the TUI, and returns a
 // process exit code.
 func Run(args []string, _, stderr io.Writer) int { // codecov:ignore -- TUI entry point
-	t, th, err := parseArgs(args)
+	t, th, err := parseArgs(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1

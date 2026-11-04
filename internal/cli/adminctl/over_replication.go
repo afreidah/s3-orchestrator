@@ -29,7 +29,7 @@ func cmdOverReplication(args []string, c *client) int {
 	}
 	if *execute {
 		q := url.Values{}
-		setPositive(q, queryBatch, *batchSize)
+		setPositive(q, adminapi.ParamBatchSize, *batchSize)
 		return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathOverReplication, q))
 	}
 	return c.get(adminapi.PathOverReplication, nil)

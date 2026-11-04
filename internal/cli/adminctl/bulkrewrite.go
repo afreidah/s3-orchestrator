@@ -14,6 +14,7 @@ import (
 	"net/url"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // runBulkRewrite parses the shared flag set and posts one pass. -max stops
@@ -30,6 +31,6 @@ func runBulkRewrite(args []string, c *client, name, path string) int {
 
 	q := url.Values{}
 	setPositive(q, flagMax, *maxObjects)
-	setIf(q, queryBackend, *backend)
+	setIf(q, adminapi.ParamBackend, *backend)
 	return c.post(adminclient.WithQuery(path, q), nil)
 }

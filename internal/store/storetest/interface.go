@@ -3,14 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Declares the wide MetadataStore union the generated mocks are built from.
-// The union exists for test doubles only: production consumers depend on the
-// narrow core roles instead, which is why no such interface lives in core.
+// Names the wide MetadataStore union the generated mocks are built from.
+// Production consumers depend on the narrow core roles instead.
 // -------------------------------------------------------------------------------
 
 package storetest
 
-import "github.com/afreidah/s3-orchestrator/internal/store/core"
+import "github.com/afreidah/s3-orchestrator/internal/store/engine"
 
 //go:generate mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 
@@ -21,29 +20,10 @@ import "github.com/afreidah/s3-orchestrator/internal/store/core"
 // rather than generating mocks nothing calls.
 //go:generate mockgen -destination=role_mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/core ObjectStore,CleanupStore,ExpiredObjectsLister,DashboardStore,LifecycleAdmin,ProvisioningStore
 
-// MetadataStore is the union of every narrow store role interface, used only
-// as a mockgen target so one MockMetadataStore can stand in for a whole store.
-// Production code depends on the narrow roles in internal/store/core instead.
-// It is declared as an interface rather than built by embedding per-role mocks
-// because roles share methods (GetQuotaStats), which only interface embedding
-// flattens into one.
+// MetadataStore is the mockgen target, so one MockMetadataStore can stand in
+// for a whole store. It is declared here rather than built by embedding
+// per-role mocks because roles share methods (GetQuotaStats), which only
+// interface embedding flattens into one.
 type MetadataStore interface {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendStateStore
-	core.UsageFlusher
-	core.UsageReader
-	core.AdvisoryLocker
-	core.DashboardStore
-	core.LifecycleAdmin
-	core.NotificationOutbox
-	core.TagStore
-	core.ProvisioningStore
-	core.Pinger
+	engine.Store
 }

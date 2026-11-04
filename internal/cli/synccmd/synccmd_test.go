@@ -83,7 +83,7 @@ backends:
 // a virtual bucket name to contribute to the import.
 func TestParseFlags_BucketOptional(t *testing.T) {
 	var stderr bytes.Buffer
-	opts, ok := parseFlags([]string{"--backend", "b1"}, &stderr)
+	opts, _, ok := parseFlags([]string{"--backend", "b1"}, &stderr)
 	if !ok {
 		t.Fatalf("expected --bucket to be optional, stderr=%q", stderr.String())
 	}
@@ -92,28 +92,15 @@ func TestParseFlags_BucketOptional(t *testing.T) {
 	}
 }
 
-// TestParseFlags_RequiredMissing covers both required-flag branches in
-// parseFlags. The flag set is constructed with ContinueOnError-equivalent
-// behaviour by exiting before fs.Usage prints to a real terminal.
+// TestParseFlags_RequiredMissing covers the required-flag branch in parseFlags.
 func TestParseFlags_RequiredMissing(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"no-backend", []string{"--bucket", "vb"}, "--backend is required"},
+	var stderr bytes.Buffer
+	_, exit, ok := parseFlags([]string{"--bucket", "vb"}, &stderr)
+	if ok || exit != 1 {
+		t.Fatalf("parseFlags = %d, %v; want exit 1", exit, ok)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var stderr bytes.Buffer
-			opts, ok := parseFlags(tc.args, &stderr)
-			if ok {
-				t.Fatalf("expected ok=false, got opts=%+v", opts)
-			}
-			if !strings.Contains(stderr.String(), tc.want) {
-				t.Errorf("stderr = %q, want to contain %q", stderr.String(), tc.want)
-			}
-		})
+	if !strings.Contains(stderr.String(), "-backend is required") {
+		t.Errorf("stderr = %q, want it to name -backend", stderr.String())
 	}
 }
 
@@ -123,7 +110,7 @@ func TestParseFlags_Valid(t *testing.T) {
 	args := []string{"--config", "/tmp/c.yaml", "--backend", "b1", "--bucket", "vb",
 		"--prefix", "photos/", "--dry-run"}
 	var stderr bytes.Buffer
-	opts, ok := parseFlags(args, &stderr)
+	opts, _, ok := parseFlags(args, &stderr)
 	if !ok {
 		t.Fatalf("ok=false, stderr=%q", stderr.String())
 	}

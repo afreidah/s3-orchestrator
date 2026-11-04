@@ -33,7 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -305,8 +305,8 @@ func assertPlaintextSizes(t *testing.T, i int, sizeBytes int64, ptSize *int64, p
 // status string and the integer count under field.
 func assertAdminCount(t *testing.T, result map[string]any, field string, want int) {
 	t.Helper()
-	if status, _ := result["status"].(string); status != adminapi.StatusOK {
-		t.Fatalf("admin status = %q, want %q", status, adminapi.StatusOK)
+	if status, _ := result["status"].(string); status != adminstream.OutcomeOK {
+		t.Fatalf("admin status = %q, want %q", status, adminstream.OutcomeOK)
 	}
 	got := int(result[field].(float64))
 	if got != want {

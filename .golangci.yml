@@ -86,6 +86,8 @@ linters:
               desc: depend on the narrow store roles in internal/store/core via DI; concrete stores are only constructed in internal/di and internal/cli
             - pkg: github.com/afreidah/s3-orchestrator/internal/store/postgres
               desc: depend on the narrow store roles in internal/store/core via DI; concrete stores are only constructed in internal/di and internal/cli
+            - pkg: github.com/afreidah/s3-orchestrator/internal/store/engine
+              desc: depend on the narrow store roles in internal/store/core via DI; the union of them is only for the sites that hold a whole engine
   exclusions:
     generated: lax
     presets:

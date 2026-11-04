@@ -280,8 +280,8 @@ func TestHandleReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 	if resp.CopiesCreated != 1 || resp.Failed != 3 {
 		t.Errorf("got copies_created=%d failed=%d, want 1/3", resp.CopiesCreated, resp.Failed)
 	}
-	if resp.Status != adminapi.StatusOK {
-		t.Errorf("status = %q, want %q - a partial pass still ran", resp.Status, adminapi.StatusOK)
+	if resp.Status != adminstream.OutcomeOK {
+		t.Errorf("status = %q, want %q - a partial pass still ran", resp.Status, adminstream.OutcomeOK)
 	}
 }
 
@@ -402,7 +402,7 @@ func TestHandlePurgeUnreadable_ReportsPurged(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != adminapi.StatusOK || resp.Purged != 2 {
+	if resp.Status != adminstream.OutcomeOK || resp.Purged != 2 {
 		t.Errorf("resp = %+v, want ok with 2 purged", resp)
 	}
 
@@ -581,8 +581,8 @@ func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["status"].(string) != adminapi.StatusOK {
-		t.Errorf("status = %q, want %q", resp["status"], adminapi.StatusOK)
+	if resp["status"].(string) != adminstream.OutcomeOK {
+		t.Errorf("status = %q, want %q", resp["status"], adminstream.OutcomeOK)
 	}
 	if resp["total"].(float64) != 0 {
 		t.Errorf("total = %v, want 0", resp["total"])

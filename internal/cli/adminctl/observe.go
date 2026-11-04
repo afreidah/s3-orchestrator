@@ -15,7 +15,6 @@
 package adminctl
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,18 +54,14 @@ func cmdConfig(_ []string, c *client) int {
 
 // renderConfig prints the log level and any fields waiting on a restart, then
 // the configuration as YAML.
-func renderConfig(w io.Writer, body []byte) error {
-	var resp adminapi.ConfigResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return err
-	}
+var renderConfig = typed(func(w io.Writer, resp *adminapi.ConfigResponse) error {
 	fmt.Fprintf(w, "# log level in effect: %s\n", resp.LogLevel)
 	for _, field := range resp.PendingRestart {
 		fmt.Fprintf(w, "# pending restart: %s\n", field)
 	}
 	_, err := io.WriteString(w, resp.Config)
 	return err
-}
+})
 
 // cmdTraceSnapshot implements `s3-orchestrator admin trace-snapshot -o=<file>`.
 // Downloads the flight-recorder ring buffer (a binary `go tool trace` file)
@@ -78,12 +73,8 @@ func cmdTraceSnapshot(args []string, c *client) int {
 		return 1
 	}
 
-	data, status, code := c.request(http.MethodPost, adminapi.PathTraceSnap, nil)
-	if code != 0 {
-		return code
-	}
-	if status >= 400 {
-		c.renderError(data)
+	data, ok := c.request(http.MethodPost, adminapi.PathTraceSnap, nil)
+	if !ok {
 		return 1
 	}
 	if err := os.WriteFile(*out, data, 0o600); err != nil {

@@ -113,33 +113,58 @@ func hashOf(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Do issues an authenticated request and returns the raw response, which the
-// caller owns and must close. body is a JSON document, or nil for none.
-// Non-2xx statuses come back as a live response, not an error: callers that
-// want the typed form use Get, Post, Put, Delete or Stream.
+// Do issues an authenticated request and returns the successful response,
+// which the caller owns and must close. body is a JSON document, or nil for
+// none. A non-2xx status becomes an *Error carrying the server's body.
 func (c *Client) Do(ctx context.Context, method, path string, q url.Values, body []byte) (*http.Response, error) {
-	return c.send(ctx, c.http, method, path, q, body, "")
+	return succeeded(c.send(ctx, c.http, method, path, q, body, ""))
+}
+
+// Bytes issues an authenticated request and returns the whole successful
+// response body, for a caller that renders it raw. A non-2xx status becomes an
+// *Error.
+func (c *Client) Bytes(ctx context.Context, method, path string, q url.Values, body []byte) ([]byte, error) {
+	resp, err := c.Do(ctx, method, path, q, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	return data, nil
 }
 
 // Stream issues a request that opts into the server's NDJSON progress stream
 // and returns the events in order. body is a JSON document, or nil for none. A
 // non-2xx status becomes an *Error.
 func (c *Client) Stream(ctx context.Context, method, path string, q url.Values, body []byte) (EventStream, error) {
-	resp, err := c.send(ctx, c.stream, method, path, q, body, adminstream.ContentType)
+	//nolint:bodyclose // the returned stream owns the body and closes it.
+	resp, err := succeeded(c.send(ctx, c.stream, method, path, q, body, adminstream.ContentType))
 	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		err := ReadError(resp)
-		_ = resp.Body.Close()
 		return nil, err
 	}
 	return newDecoderStream(resp.Body), nil
 }
 
+// succeeded passes a successful response through and turns a non-2xx one into
+// an *Error, closing its body. Every request path checks its status here.
+func succeeded(resp *http.Response, err error) (*http.Response, error) {
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		defer resp.Body.Close()
+		return nil, ReadError(resp)
+	}
+	return resp, nil
+}
+
 // Upload issues an authenticated request whose body is raw bytes rather than a
 // JSON document, declaring the length the endpoint needs to accept it. The
-// caller owns and must close the returned response.
+// caller owns and must close the returned response; a non-2xx status becomes
+// an *Error.
 func (c *Client) Upload(
 	ctx context.Context,
 	method, path string,
@@ -162,7 +187,7 @@ func (c *Client) Upload(
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 	//nolint:gosec // G704: the target address is operator-supplied by design.
-	return c.http.Do(req)
+	return succeeded(c.http.Do(req))
 }
 
 // send builds and dispatches one request. accept, when non-empty, sets the

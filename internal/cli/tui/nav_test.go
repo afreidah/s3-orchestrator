@@ -52,11 +52,11 @@ func TestHandleNavKey_CursorBoundsAndOpen(t *testing.T) {
 		t.Errorf("cursor after up-at-top = %d, want 0", m.navCursor)
 	}
 	// down moves one row; extra downs clamp at the last selectable row.
-	for range selectableSections + 2 {
+	for range sectionCount + 2 {
 		m.handleNavKey(tea.KeyMsg{Type: tea.KeyDown})
 	}
-	if m.navCursor != selectableSections-1 {
-		t.Errorf("cursor after many downs = %d, want %d (clamped)", m.navCursor, selectableSections-1)
+	if m.navCursor != int(sectionCount)-1 {
+		t.Errorf("cursor after many downs = %d, want %d (clamped)", m.navCursor, sectionCount-1)
 	}
 
 	// enter on Backends selects the section, drops focus, and loads status.
@@ -68,8 +68,8 @@ func TestHandleNavKey_CursorBoundsAndOpen(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("selecting backends should return a load command")
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.StatusResponse]); !ok {
-		t.Errorf("load command result = %#v, want loadedMsg[*adminapi.StatusResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("load command result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -180,30 +180,33 @@ func TestHandleKey_TabTogglesNavAndLetterJumps(t *testing.T) {
 	}
 }
 
-// TestNavEntries_MatchSelectableSections guards the nav cursor bound against
-// the entry list: a section added to one and not the other silently becomes
-// unreachable, or lets the cursor run past the last row.
-func TestNavEntries_MatchSelectableSections(t *testing.T) {
+// TestSectionSpecs_AreComplete guards the table: a section left out has no
+// label or jump key, and a header without a body panics on the first frame.
+func TestSectionSpecs_AreComplete(t *testing.T) {
 	t.Parallel()
-	entries := navEntries()
-	if len(entries) != selectableSections {
-		t.Fatalf("navEntries = %d, selectableSections = %d", len(entries), selectableSections)
-	}
-	for i, e := range entries {
-		if int(e.sec) != i {
-			t.Errorf("entry %d (%s) has section %d; display order must match the section constants", i, e.label, e.sec)
+	jumps := map[string]bool{}
+	for i, spec := range sectionSpecs() {
+		if spec.label == "" || spec.jump == "" {
+			t.Errorf("section %d has no label or jump key", i)
+		}
+		if jumps[spec.jump] {
+			t.Errorf("%s reuses jump key %q", spec.label, spec.jump)
+		}
+		jumps[spec.jump] = true
+		if (spec.header == nil) != (spec.body == nil) {
+			t.Errorf("%s declares only half of its view", spec.label)
 		}
 	}
 }
 
-// TestNavEntries_FitSidebar asserts every label fits the fixed sidebar width.
+// TestSectionSpecs_FitSidebar asserts every label fits the fixed sidebar width.
 // A label that overflows soft-wraps and mangles the whole layout.
-func TestNavEntries_FitSidebar(t *testing.T) {
+func TestSectionSpecs_FitSidebar(t *testing.T) {
 	t.Parallel()
 	const markerWidth = 2
-	for _, e := range navEntries() {
-		if got := len(e.label) + markerWidth; got > sidebarWidth {
-			t.Errorf("label %q needs %d columns, sidebar is %d", e.label, got, sidebarWidth)
+	for _, spec := range sectionSpecs() {
+		if got := len(spec.label) + markerWidth; got > sidebarWidth {
+			t.Errorf("label %q needs %d columns, sidebar is %d", spec.label, got, sidebarWidth)
 		}
 	}
 }
@@ -243,8 +246,8 @@ func TestHandleKey_LetterJumpsAreUnique(t *testing.T) {
 		"l": sectionLogs,
 		"o": sectionOps,
 	}
-	if len(jumps) != selectableSections {
-		t.Fatalf("%d shortcuts for %d sections", len(jumps), selectableSections)
+	if len(jumps) != int(sectionCount) {
+		t.Fatalf("%d shortcuts for %d sections", len(jumps), sectionCount)
 	}
 	for letter, want := range jumps {
 		m := initialModel(&fakeLister{})

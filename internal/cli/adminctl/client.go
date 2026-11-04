@@ -22,9 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )
@@ -34,17 +34,32 @@ import (
 // -------------------------------------------------------------------------
 
 // client carries the shared admin transport, output format, and writers used
-// by every admin subcommand handler.
+// by every admin subcommand handler. helped records a command that stopped to
+// print its flags.
 type client struct {
 	api    *adminclient.Client
 	format output.Format
 	stdout io.Writer
 	stderr io.Writer
+	helped bool
 }
 
 // renderFunc renders a successful response body in text mode. A nil renderer
 // falls back to the generic key/value renderer.
 type renderFunc func(w io.Writer, body []byte) error
+
+// typed builds a renderer that decodes the body into the wire type T before
+// render writes it. A body that does not decode falls back to raw JSON, as any
+// failed render does.
+func typed[T any](render func(io.Writer, *T) error) renderFunc {
+	return func(w io.Writer, body []byte) error {
+		var v T
+		if err := json.Unmarshal(body, &v); err != nil {
+			return err
+		}
+		return render(w, &v)
+	}
+}
 
 // -------------------------------------------------------------------------
 // INTERNALS
@@ -77,64 +92,40 @@ func (c *client) sendJSON(method, path string, req any, render renderFunc) int {
 	return c.do(method, path, body, render)
 }
 
-// do performs one admin request and renders the outcome. Transport and read
-// errors are reported to stderr and return exit code 1; an HTTP status >= 400
-// renders the error and returns 1; otherwise the body renders per format.
+// do performs one admin request and renders the outcome per format, returning
+// the exit code: 1 for a failed call, which reportError has rendered.
 func (c *client) do(method, path string, body []byte, render renderFunc) int {
-	data, status, code := c.request(method, path, body)
-	if code != 0 {
-		return code
-	}
-	if status >= 400 {
-		c.renderError(data)
+	data, ok := c.request(method, path, body)
+	if !ok {
 		return 1
 	}
 	c.renderSuccess(data, render)
 	return 0
 }
 
-// request issues an authenticated request and returns the response body, the
-// HTTP status code, and an exit code (non-zero when a transport or read error
-// was already reported to stderr). Signs the request, sets the
-// Content-Type header when a body is present, and a fixed client timeout so a
-// hung server cannot stall the CLI indefinitely.
-func (c *client) request(method, path string, body []byte) ([]byte, int, int) {
-	resp, err := c.api.Do(context.Background(), method, path, nil, body)
+// request issues an authenticated request and returns the response body,
+// reporting a failed call and returning false.
+func (c *client) request(method, path string, body []byte) ([]byte, bool) {
+	data, err := c.api.Bytes(context.Background(), method, path, nil, body)
 	if err != nil {
-		fmt.Fprintf(c.stderr, fmtError, err)
-		return nil, 0, 1
+		c.reportError(err)
+		return nil, false
 	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error reading response: %v\n", err)
-		return nil, 0, 1
-	}
-	return data, resp.StatusCode, 0
+	return data, true
 }
 
 // flags starts a subcommand's flag set, reporting parse errors on stderr.
 func (c *client) flags(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	return fs
+	return flagset.New(name, c.stderr)
 }
 
-// parse reads args into fs and refuses a run that leaves any of the required
-// flags empty, naming the first one missing. It reports whether the command
-// may go on.
+// parse reads args into fs, enforcing the required flags, and reports whether
+// the command may go on. Commands stop with exit 1 when it may not, so a help
+// request is remembered for dispatch to turn back into a success.
 func (c *client) parse(fs *flag.FlagSet, args []string, required ...string) bool {
-	if fs.Parse(args) != nil {
-		return false
-	}
-	for _, name := range required {
-		if fs.Lookup(name).Value.String() == "" {
-			fmt.Fprintf(c.stderr, "error: -%s is required\n", name)
-			return false
-		}
-	}
-	return true
+	exit, ok := flagset.Parse(fs, args, required...)
+	c.helped = !ok && exit == 0
+	return ok
 }
 
 // setIf sets key when value is set, so an unset flag sends nothing.
@@ -168,28 +159,18 @@ func (c *client) renderSuccess(data []byte, render renderFunc) {
 	}
 }
 
-// renderError writes an error response body. JSON mode pretty-prints the raw
-// bytes; text mode prints a single "error: <message>" line to stderr.
-func (c *client) renderError(data []byte) {
-	if c.format.IsJSON() {
-		_ = output.PrettyJSON(c.stdout, data)
-		return
-	}
-	fmt.Fprintf(c.stderr, "error: %s\n", errorMessage(data))
-}
-
-// reportError renders a failed call: an API error renders its body like any
-// other error response, and anything else prints as a plain error line.
+// reportError renders a failed call. JSON mode pretty-prints an API error's
+// raw body; text mode prints its detail, or any other failure, as one
+// "error: <message>" line on stderr.
 func (c *client) reportError(err error) {
-	if apiErr, ok := errors.AsType[*adminclient.Error](err); ok {
-		c.renderError([]byte(apiErr.Body))
+	apiErr, ok := errors.AsType[*adminclient.Error](err)
+	if !ok {
+		fmt.Fprintf(c.stderr, fmtError, err)
 		return
 	}
-	fmt.Fprintf(c.stderr, fmtError, err)
-}
-
-// errorMessage extracts the "error" field from a JSON error body, falling back
-// to the trimmed raw body when the response is not the expected shape.
-func errorMessage(data []byte) string {
-	return (&adminclient.Error{Body: strings.TrimSpace(string(data))}).Detail()
+	if c.format.IsJSON() {
+		_ = output.PrettyJSON(c.stdout, []byte(apiErr.Body))
+		return
+	}
+	fmt.Fprintf(c.stderr, fmtError, apiErr.Detail())
 }

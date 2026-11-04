@@ -72,28 +72,21 @@ func nextLogLevel(current string) string {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// logsLoadedMsg carries a successfully loaded log page and the level floor it
-// was fetched at.
-type logsLoadedMsg struct {
+// logsPage is a loaded log page and the level floor it was fetched at.
+type logsPage struct {
 	resp  *adminapi.LogsResponse
 	level string
 }
 
-// logsErrMsg carries a failed logs fetch.
-type logsErrMsg struct{ err error }
-
 // loadLogs returns a command that fetches recent log entries off the main loop
-// at the current level floor, delivering a logsLoadedMsg or logsErrMsg.
+// at the current level floor.
 func (m *model) loadLogs() tea.Cmd {
 	client := m.client
 	level := m.logs.minLevel
-	return func() tea.Msg {
-		resp, err := client.GetLogs(context.Background(), level)
-		if err != nil {
-			return logsErrMsg{err}
-		}
-		return logsLoadedMsg{resp: resp, level: level}
-	}
+	return fetchCmd(pollLogs, func(ctx context.Context) (logsPage, error) {
+		resp, err := client.GetLogs(ctx, level)
+		return logsPage{resp: resp, level: level}, err
+	}, (*model).applyLogs, func(m *model, err error) { m.logs.failed(err) })
 }
 
 // -------------------------------------------------------------------------
@@ -103,7 +96,7 @@ func (m *model) loadLogs() tea.Cmd {
 // applyLogs folds a loaded page into the logs state. A page fetched at a level
 // floor the operator has since moved off is dropped. The view stays on the
 // newest entries unless the operator has scrolled up to read older ones.
-func (m *model) applyLogs(msg logsLoadedMsg) {
+func (m *model) applyLogs(msg logsPage) {
 	if msg.level != m.logs.minLevel {
 		return
 	}
@@ -121,6 +114,13 @@ func (m *model) applyLogs(msg logsLoadedMsg) {
 func (m *model) refreshLogLines() {
 	m.logs.vp.SetContent(m.renderLogLines())
 	m.logs.vp.GotoBottom()
+}
+
+// enterLogs starts the pane fresh, since the buffer it reads has moved on.
+func (m *model) enterLogs() tea.Cmd {
+	m.logs = newLogsView()
+	m.logs.loading = true
+	return m.fetch(pollLogs)
 }
 
 // handleLogsKey applies logs-level keys (filter, back, reload, level filter)
@@ -256,14 +256,14 @@ func (m *model) logsHeaderView() string {
 	}
 	cols := fmt.Sprintf("%-*s %-*s %-*s %s",
 		logTimeWidth, "TIME", logLevelWidth, "LEVEL", logComponentWidth, "COMPONENT", "MESSAGE")
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title) + "\n" +
+	return m.titleBar(title) + "\n" +
 		colHeaderStyle.Width(m.contentWidth()).Render(cols)
 }
 
 // logsBody renders the current content: an error, the loading indicator, an
 // empty or no-matches notice, or the scrolling log viewport.
 func (m *model) logsBody() []pane {
-	return m.paneBody(m.logs.err, "", m.logs.loading, func() []pane {
+	return m.paneBody(&m.logs.loadState, func() []pane {
 		switch {
 		case len(m.logs.entries) == 0:
 			return []pane{textPane(pathStyle.Render("(no log entries)"))}

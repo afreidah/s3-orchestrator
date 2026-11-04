@@ -73,9 +73,9 @@ var backendFlagNames = bitset.Vocabulary[BackendFlags]{
 // The drain-progress names DrainState reports, which the drain-progress API
 // carries.
 const (
-	drainStateDraining = "draining"
-	drainStateDrained  = "drained"
-	drainStateFailed   = "failed"
+	DrainStateDraining = "draining"
+	DrainStateDrained  = "drained"
+	DrainStateFailed   = "failed"
 )
 
 // AcceptedBy reports whether every flag in the set is one accept allows. A
@@ -110,11 +110,11 @@ func (f BackendFlags) MarshalJSON() ([]byte, error) {
 func (f BackendFlags) DrainState() string {
 	switch {
 	case f.Any(FlagDraining):
-		return drainStateDraining
+		return DrainStateDraining
 	case f.Any(FlagDrained):
-		return drainStateDrained
+		return DrainStateDrained
 	case f.Any(FlagDrainFailed):
-		return drainStateFailed
+		return DrainStateFailed
 	}
 	return ""
 }

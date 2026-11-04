@@ -35,7 +35,8 @@ type configView struct {
 // loadConfig returns a command that fetches the running configuration off the
 // main loop.
 func (m *model) loadConfig() tea.Cmd {
-	return fetchCmd(m.client.GetConfig)
+	return fetchCmd(noPoll, m.client.GetConfig, (*model).applyConfig,
+		func(m *model, err error) { m.config.failed(err) })
 }
 
 // -------------------------------------------------------------------------
@@ -66,12 +67,12 @@ func (m *model) configHeaderView() string {
 	if m.config.resp != nil {
 		title = fmt.Sprintf("config   log level: %s", m.config.resp.LogLevel)
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(title)
 }
 
 // configBody renders the pending-restart fields above the scrolling YAML.
 func (m *model) configBody() []pane {
-	return m.paneBody(m.config.err, "", m.config.loading, func() []pane {
+	return m.paneBody(&m.config.loadState, func() []pane {
 		if m.config.resp == nil {
 			return []pane{textPane(pathStyle.Render("(no configuration loaded)"))}
 		}

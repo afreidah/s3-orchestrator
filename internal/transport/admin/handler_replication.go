@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -40,7 +41,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	res, err := h.d.Ops.Replication.CountSurplus(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-			Outcome: adminapi.Outcome{Status: adminapi.StatusSkipped, Reason: reason},
+			Outcome: adminapi.Outcome{Status: adminstream.OutcomeSkipped, Reason: reason},
 		})
 		return
 	}
@@ -50,7 +51,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-		Outcome: adminapi.Outcome{Status: adminapi.StatusOK},
+		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
 		Factor:  res.Factor,
 		Pending: res.Pending,
 	})
@@ -59,7 +60,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 // handleOverReplicationClean triggers an immediate over-replication cleanup
 // pass. Accepts an optional batch_size query parameter.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
-	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
+	batchSize, ok := httputil.RequireQueryCount(w, r, adminapi.ParamBatchSize, 0, httputil.NoCeiling)
 	if !ok {
 		return
 	}

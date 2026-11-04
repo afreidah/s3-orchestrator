@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // TestGrantTarget covers every shape a grant route is addressed in: the bucket
@@ -80,8 +81,8 @@ func TestGrantTarget(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
 				"/admin/api/provisioning/grants/u1/"+tc.pathName+tc.query, nil)
-			req.SetPathValue(paramID, "u1")
-			req.SetPathValue(paramName, tc.pathName)
+			req.SetPathValue(adminapi.ParamID, "u1")
+			req.SetPathValue(adminapi.ParamName, tc.pathName)
 
 			user, got := grantTarget(req)
 			if user != "u1" {
@@ -105,8 +106,8 @@ func TestGrantTarget_AddressesTheSameGrantForBothRoutes(t *testing.T) {
 	put := httptest.NewRequestWithContext(t.Context(), http.MethodPut, target, nil)
 	del := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, target, nil)
 	for _, r := range []*http.Request{put, del} {
-		r.SetPathValue(paramID, "u1")
-		r.SetPathValue(paramName, "wasabi-eu")
+		r.SetPathValue(adminapi.ParamID, "u1")
+		r.SetPathValue(adminapi.ParamName, "wasabi-eu")
 	}
 
 	setUser, setResource := grantTarget(put)

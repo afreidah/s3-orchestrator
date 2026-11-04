@@ -12,19 +12,21 @@
 package validatecmd
 
 import (
-	"flag"
 	"fmt"
 	"io"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // Run parses the validate flags, validates the configuration file, and returns
 // the process exit code: 0 when the config is valid, 1 otherwise.
 func Run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("validate", flag.ExitOnError)
+	fs := flagset.New("validate", stderr)
 	configPath := fs.String("config", "config.yaml", "Path to configuration file")
-	_ = fs.Parse(args)
+	if exit, ok := flagset.Parse(fs, args); !ok {
+		return exit
+	}
 
 	if err := validate(*configPath, stdout); err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)

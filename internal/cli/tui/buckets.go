@@ -45,7 +45,7 @@ type bucketEntry struct {
 
 // newBucketsView builds the pane's empty state.
 func newBucketsView() bucketsView {
-	return bucketsView{list: newSortTable(bucketColumns, bucketSorts, rowsFromBuckets,
+	return bucketsView{list: newSortTable(bucketColumns, bucketSorts, bucketRow,
 		func(b *bucketEntry) string { return b.Name })}
 }
 
@@ -56,7 +56,8 @@ func newBucketsView() bucketsView {
 // loadBuckets returns a command that fetches the provisioning snapshot off the
 // main loop.
 func (m *model) loadBuckets() tea.Cmd {
-	return fetchCmd(m.client.GetProvisioning)
+	return fetchCmd(pollBuckets, m.client.GetProvisioning, (*model).applyBuckets,
+		func(m *model, err error) { m.buckets.failed(err) })
 }
 
 // -------------------------------------------------------------------------
@@ -113,20 +114,14 @@ func multipartRank(n int) int {
 	return n
 }
 
-// rowsFromBuckets builds table rows in display order, so the table cursor
-// indexes straight into the entries.
-func rowsFromBuckets(buckets []bucketEntry) []table.Row {
-	rows := make([]table.Row, 0, len(buckets))
-	for i := range buckets {
-		b := &buckets[i]
-		rows = append(rows, table.Row{
-			b.Name,
-			output.MultipartCap(b.MaxMultipartUploads),
-			b.Source,
-			strings.Join(b.reachedBy, ", "),
-		})
+// bucketRow renders one bucket with the identities that reach it.
+func bucketRow(b *bucketEntry) table.Row {
+	return table.Row{
+		b.Name,
+		output.MultipartCap(b.MaxMultipartUploads),
+		b.Source,
+		strings.Join(b.reachedBy, ", "),
 	}
-	return rows
 }
 
 // usersReaching names the identities holding a grant on a bucket and what each
@@ -151,7 +146,7 @@ func usersReaching(users []adminapi.User, bucket string) []string {
 func grantOn(u *adminapi.User, bucket string) (string, bool) {
 	for _, g := range u.Grants {
 		if g.Kind == string(core.ResourceBucket) && g.Name == bucket {
-			return "(" + strings.Join(g.Permissions, ",") + ")", true
+			return output.Permissions(g.Permissions), true
 		}
 	}
 	return "", false
@@ -164,7 +159,7 @@ func (m *model) bucketsHeaderView() string {
 	if n := configBuckets(m.buckets.list.received); n > 0 {
 		title += fmt.Sprintf("   %d from config (read-only)", n)
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(title)
 }
 
 // configBuckets counts the entries the config file declares.
@@ -182,7 +177,7 @@ func configBuckets(buckets []bucketEntry) int {
 // loading indicator, or the buckets table with anything the merge reported
 // below it.
 func (m *model) bucketsBody() []pane {
-	return m.paneBody(m.buckets.err, m.buckets.unavailable, m.buckets.loading, func() []pane {
+	return m.paneBody(&m.buckets.loadState, func() []pane {
 		if len(m.buckets.list.received) == 0 {
 			return []pane{textPane(pathStyle.Render("(no buckets declared)"))}
 		}

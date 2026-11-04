@@ -28,6 +28,20 @@ func TestNameList(t *testing.T) {
 	}
 }
 
+// TestBackendCellsOf verifies the cells read a quota as figures and a share, and
+// no quota as no limit rather than a limit of zero.
+func TestBackendCellsOf(t *testing.T) {
+	t.Parallel()
+	limited := BackendCellsOf(&adminapi.BackendStatus{BytesUsed: 2048, BytesLimit: 4096, ObjectCount: 3, Flags: []string{"cordoned"}})
+	want := BackendCells{Health: "healthy", Refused: "-", Flags: "cordoned", Used: "2.0 KiB", Limit: "4.0 KiB", Use: "50%", Objects: "3"}
+	if limited != want {
+		t.Errorf("limited cells = %+v, want %+v", limited, want)
+	}
+	if got := BackendCellsOf(&adminapi.BackendStatus{}); got.Limit != NoLimit || got.Use != "-" {
+		t.Errorf("unlimited cells = %+v, want no limit and a dash", got)
+	}
+}
+
 // TestInstance verifies the instance line names the id, build, mode and
 // uptime, and that a server reporting no identity reads as unknown.
 func TestInstance(t *testing.T) {

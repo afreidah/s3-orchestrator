@@ -12,22 +12,26 @@ package initcmd
 
 import (
 	"bufio"
-	"flag"
+	"cmp"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"text/template"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // Run is the CLI entry point. It parses the init flags, runs the interactive
 // generator, and returns the process exit code.
 func Run(args []string, in io.Reader, out, errOut io.Writer) int { // codecov:ignore -- interactive I/O wrapper
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs := flagset.New("init", errOut)
 	configPath := fs.String("config", "config.yaml", "Output path for the generated config file")
-	_ = fs.Parse(args)
+	if exit, ok := flagset.Parse(fs, args); !ok {
+		return exit
+	}
 
 	if err := RunInteractive(*configPath, in, out); err != nil {
 		fmt.Fprintf(errOut, "error: %v\n", err)
@@ -39,15 +43,18 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int { // codecov:ig
 // RunInteractive drives the interactive config generation flow. Exposed for
 // tests that want to feed canned input through the prompter.
 func RunInteractive(configPath string, in io.Reader, out io.Writer) error {
-	scanner := bufio.NewScanner(in)
-	if confirmed, err := confirmOverwrite(configPath, scanner, out); !confirmed || err != nil {
+	p := newPrompter(in, out)
+	if confirmed, err := confirmOverwrite(configPath, p); !confirmed || err != nil {
 		return err
 	}
 
 	var params Params
-	promptDatabase(scanner, out, &params)
-	promptBackends(scanner, out, &params)
-	promptBuckets(scanner, out, &params)
+	promptDatabase(p, &params)
+	promptBackends(p, &params)
+	promptBuckets(p, &params)
+	if p.err != nil {
+		return p.err
+	}
 
 	output, err := GenerateConfig(&params)
 	if err != nil {
@@ -70,77 +77,74 @@ func RunInteractive(configPath string, in io.Reader, out io.Writer) error {
 // confirmOverwrite prompts when the config file already exists. Returns
 // (true, nil) if the caller should proceed, (false, nil) if the user
 // aborted, or a wrapped error for any stat failure other than "not found".
-func confirmOverwrite(configPath string, scanner *bufio.Scanner, out io.Writer) (bool, error) {
+func confirmOverwrite(configPath string, p *prompter) (bool, error) {
 	if _, err := os.Stat(configPath); err != nil {
 		return true, nil //nolint:nilerr // missing file is the normal init case
 	}
-	fmt.Fprintf(out, "Config file %q already exists. Overwrite? [y/N] ", configPath)
-	if !scanYesNo(scanner) {
-		fmt.Fprintln(out, "Aborted.")
+	if !p.yes(fmt.Sprintf("Config file %q already exists. Overwrite?", configPath)) {
+		fmt.Fprintln(p.out, "Aborted.")
 		return false, nil
 	}
 	return true, nil
 }
 
 // promptDatabase collects database driver + connection inputs.
-func promptDatabase(scanner *bufio.Scanner, out io.Writer, params *Params) {
-	fmt.Fprintln(out, "\n--- Database ---")
-	params.Driver = scanDefault(scanner, out, "Database driver (sqlite/postgres) [sqlite]: ", "sqlite")
+func promptDatabase(p *prompter, params *Params) {
+	fmt.Fprintln(p.out, "\n--- Database ---")
+	params.Driver = p.ask("Database driver (sqlite/postgres)", "sqlite")
 
 	if params.Driver == "postgres" {
-		params.DBHost = scanDefault(scanner, out, "PostgreSQL host [localhost]: ", "localhost")
-		params.DBPort = scanDefault(scanner, out, "PostgreSQL port [5432]: ", "5432")
-		params.DBName = scanDefault(scanner, out, "Database name [s3_orchestrator]: ", "s3_orchestrator")
-		params.DBUser = scanDefault(scanner, out, "Database user [s3_orchestrator]: ", "s3_orchestrator")
-		params.DBPassword = scanDefault(scanner, out, "Database password: ", "")
+		params.DBHost = p.ask("PostgreSQL host", "localhost")
+		params.DBPort = p.ask("PostgreSQL port", "5432")
+		params.DBName = p.ask("Database name", "s3_orchestrator")
+		params.DBUser = p.ask("Database user", "s3_orchestrator")
+		params.DBPassword = p.ask("Database password", "")
 		return
 	}
 	params.Driver = "sqlite"
-	params.DBPath = scanDefault(scanner, out, "SQLite database path [s3-orchestrator.db]: ", "s3-orchestrator.db")
+	params.DBPath = p.ask("SQLite database path", "s3-orchestrator.db")
 }
 
 // promptBackends collects one or more backend entries until the user
 // declines to add another.
-func promptBackends(scanner *bufio.Scanner, out io.Writer, params *Params) {
-	fmt.Fprintln(out, "\n--- Storage Backend ---")
+func promptBackends(p *prompter, params *Params) {
+	fmt.Fprintln(p.out, "\n--- Storage Backend ---")
 	for {
-		params.Backends = append(params.Backends, promptSingleBackend(scanner, out))
-		fmt.Fprint(out, "\nAdd another backend? [y/N] ")
-		if !scanYesNo(scanner) {
+		params.Backends = append(params.Backends, promptSingleBackend(p))
+		if !p.yes("\nAdd another backend?") {
 			return
 		}
 	}
 }
 
 // promptSingleBackend collects the fields for one backend entry.
-func promptSingleBackend(scanner *bufio.Scanner, out io.Writer) Backend {
+func promptSingleBackend(p *prompter) Backend {
 	var be Backend
-	be.Name = scanRequired(scanner, out, "Backend name: ")
-	be.Endpoint = scanRequired(scanner, out, "S3 endpoint URL: ")
-	be.Bucket = scanRequired(scanner, out, "S3 bucket name: ")
-	be.AccessKeyID = scanRequired(scanner, out, "Access key ID: ")
-	be.SecretAccessKey = scanRequired(scanner, out, "Secret access key: ")
-	be.ForcePathStyle = strings.EqualFold(scanDefault(scanner, out, "Force path style? (yes for MinIO/OCI) [no]: ", "no"), "yes")
+	be.Name = p.require("Backend name")
+	be.Endpoint = p.require("S3 endpoint URL")
+	be.Bucket = p.require("S3 bucket name")
+	be.AccessKeyID = p.require("Access key ID")
+	be.SecretAccessKey = p.require("Secret access key")
+	be.ForcePathStyle = strings.EqualFold(p.ask("Force path style? (yes for MinIO/OCI)", "no"), "yes")
 
-	fmt.Fprintln(out, "\nQuotas and limits (0 = unlimited):")
-	be.QuotaBytes = scanDefault(scanner, out, "  Storage quota bytes [0]: ", "0")
-	be.APIRequestLimit = scanDefault(scanner, out, "  Monthly API request limit [0]: ", "0")
-	be.EgressByteLimit = scanDefault(scanner, out, "  Monthly egress byte limit [0]: ", "0")
-	be.IngressByteLimit = scanDefault(scanner, out, "  Monthly ingress byte limit [0]: ", "0")
+	fmt.Fprintln(p.out, "\nQuotas and limits (0 = unlimited):")
+	be.QuotaBytes = p.ask("  Storage quota bytes", "0")
+	be.APIRequestLimit = p.ask("  Monthly API request limit", "0")
+	be.EgressByteLimit = p.ask("  Monthly egress byte limit", "0")
+	be.IngressByteLimit = p.ask("  Monthly ingress byte limit", "0")
 	return be
 }
 
 // promptBuckets collects one or more virtual-bucket entries.
-func promptBuckets(scanner *bufio.Scanner, out io.Writer, params *Params) {
-	fmt.Fprintln(out, "\n--- Virtual Bucket ---")
+func promptBuckets(p *prompter, params *Params) {
+	fmt.Fprintln(p.out, "\n--- Virtual Bucket ---")
 	for {
 		var bkt Bucket
-		bkt.Name = scanRequired(scanner, out, "Bucket name: ")
-		bkt.AccessKeyID = scanRequired(scanner, out, "Client access key ID: ")
-		bkt.SecretAccessKey = scanRequired(scanner, out, "Client secret access key: ")
+		bkt.Name = p.require("Bucket name")
+		bkt.AccessKeyID = p.require("Client access key ID")
+		bkt.SecretAccessKey = p.require("Client secret access key")
 		params.Buckets = append(params.Buckets, bkt)
-		fmt.Fprint(out, "Add another bucket? [y/N] ")
-		if !scanYesNo(scanner) {
+		if !p.yes("Add another bucket?") {
 			return
 		}
 	}
@@ -270,38 +274,62 @@ func GenerateConfig(params *Params) (string, error) {
 // INPUT HELPERS
 // -------------------------------------------------------------------------
 
-// scanDefault prints prompt and reads a line from the scanner, returning
-// defaultVal if it is empty.
-func scanDefault(scanner *bufio.Scanner, out io.Writer, prompt, defaultVal string) string {
-	fmt.Fprint(out, prompt)
-	if scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
+// errInputEnded is what a required answer that never came fails the run with.
+var errInputEnded = errors.New("input ended before every required answer was given")
+
+// prompter asks the operator one question at a time. err records input that
+// ended before a required answer came, which later questions then skip.
+type prompter struct {
+	in  *bufio.Scanner
+	out io.Writer
+	err error
+}
+
+// newPrompter reads answers from in and writes questions to out.
+func newPrompter(in io.Reader, out io.Writer) *prompter {
+	return &prompter{in: bufio.NewScanner(in), out: out}
+}
+
+// answer reads one trimmed line, reporting false when the input has ended.
+func (p *prompter) answer() (string, bool) {
+	if !p.in.Scan() {
+		return "", false
+	}
+	return strings.TrimSpace(p.in.Text()), true
+}
+
+// ask prints label with its fallback, when it has one, and returns the answer
+// or the fallback if it is empty.
+func (p *prompter) ask(label, fallback string) string {
+	if fallback == "" {
+		fmt.Fprintf(p.out, "%s: ", label)
+	} else {
+		fmt.Fprintf(p.out, "%s [%s]: ", label, fallback)
+	}
+	text, _ := p.answer()
+	return cmp.Or(text, fallback)
+}
+
+// require asks until the answer is non-empty. Input that ends first records
+// errInputEnded and returns nothing.
+func (p *prompter) require(label string) string {
+	for p.err == nil {
+		fmt.Fprintf(p.out, "%s: ", label)
+		text, ok := p.answer()
+		if !ok {
+			p.err = errInputEnded
+		}
 		if text != "" {
 			return text
 		}
 	}
-	return defaultVal
+	return ""
 }
 
-// scanRequired prints prompt and reads a line from the scanner, prompting
-// again until it is non-empty.
-func scanRequired(scanner *bufio.Scanner, out io.Writer, prompt string) string {
-	for {
-		fmt.Fprint(out, prompt)
-		if scanner.Scan() {
-			text := strings.TrimSpace(scanner.Text())
-			if text != "" {
-				return text
-			}
-		}
-	}
-}
-
-// scanYesNo reads a y/n response, defaulting to no.
-func scanYesNo(scanner *bufio.Scanner) bool {
-	if scanner.Scan() {
-		text := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		return text == "y" || text == "yes"
-	}
-	return false
+// yes asks a y/N question, defaulting to no.
+func (p *prompter) yes(question string) bool {
+	fmt.Fprintf(p.out, "%s [y/N] ", question)
+	text, _ := p.answer()
+	text = strings.ToLower(text)
+	return text == "y" || text == "yes"
 }

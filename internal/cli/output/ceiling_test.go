@@ -102,12 +102,12 @@ func TestCycle(t *testing.T) {
 	}
 }
 
-// TestMultipartCap verifies zero renders as unlimited rather than as a bucket
+// TestMultipartCap verifies zero renders as no limit rather than as a bucket
 // that accepts no multipart uploads.
 func TestMultipartCap(t *testing.T) {
 	t.Parallel()
-	if got := MultipartCap(0); got != "unlimited" {
-		t.Errorf("MultipartCap(0) = %q, want unlimited", got)
+	if got := MultipartCap(0); got != NoLimit {
+		t.Errorf("MultipartCap(0) = %q, want %q", got, NoLimit)
 	}
 	if got := MultipartCap(4); got != "4" {
 		t.Errorf("MultipartCap(4) = %q, want 4", got)

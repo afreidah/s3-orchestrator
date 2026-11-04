@@ -156,26 +156,34 @@ func TestDo_EncodesQueryAndBody(t *testing.T) {
 	}
 }
 
-// TestDo_ReturnsNonOKResponseAlive is the contract adminctl depends on: a
-// non-2xx must come back as a readable response, not an error, because JSON
-// mode pretty-prints the server's raw error body.
-func TestDo_ReturnsNonOKResponseAlive(t *testing.T) {
+// TestDo_NonOKKeepsTheRawBody is the contract adminctl depends on: a non-2xx
+// comes back as an *Error that still holds the server's raw body, because JSON
+// mode pretty-prints it.
+func TestDo_NonOKKeepsTheRawBody(t *testing.T) {
 	t.Parallel()
 	srv, _ := newCaptureServer(t, http.StatusForbidden, `{"error":"denied"}`)
 
 	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
-	resp, err := c.Do(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
-	if err != nil {
-		t.Fatalf("Do returned an error for a 403; the raw body must stay readable: %v", err)
+	_, err := c.Bytes(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok {
+		t.Fatalf("err = %v, want *Error", err)
 	}
-	defer resp.Body.Close()
+	if apiErr.Status != http.StatusForbidden || apiErr.Body != `{"error":"denied"}` {
+		t.Errorf("error = %d %q, want 403 with the server's raw body", apiErr.Status, apiErr.Body)
+	}
+}
 
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"error":"denied"}` {
-		t.Errorf("body = %q, want the server's raw error body", body)
+// TestBytes_ReturnsTheBody verifies a successful call hands back the whole
+// body.
+func TestBytes_ReturnsTheBody(t *testing.T) {
+	t.Parallel()
+	srv, _ := newCaptureServer(t, http.StatusOK, `{"ok":true}`)
+
+	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
+	data, err := c.Bytes(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
+	if err != nil || string(data) != `{"ok":true}` {
+		t.Errorf("Bytes = %q, %v; want the body", data, err)
 	}
 }
 

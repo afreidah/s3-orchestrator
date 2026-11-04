@@ -96,3 +96,37 @@ func TestCleanupDLQ_RequeueReportsCount(t *testing.T) {
 		t.Errorf("requeue output unexpected:\n%s", out)
 	}
 }
+
+// TestCleanupDLQ_NeedsAVerb asserts the noun alone prints its verbs and fails,
+// as every noun does, so a script that forgot the verb does not pass silently.
+func TestCleanupDLQ_NeedsAVerb(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	if code := Command("cleanup-dlq", nil, "http://127.0.0.1:0", testCreds, &stdout, &stderr); code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "requeue") {
+		t.Errorf("stderr = %q, want the verbs listed", stderr.String())
+	}
+}
+
+// TestCommand_HelpIsASuccess asserts a subcommand's -h exits 0 and lists its
+// flags, under a noun as well as on its own.
+func TestCommand_HelpIsASuccess(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		cmd  string
+		args []string
+	}{
+		{"cleanup-dlq", []string{"list", "-h"}},
+		{"scrub", []string{"-h"}},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Command(tc.cmd, tc.args, "http://127.0.0.1:0", testCreds, &stdout, &stderr); code != 0 {
+			t.Errorf("%s -h: exit = %d, want 0 (stderr=%q)", tc.cmd, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "-backend") {
+			t.Errorf("%s -h: stderr = %q, want its flags listed", tc.cmd, stderr.String())
+		}
+	}
+}

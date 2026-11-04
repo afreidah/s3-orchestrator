@@ -17,6 +17,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,9 @@ func statusOf(t *testing.T, addr, accessKey, secret, method, path string, body s
 		payload = []byte(body)
 	}
 	resp, err := c.Do(context.Background(), method, path, nil, payload)
+	if apiErr, ok := errors.AsType[*adminclient.Error](err); ok {
+		return apiErr.Status
+	}
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -205,15 +209,15 @@ func TestSigned_UploadUsesUnsignedPayload(t *testing.T) {
 	body := strings.NewReader("hello")
 	resp, err := c.Upload(context.Background(), http.MethodPut,
 		"/admin/api/objects/"+grantedBucket+"/k", nil, body, 5, "application/octet-stream")
-	if err != nil {
-		t.Fatalf("Upload: %v", err)
+	if err == nil {
+		_ = resp.Body.Close()
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	// The user holds no bucket grant, so this is refused on authorization. A
 	// signature the server could not verify would refuse it earlier, with 401.
-	if resp.StatusCode == http.StatusUnauthorized {
-		t.Error("status = 401; the unsigned-payload upload did not verify")
+	apiErr, ok := errors.AsType[*adminclient.Error](err)
+	if !ok || apiErr.Status != http.StatusForbidden {
+		t.Errorf("err = %v, want the 403 of a verified signature without a grant", err)
 	}
 }
 

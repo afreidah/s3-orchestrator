@@ -11,8 +11,8 @@
 package initcmd
 
 import (
-	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,19 +26,19 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// canned returns a bufio.Scanner reading from the given lines, joined with
-// newlines. Used to drive the prompt helpers without a real TTY.
-func canned(lines ...string) *bufio.Scanner {
-	return bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+// canned returns a prompter reading the given lines, joined with newlines, and
+// writing to out. Used to drive the prompts without a real TTY.
+func canned(out io.Writer, lines ...string) *prompter {
+	return newPrompter(strings.NewReader(strings.Join(lines, "\n")+"\n"), out)
 }
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestScanDefault_ReturnsDefaultWhenEmpty covers both the empty-string and
-// trimmed-whitespace cases of scanDefault.
-func TestScanDefault_ReturnsDefaultWhenEmpty(t *testing.T) {
+// TestAsk_ReturnsFallbackWhenEmpty covers both the empty-string and
+// trimmed-whitespace cases, and that the fallback is shown in the question.
+func TestAsk_ReturnsFallbackWhenEmpty(t *testing.T) {
 	tests := []struct {
 		input    string
 		fallback string
@@ -50,29 +50,62 @@ func TestScanDefault_ReturnsDefaultWhenEmpty(t *testing.T) {
 		{"  trimmed  \n", "fallback", "trimmed"},
 	}
 	for _, tt := range tests {
-		s := bufio.NewScanner(strings.NewReader(tt.input))
-		if got := scanDefault(s, io.Discard, "prompt: ", tt.fallback); got != tt.want {
-			t.Errorf("scanDefault(%q) = %q, want %q", tt.input, got, tt.want)
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(tt.input), &out)
+		if got := p.ask("label", tt.fallback); got != tt.want {
+			t.Errorf("ask(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+		if out.String() != "label [fallback]: " {
+			t.Errorf("question = %q", out.String())
 		}
 	}
 }
 
-// TestScanRequired_LoopsUntilNonEmpty drives the re-prompt branch by
-// supplying empty lines before a real value.
-func TestScanRequired_LoopsUntilNonEmpty(t *testing.T) {
-	s := canned("", "  ", "answer")
+// TestRequire_LoopsUntilNonEmpty drives the re-prompt branch by supplying empty
+// lines before a real value.
+func TestRequire_LoopsUntilNonEmpty(t *testing.T) {
 	var out bytes.Buffer
-	got := scanRequired(s, &out, "prompt: ")
+	got := canned(&out, "", "  ", "answer").require("prompt")
 	if got != "answer" {
-		t.Errorf("scanRequired = %q, want answer", got)
+		t.Errorf("require = %q, want answer", got)
 	}
-	if !strings.Contains(out.String(), "prompt: ") {
-		t.Errorf("out = %q, want re-prompt", out.String())
+	if strings.Count(out.String(), "prompt: ") != 3 {
+		t.Errorf("out = %q, want a re-prompt per empty line", out.String())
 	}
 }
 
-// TestScanYesNo covers the y/yes/N/empty branches.
-func TestScanYesNo(t *testing.T) {
+// TestRequire_EndOfInputStops verifies input that ends before an answer fails
+// the run rather than asking forever, and skips the questions after it.
+func TestRequire_EndOfInputStops(t *testing.T) {
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	if got := p.require("first"); got != "" {
+		t.Errorf("require = %q, want nothing", got)
+	}
+	if !errors.Is(p.err, errInputEnded) {
+		t.Fatalf("err = %v, want errInputEnded", p.err)
+	}
+	p.require("second")
+	if strings.Contains(out.String(), "second") {
+		t.Errorf("out = %q, want later questions skipped", out.String())
+	}
+}
+
+// TestRunInteractive_EndOfInputFails verifies a closed stdin ends init with an
+// error and writes no config.
+func TestRunInteractive_EndOfInputFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := RunInteractive(path, strings.NewReader("sqlite\n\n"), io.Discard)
+	if !errors.Is(err, errInputEnded) {
+		t.Fatalf("err = %v, want errInputEnded", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("config was written: %v", statErr)
+	}
+}
+
+// TestYes covers the y/yes/N/empty branches.
+func TestYes(t *testing.T) {
 	cases := map[string]bool{
 		"y\n":    true,
 		"Y\n":    true,
@@ -81,11 +114,11 @@ func TestScanYesNo(t *testing.T) {
 		"n\n":    false,
 		"\n":     false,
 		"junk\n": false,
+		"":       false,
 	}
 	for in, want := range cases {
-		s := bufio.NewScanner(strings.NewReader(in))
-		if got := scanYesNo(s); got != want {
-			t.Errorf("scanYesNo(%q) = %v, want %v", in, got, want)
+		if got := newPrompter(strings.NewReader(in), io.Discard).yes("sure?"); got != want {
+			t.Errorf("yes(%q) = %v, want %v", in, got, want)
 		}
 	}
 }
@@ -93,8 +126,7 @@ func TestScanYesNo(t *testing.T) {
 // TestConfirmOverwrite_FileMissing covers the happy path where no existing
 // config file is present and the prompt is skipped.
 func TestConfirmOverwrite_FileMissing(t *testing.T) {
-	var out bytes.Buffer
-	ok, err := confirmOverwrite(filepath.Join(t.TempDir(), "absent.yaml"), canned(), &out)
+	ok, err := confirmOverwrite(filepath.Join(t.TempDir(), "absent.yaml"), canned(io.Discard))
 	if err != nil {
 		t.Fatalf("confirmOverwrite: %v", err)
 	}
@@ -110,8 +142,7 @@ func TestConfirmOverwrite_ExistsAccept(t *testing.T) {
 	if err := os.WriteFile(path, []byte("existing"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var out bytes.Buffer
-	ok, err := confirmOverwrite(path, canned("y"), &out)
+	ok, err := confirmOverwrite(path, canned(io.Discard, "y"))
 	if err != nil {
 		t.Fatalf("confirmOverwrite: %v", err)
 	}
@@ -127,7 +158,7 @@ func TestConfirmOverwrite_ExistsAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	ok, err := confirmOverwrite(path, canned("n"), &out)
+	ok, err := confirmOverwrite(path, canned(&out, "n"))
 	if err != nil {
 		t.Fatalf("confirmOverwrite: %v", err)
 	}
@@ -142,9 +173,8 @@ func TestConfirmOverwrite_ExistsAbort(t *testing.T) {
 // TestPromptDatabase_Sqlite covers the default-path branch where the user
 // accepts sqlite and supplies a custom DB path.
 func TestPromptDatabase_Sqlite(t *testing.T) {
-	var out bytes.Buffer
 	var p Params
-	promptDatabase(canned("sqlite", "/tmp/my.db"), &out, &p)
+	promptDatabase(canned(io.Discard, "sqlite", "/tmp/my.db"), &p)
 	if p.Driver != "sqlite" {
 		t.Errorf("Driver = %q, want sqlite", p.Driver)
 	}
@@ -156,9 +186,8 @@ func TestPromptDatabase_Sqlite(t *testing.T) {
 // TestPromptDatabase_Postgres covers the postgres branch where every host /
 // port / db / user / password field gets read.
 func TestPromptDatabase_Postgres(t *testing.T) {
-	var out bytes.Buffer
 	var p Params
-	promptDatabase(canned("postgres", "db.host", "5433", "myorg", "alex", "secret"), &out, &p)
+	promptDatabase(canned(io.Discard, "postgres", "db.host", "5433", "myorg", "alex", "secret"), &p)
 	if p.Driver != "postgres" {
 		t.Errorf("Driver = %q, want postgres", p.Driver)
 	}
@@ -171,7 +200,7 @@ func TestPromptDatabase_Postgres(t *testing.T) {
 // TestPromptBackends_Single drives one backend entry then declines to add
 // another, exercising promptSingleBackend end-to-end.
 func TestPromptBackends_Single(t *testing.T) {
-	input := canned(
+	input := canned(io.Discard,
 		"primary",               // name
 		"http://localhost:9000", // endpoint
 		"data",                  // bucket
@@ -181,9 +210,8 @@ func TestPromptBackends_Single(t *testing.T) {
 		"0", "0", "0", "0",      // quotas
 		"n", // add another? no
 	)
-	var out bytes.Buffer
 	var p Params
-	promptBackends(input, &out, &p)
+	promptBackends(input, &p)
 	if len(p.Backends) != 1 {
 		t.Fatalf("backends = %d, want 1", len(p.Backends))
 	}
@@ -195,10 +223,9 @@ func TestPromptBackends_Single(t *testing.T) {
 
 // TestPromptBuckets_Single drives one bucket entry.
 func TestPromptBuckets_Single(t *testing.T) {
-	input := canned("photos", "AK", "SK", "n")
-	var out bytes.Buffer
+	input := canned(io.Discard, "photos", "AK", "SK", "n")
 	var p Params
-	promptBuckets(input, &out, &p)
+	promptBuckets(input, &p)
 	if len(p.Buckets) != 1 || p.Buckets[0].Name != "photos" {
 		t.Errorf("buckets = %+v, want one named photos", p.Buckets)
 	}

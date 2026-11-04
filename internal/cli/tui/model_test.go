@@ -11,8 +11,10 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"strings"
 	"testing"
@@ -97,10 +99,6 @@ func (errLister) GetProvisioning(_ context.Context) (*adminapi.ProvisioningRespo
 	return nil, errors.New("nope")
 }
 
-func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.CleanupDLQRequeueResponse, error) {
-	return nil, errors.New("nope")
-}
-
 func (errLister) RunOp(_ context.Context, _ *opsAction, _ opsRequest) (adminclient.EventStream, error) {
 	return nil, errors.New("nope")
 }
@@ -138,10 +136,6 @@ func (errLister) CancelDrain(_ context.Context, _ string) (*adminapi.BackendOper
 }
 
 func (errLister) SetCordon(_ context.Context, _ string, _ bool) (*adminapi.BackendOperationResponse, error) {
-	return nil, errors.New("nope")
-}
-
-func (errLister) ReconcileBackend(_ context.Context, _ string) (*adminapi.ReconcileResponse, error) {
 	return nil, errors.New("nope")
 }
 
@@ -314,11 +308,23 @@ func TestParseArgs_ResolvesTarget(t *testing.T) {
 
 	got, _, err := parseArgs([]string{
 		"-config", "/no/such/file.yaml", "-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK",
-	})
+	}, io.Discard)
 	if err != nil || got != (admintarget.Target{Addr: "http://host:9000", AccessKeyID: "AK", SecretKey: "SK"}) {
 		t.Fatalf("target = %+v, err = %v", got, err)
 	}
-	if _, _, err := parseArgs([]string{"-nope"}); err == nil {
+	if _, _, err := parseArgs([]string{"-nope"}, io.Discard); err == nil {
 		t.Error("bad flag: expected error")
+	}
+}
+
+// TestParseArgs_HelpPrintsTheFlags verifies -h lists the flags on stderr and
+// surfaces flag.ErrHelp, which Run turns into a clean exit.
+func TestParseArgs_HelpPrintsTheFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	if _, _, err := parseArgs([]string{"-h"}, &stderr); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("err = %v, want flag.ErrHelp", err)
+	}
+	if !strings.Contains(stderr.String(), "-theme") {
+		t.Errorf("stderr = %q, want the flags listed", stderr.String())
 	}
 }

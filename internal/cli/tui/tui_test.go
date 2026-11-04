@@ -46,7 +46,6 @@ type fakeLister struct {
 	cacheStat *adminapi.CacheStatsResponse
 	provision *adminapi.ProvisioningResponse
 	provErr   error
-	requeued  *adminapi.CleanupDLQRequeueResponse
 	tags      map[string][]adminapi.ObjectTag // per-key tag sets
 	tagsErr   error                           // when set, GetObjectTags fails
 	tagsSent  []adminapi.ObjectTag            // the set SetObjectTags received
@@ -62,9 +61,6 @@ type fakeLister struct {
 	drainProgress  []*adminapi.DrainProgressResponse // readings served in order
 	drainErr       error                             // when set, every drain call fails
 	cordonCalls    []string                          // "cordon b" or "uncordon b", in call order
-	reconciled     string                            // backend passed to ReconcileBackend
-	reconcileResp  *adminapi.ReconcileResponse       // canned reconcile counts
-	reconcileErr   error                             // when set, ReconcileBackend fails
 
 	flatPages     map[string]*adminapi.ObjectListResponse // flat listings keyed by prefix
 	flatErr       error                                   // when set, ListObjectsFlat fails
@@ -196,13 +192,6 @@ func (f *fakeLister) GetProvisioning(_ context.Context) (*adminapi.ProvisioningR
 	return &adminapi.ProvisioningResponse{}, nil
 }
 
-func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {
-	if f.requeued != nil {
-		return f.requeued, nil
-	}
-	return &adminapi.CleanupDLQRequeueResponse{Backend: backend}, nil
-}
-
 // ListObjectsFlat serves the canned flat page, for the key counting a prefix
 // delete does before it confirms.
 func (f *fakeLister) ListObjectsFlat(_ context.Context, prefix, _ string) (*adminapi.ObjectListResponse, error) {
@@ -297,18 +286,6 @@ func (f *fakeLister) SetCordon(_ context.Context, backend string, cordoned bool)
 	}
 	f.cordonCalls = append(f.cordonCalls, verb+backend)
 	return &adminapi.BackendOperationResponse{Backend: backend}, nil
-}
-
-// ReconcileBackend records the backend reconciled and reports canned counts.
-func (f *fakeLister) ReconcileBackend(_ context.Context, backend string) (*adminapi.ReconcileResponse, error) {
-	f.reconciled = backend
-	if f.reconcileErr != nil {
-		return nil, f.reconcileErr
-	}
-	if f.reconcileResp != nil {
-		return f.reconcileResp, nil
-	}
-	return &adminapi.ReconcileResponse{}, nil
 }
 
 // RunOp returns a stream over the canned events (or a single ok result when

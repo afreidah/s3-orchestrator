@@ -86,7 +86,7 @@ func (m *model) deletePrefix(prefix string) tea.Cmd {
 			return client.DeletePrefix(ctx, prefix)
 		},
 		func(m *model, resp *adminapi.ObjectDeleteResponse) (string, tea.Cmd) {
-			return fmt.Sprintf("deleted %s under %s", countOf(resp.Deleted, "object", "objects"), prefix), m.reloadListing()
+			return fmt.Sprintf("deleted %s under %s", humanize.Count(int64(resp.Deleted), "object", "objects"), prefix), m.reloadListing()
 		})
 }
 
@@ -198,8 +198,8 @@ func (m *model) armDelete() (tea.Model, tea.Cmd, bool) {
 	}
 
 	model, cmd := m.startAction(adminAction{
-		confirm: "Delete " + key + "?",
-		run:     m.deleteObject(key),
+		text: "Delete " + key + "?",
+		run:  m.deleteObject(key),
 	})
 	return model, cmd, true
 }
@@ -246,8 +246,8 @@ func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.status = nil
 	return m.startAction(adminAction{
-		confirm: fmt.Sprintf("Delete %s objects under %s?", scale, msg.prefix),
-		run:     m.deletePrefix(msg.prefix),
+		text: fmt.Sprintf("Delete %s objects under %s?", scale, msg.prefix),
+		run:  m.deletePrefix(msg.prefix),
 	})
 }
 
@@ -290,7 +290,7 @@ func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 	switch t.kind {
 	case transferPrefix:
 		m.report(true, fmt.Sprintf("downloaded %s under %s to %s (%s)",
-			countOf(int(t.fetched.Load()), "object", "objects"), t.key, t.local, moved))
+			humanize.Count(int64(t.fetched.Load()), "object", "objects"), t.key, t.local, moved))
 	case transferUpload:
 		m.report(true, fmt.Sprintf("%s %s (%s)", t.kind.past(), t.key, moved))
 		reload := m.reloadListing()

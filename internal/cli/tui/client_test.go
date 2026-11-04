@@ -313,9 +313,10 @@ func TestAPIClient_GetCacheStats_Success(t *testing.T) {
 	}
 }
 
-// TestAPIClient_RequeueCleanupDLQ asserts the requeue POSTs with the backend
-// scope in the query string.
-func TestAPIClient_RequeueCleanupDLQ(t *testing.T) {
+// TestAPIClient_RunOp_RequeueIsOneShot asserts the backend menu's requeue posts
+// with its scope in the query and reads the plain JSON answer as one result,
+// since that endpoint does not stream.
+func TestAPIClient_RunOp_RequeueIsOneShot(t *testing.T) {
 	t.Parallel()
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -324,37 +325,23 @@ func TestAPIClient_RequeueCleanupDLQ(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(testTarget(srv.URL)).RequeueCleanupDLQ(context.Background(), "b1")
+	a, ok := actionAt(backendActions(), adminapi.PathCleanupDLQRequeue)
+	if !ok {
+		t.Fatal("no requeue entry in the backend menu")
+	}
+	req := scopeToBackend(opsRequest{path: a.path}, "b1")
+	events, err := newAPIClient(testTarget(srv.URL)).RunOp(context.Background(), a, req)
 	if err != nil {
-		t.Fatalf("RequeueCleanupDLQ: %v", err)
+		t.Fatalf("RunOp: %v", err)
 	}
-	if gotMethod != http.MethodPost || gotPath != "/admin/api/cleanup-dlq/requeue" {
-		t.Errorf("request = %s %s", gotMethod, gotPath)
-	}
-	if gotQuery != "backend=b1" {
-		t.Errorf("query = %q, want backend=b1", gotQuery)
-	}
-	if resp.Backend != "b1" || resp.Requeued != 4 {
-		t.Errorf("resp = %+v", resp)
-	}
-}
+	defer events.Close()
 
-// TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend asserts an unscoped requeue
-// sends no backend parameter rather than an empty one.
-func TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend(t *testing.T) {
-	t.Parallel()
-	var gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"requeued":0}`))
-	}))
-	defer srv.Close()
-
-	if _, err := newAPIClient(testTarget(srv.URL)).RequeueCleanupDLQ(context.Background(), ""); err != nil {
-		t.Fatalf("RequeueCleanupDLQ: %v", err)
+	if gotMethod != http.MethodPost || gotPath != "/admin/api/cleanup-dlq/requeue" || gotQuery != "backend=b1" {
+		t.Errorf("request = %s %s?%s", gotMethod, gotPath, gotQuery)
 	}
-	if gotQuery != "" {
-		t.Errorf("query = %q, want empty", gotQuery)
+	e, err := events.Next()
+	if err != nil || e.Kind != adminstream.KindResult || e.Message != "requeued 4 rows from b1" {
+		t.Errorf("event = %+v, %v; want the one result", e, err)
 	}
 }
 
@@ -436,29 +423,6 @@ func TestAPIClient_CancelDrain_ErrorStatus(t *testing.T) {
 	_, err := newAPIClient(testTarget(srv.URL)).CancelDrain(context.Background(), "minio-a")
 	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Errorf("err = %v, want the 409 surfaced", err)
-	}
-}
-
-// TestAPIClient_ReconcileBackend_ScopesToBackend asserts the backend travels as
-// the query parameter that scopes an otherwise fleet-wide pass.
-func TestAPIClient_ReconcileBackend_ScopesToBackend(t *testing.T) {
-	t.Parallel()
-	var gotPath, gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"status":"ok","imported":3,"removed":1}`))
-	}))
-	defer srv.Close()
-
-	resp, err := newAPIClient(testTarget(srv.URL)).ReconcileBackend(context.Background(), "minio-b")
-	if err != nil {
-		t.Fatalf("ReconcileBackend: %v", err)
-	}
-	if gotPath != "/admin/api/reconcile" || gotQuery != "backend=minio-b" {
-		t.Errorf("request = %s?%s, want the reconcile path scoped to minio-b", gotPath, gotQuery)
-	}
-	if resp.Imported != 3 || resp.Removed != 1 {
-		t.Errorf("resp = %+v, want the served counts", resp)
 	}
 }
 

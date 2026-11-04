@@ -42,7 +42,7 @@ func cmdRemoveBackend(args []string, c *client) int {
 		return c.delete(path)
 	}
 
-	preview, err := c.api.Delete[adminapi.RemoveBackendPreview](context.Background(), path, url.Values{"purge": {"true"}})
+	preview, err := c.api.Delete[adminapi.RemoveBackendPreview](context.Background(), path, url.Values{adminapi.ParamPurge: {"true"}})
 	if err != nil {
 		c.reportError(err)
 		return 1
@@ -58,6 +58,6 @@ func cmdRemoveBackend(args []string, c *client) int {
 		fmt.Fprintf(c.stderr, "error: server did not return a confirmation token\n")
 		return 1
 	}
-	q := url.Values{"purge": {"true"}, "confirm": {preview.ConfirmToken}}
+	q := url.Values{adminapi.ParamPurge: {"true"}, adminapi.ParamConfirm: {preview.ConfirmToken}}
 	return c.stream(http.MethodDelete, adminclient.WithQuery(path, q))
 }

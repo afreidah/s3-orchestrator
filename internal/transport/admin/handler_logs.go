@@ -71,10 +71,10 @@ func LogsHandler(logs LogReader) http.HandlerFunc {
 // logQueryOpts parses the logs query parameters into buffer query options,
 // refusing a malformed value rather than widening the query by dropping it.
 func logQueryOpts(q url.Values) (telemetry.LogQueryOpts, error) {
-	level, levelErr := config.ParseLogLevel(q.Get("level"))
+	level, levelErr := config.ParseLogLevel(q.Get(adminapi.ParamLevel))
 	since, sinceErr := parseLogTimestamp(q, "since")
 	before, beforeErr := parseLogTimestamp(q, "before")
-	limit, limitErr := httputil.QueryCount(q, "limit", defaultLogLimit, maxLogLimit)
+	limit, limitErr := httputil.QueryCount(q, adminapi.ParamLimit, defaultLogLimit, maxLogLimit)
 	return telemetry.LogQueryOpts{
 		MinLevel:  level,
 		Since:     since,

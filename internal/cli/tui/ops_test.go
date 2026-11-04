@@ -161,10 +161,10 @@ func TestOps_EventLines(t *testing.T) {
 	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindStepEnd, Outcome: adminstream.OutcomeOK}); !strings.Contains(got, "hashing k") || !strings.Contains(got, "OK") {
 		t.Errorf("step_end line = %q", got)
 	}
-	if got := runResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeFailed, Error: "boom"}); !strings.Contains(got, "boom") {
+	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeFailed, Error: "boom"}); !strings.Contains(got, "boom") {
 		t.Errorf("failed result line = %q", got)
 	}
-	if got := runResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: "factor 1"}); !strings.Contains(got, "skipped") {
+	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: "factor 1"}); !strings.Contains(got, "skipped") {
 		t.Errorf("skipped result line = %q", got)
 	}
 }

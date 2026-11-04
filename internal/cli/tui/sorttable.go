@@ -41,7 +41,7 @@ type sortTable[T any] struct {
 	table    table.Model
 	columns  []columnSpec
 	sorts    map[string]func(a, b *T) int
-	rows     func([]T) []table.Row
+	row      func(*T) table.Row
 	key      func(*T) string
 	received []T
 	items    []T
@@ -49,10 +49,21 @@ type sortTable[T any] struct {
 }
 
 // newSortTable builds a table whose sortable columns have a comparator in sorts,
-// keyed by title. key identifies an item so the selection survives a re-sort.
+// keyed by title. row renders one item, and key identifies an item so the
+// selection survives a re-sort.
 func newSortTable[T any](columns []columnSpec, sorts map[string]func(a, b *T) int,
-	rows func([]T) []table.Row, key func(*T) string) sortTable[T] {
-	return sortTable[T]{table: newTable(columns), columns: columns, sorts: sorts, rows: rows, key: key}
+	row func(*T) table.Row, key func(*T) string) sortTable[T] {
+	return sortTable[T]{table: newTable(columns), columns: columns, sorts: sorts, row: row, key: key}
+}
+
+// rowsOf renders one table row per item, in order, so a table's cursor indexes
+// straight into items.
+func rowsOf[T any](items []T, row func(*T) table.Row) []table.Row {
+	rows := make([]table.Row, len(items))
+	for i := range items {
+		rows[i] = row(&items[i])
+	}
+	return rows
 }
 
 // by builds a comparator from a field of T.
@@ -138,7 +149,7 @@ func (s *sortTable[T]) reorder(prev string) {
 			return less(&a, &b)
 		})
 	}
-	s.table.SetRows(s.rows(s.items))
+	s.table.SetRows(rowsOf(s.items, s.row))
 	keys := make([]string, len(s.items))
 	for i := range s.items {
 		keys[i] = s.key(&s.items[i])

@@ -25,28 +25,6 @@ type keyHint struct {
 	label string
 }
 
-// sectionKey is a single-letter jump to a section.
-type sectionKey struct {
-	key string
-	sec section
-}
-
-// sectionKeys lists the section jumps in nav order. The key handler and the
-// help overlay both read it.
-var sectionKeys = []sectionKey{
-	{"g", sectionDashboard},
-	{"f", sectionFiles},
-	{"b", sectionBackends},
-	{"v", sectionBuckets},
-	{"p", sectionReplication},
-	{"w", sectionWorkers},
-	{"u", sectionCleanup},
-	{"c", sectionCache},
-	{"n", sectionConfig},
-	{"l", sectionLogs},
-	{"o", sectionOps},
-}
-
 // keyUpDown names the arrow keys in a hint.
 const keyUpDown = "up/down"
 
@@ -67,31 +45,10 @@ func (m *model) paneKeys() []keyHint {
 	if m.showingRun() {
 		return m.runKeys()
 	}
-	switch m.section {
-	case sectionFiles:
-		return m.filesKeys()
-	case sectionBackends:
-		return m.backendsKeys()
-	case sectionCleanup:
-		return m.cleanupKeys()
-	case sectionOps:
-		return m.opsKeys()
-	case sectionLogs:
-		return []keyHint{hintScroll,
-			{key: "/", desc: "filter by text in the component or message", label: "filter"},
-			{key: "L", desc: "cycle the minimum level", label: "level"},
-			{key: "F", desc: "follow new entries as they arrive", label: "follow"},
-			{key: "esc", desc: "clear the filter, then back to the nav"}, hintReload}
-	case sectionWorkers:
-		return []keyHint{hintMove, {key: "R", desc: "run the matching Ops action", label: "run"},
-			hintSort, hintReverse, hintReload, hintNavBack}
-	case sectionBuckets:
-		return []keyHint{hintMove, hintSort, hintReverse, hintReload, hintNavBack}
-	case sectionConfig:
-		return []keyHint{hintScroll, hintReload, hintNavBack}
-	default:
-		return []keyHint{hintReload, hintNavBack}
+	if keys := m.spec().keys; keys != nil {
+		return keys(m)
 	}
+	return []keyHint{hintReload, hintNavBack}
 }
 
 // filesKeys is the listing's keymap, or the inspector's while it is open.
@@ -166,13 +123,9 @@ func (m *model) runKeys() []keyHint {
 
 // globalKeys is what every pane answers, in the help overlay's order.
 func globalKeys() []keyHint {
-	labels := make(map[section]string, len(sectionKeys))
-	for _, e := range navEntries() {
-		labels[e.sec] = e.label
-	}
 	keys := []keyHint{{key: "tab", desc: "move focus between the nav and the pane"}}
-	for _, s := range sectionKeys {
-		keys = append(keys, keyHint{key: s.key, desc: labels[s.sec]})
+	for _, spec := range sectionSpecs() {
+		keys = append(keys, keyHint{key: spec.jump, desc: spec.label})
 	}
 	return append(keys, keyHint{key: "?", desc: "this help"}, keyHint{key: "q", desc: "quit"})
 }
@@ -196,20 +149,10 @@ func (m *model) hintFooter() string {
 	return m.footer(m.hintLine())
 }
 
-// sectionLabel is the nav label of the active section.
-func (m *model) sectionLabel() string {
-	for _, e := range navEntries() {
-		if e.sec == m.section {
-			return e.label
-		}
-	}
-	return ""
-}
-
 // helpPaneView replaces the active pane with its keymap and the global keys.
 func (m *model) helpPaneView() string {
-	label := m.sectionLabel()
-	header := m.contentTitleStyle().Width(m.contentWidth()).Render("keys   " + label)
+	label := m.spec().label
+	header := m.titleBar("keys   " + label)
 	body := keyBlock(label, m.paneKeys()) + "\n\n" + keyBlock("everywhere", globalKeys())
 	return m.frame(header, m.footer("any key closes this help"), textPane(body))
 }

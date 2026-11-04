@@ -44,7 +44,7 @@ func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	m.section = sectionLogs
 	m.logs = logsView{loading: true}
 
-	m.applyLogs(logsLoadedMsg{resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
+	m.applyLogs(logsPage{resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
 		{Level: "INFO", Message: "one"},
 		{Level: "WARN", Message: "two"},
 		{Level: "ERROR", Message: "three"},
@@ -84,8 +84,8 @@ func TestHandleLogsKey_BackAndReload(t *testing.T) {
 	if cmd == nil || !m.poll.inFlight[pollLogs] {
 		t.Fatalf("reload: cmd=%v inFlight=%v", cmd, m.poll.inFlight[pollLogs])
 	}
-	if _, ok := cmd().(logsLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want logsLoadedMsg", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 
 	// a movement key delegates to the viewport without leaving the pane.
@@ -150,12 +150,12 @@ func TestApplyLogs_KeepsScrolledUpPosition(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.section = sectionLogs
 	m.logs.vp.Height = 5
-	page := func(n int) logsLoadedMsg {
+	page := func(n int) logsPage {
 		entries := make([]adminapi.LogEntry, n)
 		for i := range entries {
 			entries[i] = adminapi.LogEntry{Level: "INFO", Message: "line"}
 		}
-		return logsLoadedMsg{resp: &adminapi.LogsResponse{Entries: entries}}
+		return logsPage{resp: &adminapi.LogsResponse{Entries: entries}}
 	}
 
 	m.applyLogs(page(20))
@@ -179,7 +179,7 @@ func TestApplyLogs_DropsStaleLevel(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.logs.minLevel = "WARN"
-	m.applyLogs(logsLoadedMsg{level: "INFO", resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{{Message: "stale"}}}})
+	m.applyLogs(logsPage{level: "INFO", resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{{Message: "stale"}}}})
 	if len(m.logs.entries) != 0 {
 		t.Errorf("entries = %v, want the stale page dropped", m.logs.entries)
 	}
@@ -209,8 +209,8 @@ func TestHandleLogsKey_CyclesLevel(t *testing.T) {
 	if !m.logs.loading || cmd == nil {
 		t.Errorf("cycle: loading=%v cmd=%v", m.logs.loading, cmd)
 	}
-	if _, ok := cmd().(logsLoadedMsg); !ok {
-		t.Errorf("cycle result = %#v, want logsLoadedMsg", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("cycle result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -230,9 +230,10 @@ func TestLevelStyle_Normalizes(t *testing.T) {
 
 func TestLoadLogs_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadLogs()
-	if _, ok := cmd().(logsErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want logsErrMsg", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadLogs()())
+	if m.logs.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }
 

@@ -94,11 +94,11 @@ func (c Ceiling) LimitText() string {
 	return c.Format(c.Limit)
 }
 
-// MultipartCap renders a bucket's cap on concurrent multipart uploads, where
-// zero means it has none.
+// MultipartCap renders a bucket's cap on concurrent multipart uploads, and
+// NoLimit for zero, which means it has none.
 func MultipartCap(n int) string {
 	if n == 0 {
-		return "unlimited"
+		return NoLimit
 	}
 	return strconv.Itoa(n)
 }

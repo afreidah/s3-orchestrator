@@ -152,7 +152,7 @@ func (h *Handler) resourceValue(r *http.Request, rt *route) string {
 // An unknown name is refused, since a typo would otherwise report a clean pass
 // over nothing.
 func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, bool) {
-	name := r.URL.Query().Get(paramBackend)
+	name := r.URL.Query().Get(adminapi.ParamBackend)
 	if name == "" {
 		return "", true
 	}

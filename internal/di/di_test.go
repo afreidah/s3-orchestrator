@@ -166,36 +166,8 @@ func TestProvideRateLimiter(t *testing.T) {
 	rl.Close()
 }
 
-// testInstanceID is the instance id openStore stamps on cleanup rows it claims.
+// testInstanceID is the instance id the tests resolve.
 const testInstanceID = "di-test"
-
-// TestOpenStore_InvalidDriver covers the default branch of openStore's
-// driver-dispatch switch.
-func TestOpenStore_InvalidDriver(t *testing.T) {
-	t.Parallel()
-	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"}, nil, testInstanceID)
-	if err == nil {
-		t.Fatal("expected error for unsupported driver, got nil")
-	}
-}
-
-// TestOpenStore_SQLiteInMemory covers the sqlite branch of openStore with
-// an in-memory database  -  verifies the handle is non-nil and satisfies the
-// LifecycleAdmin role embedded in concreteStore.
-func TestOpenStore_SQLiteInMemory(t *testing.T) {
-	t.Parallel()
-	cs, err := openStore(context.Background(), &config.DatabaseConfig{
-		Driver: "sqlite",
-		Path:   ":memory:",
-	}, nil, testInstanceID)
-	if err != nil {
-		t.Fatalf("openStore: %v", err)
-	}
-	if cs == nil {
-		t.Fatal("expected non-nil concreteStore")
-	}
-	cs.Close()
-}
 
 // TestWireAuditMetrics covers the audit->Prometheus wiring side-effect
 // and drives the registered callback by emitting an audit event so the
@@ -234,28 +206,6 @@ func TestProvideMetadataStore_SQLiteInMemory(t *testing.T) {
 		t.Fatal("expected non-nil MetadataStore")
 	}
 	cs.Close()
-}
-
-// TestOpenStore_PostgresInvalidConfig covers the postgres branch of the
-// driver switch. We can't open a real Postgres in a unit test, so we use
-// a config that fails fast  -  the function still exercises the
-// store.NewStore call site, which is the uncovered branch.
-func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err := openStore(ctx, &config.DatabaseConfig{
-		Driver:   "postgres",
-		Host:     "127.0.0.1",
-		Port:     1, // unreachable port  -  connect fails fast
-		Database: "nope",
-		User:     "nope",
-		Password: "nope",
-		SSLMode:  "disable",
-	}, nil, testInstanceID)
-	if err == nil {
-		t.Fatal("expected error connecting to unreachable postgres, got nil")
-	}
 }
 
 // TestRegisterInfrastructure_StoreAliases verifies registerInfrastructure

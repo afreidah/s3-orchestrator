@@ -114,7 +114,7 @@ func TestHandleLifecycle_ReportsWhatItDeleted(t *testing.T) {
 	if !stub.called {
 		t.Error("the sweep never ran")
 	}
-	if got.Status != adminapi.StatusOK || got.Deleted != 12 || got.Failed != 1 {
+	if got.Status != adminstream.OutcomeOK || got.Deleted != 12 || got.Failed != 1 {
 		t.Errorf("response = %+v, want ok/12/1", got)
 	}
 }
@@ -128,7 +128,7 @@ func TestHandleLifecycle_MatchedNothingIsNotASkip(t *testing.T) {
 	lifecycleWith(t, h, &expiryStub{cfg: oneRule()})
 
 	_, got := postLifecycle(t, h)
-	if got.Status != adminapi.StatusOK || got.Deleted != 0 {
+	if got.Status != adminstream.OutcomeOK || got.Deleted != 0 {
 		t.Errorf("response = %+v, want a completed sweep of zero", got)
 	}
 	if got.Reason != "" {
@@ -152,7 +152,7 @@ func TestHandleLifecycle_NoRulesSkips(t *testing.T) {
 			lifecycleWith(t, h, stub)
 
 			_, got := postLifecycle(t, h)
-			if got.Status != adminapi.StatusSkipped || got.Reason == "" {
+			if got.Status != adminstream.OutcomeSkipped || got.Reason == "" {
 				t.Errorf("response = %+v, want a skip naming the reason", got)
 			}
 			if stub.called {
@@ -219,7 +219,7 @@ func TestHandleLifecycle_UnwiredManagerSkips(t *testing.T) {
 	lifecycleWith(t, h, nil)
 
 	w, got := postLifecycle(t, h)
-	if w.Code != http.StatusOK || got.Status != adminapi.StatusSkipped {
+	if w.Code != http.StatusOK || got.Status != adminstream.OutcomeSkipped {
 		t.Errorf("status = %d, response = %+v, want 200 and a skip", w.Code, got)
 	}
 }

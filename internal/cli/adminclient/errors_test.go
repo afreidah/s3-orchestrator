@@ -53,3 +53,27 @@ func TestError_Error(t *testing.T) {
 		t.Errorf("bare Error() = %q", got)
 	}
 }
+
+// TestError_Detail verifies extraction of the "error" field and the fallback
+// to the raw body when the response is not the expected shape.
+func TestError_Detail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"error field", `{"error":"boom"}`, "boom"},
+		{"no error field", `{"status":"weird"}`, `{"status":"weird"}`},
+		{"empty error field", `{"error":""}`, `{"error":""}`},
+		{"non-json", "plain text", "plain text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (&Error{Body: tc.body}).Detail(); got != tc.want {
+				t.Errorf("Detail(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}

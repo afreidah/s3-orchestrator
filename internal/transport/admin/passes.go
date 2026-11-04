@@ -318,11 +318,11 @@ func (p *Pass[R]) exec(ctx context.Context, log *slog.Logger, obs progress.Obser
 		return Report{Result: adminstream.OutcomeFailed, Message: reason, Status: http.StatusBadRequest}, res
 	case skipped:
 		var zero R
-		outcome := adminapi.Outcome{Status: adminapi.StatusSkipped, Reason: reason}
+		outcome := adminapi.Outcome{Status: adminstream.OutcomeSkipped, Reason: reason}
 		return Report{Result: adminstream.OutcomeSkipped, Message: reason, Body: p.body(outcome, zero)}, res
 	case err != nil:
 		log.ErrorContext(ctx, p.failMsg, "error", err)
 		return Report{Result: adminstream.OutcomeFailed, Message: p.failMsg, Status: http.StatusInternalServerError}, res
 	}
-	return Report{Result: adminstream.OutcomeOK, Body: p.body(adminapi.Outcome{Status: adminapi.StatusOK}, res)}, res
+	return Report{Result: adminstream.OutcomeOK, Body: p.body(adminapi.Outcome{Status: adminstream.OutcomeOK}, res)}, res
 }

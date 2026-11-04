@@ -19,13 +19,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
-
-// paramMax is the query parameter capping how many objects a bulk pass rewrites
-// in one run, named to match the admin API's own.
-const paramMax = "max"
 
 // The states a status poll reports before a run has ended. Once it has, the
 // status is how it ended: one of the adminstream outcomes.
@@ -144,7 +141,7 @@ func backfillAction(h *Handler, _ *http.Request) (pass, error) {
 // many copies the run rewrites, 0 meaning the whole fleet.
 func rewriteAction(kind admin.Rewrite) action {
 	return func(h *Handler, r *http.Request) (pass, error) {
-		maxObjects, err := httputil.QueryCount(r.URL.Query(), paramMax, 0, httputil.NoCeiling)
+		maxObjects, err := httputil.QueryCount(r.URL.Query(), adminapi.ParamMax, 0, httputil.NoCeiling)
 		return admin.RewritePass(h.d.Ops, kind, maxObjects, ""), err
 	}
 }

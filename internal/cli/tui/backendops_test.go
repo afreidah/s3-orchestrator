@@ -34,7 +34,7 @@ func TestScopeToBackend_NamesTheBackend(t *testing.T) {
 	t.Parallel()
 
 	scoped := scopeToBackend(opsRequest{path: adminapi.PathCompressExisting}, "minio-a")
-	if got := scoped.query.Get(queryBackend); got != "minio-a" {
+	if got := scoped.query.Get(adminapi.ParamBackend); got != "minio-a" {
 		t.Errorf("backend = %q, want minio-a", got)
 	}
 
@@ -56,8 +56,8 @@ func TestScopeToBackend_KeepsTheRequestsOwnQuery(t *testing.T) {
 	if got.query.Get("max") != "1000" {
 		t.Errorf("max = %q, want it kept", got.query.Get("max"))
 	}
-	if got.query.Get(queryBackend) != "minio-a" {
-		t.Errorf("backend = %q, want minio-a", got.query.Get(queryBackend))
+	if got.query.Get(adminapi.ParamBackend) != "minio-a" {
+		t.Errorf("backend = %q, want minio-a", got.query.Get(adminapi.ParamBackend))
 	}
 }
 
@@ -93,21 +93,21 @@ func TestBackendActions_EveryEntryNamesTheBackend(t *testing.T) {
 	for i := range backendActions() {
 		a := backendActions()[i]
 		req := scopeToBackend(opsRequest{path: a.path}, "minio-a")
-		if got := req.query.Get(queryBackend); got != "minio-a" {
+		if got := req.query.Get(adminapi.ParamBackend); got != "minio-a" {
 			t.Errorf("%s: backend = %q, want minio-a", a.label, got)
 		}
 	}
 }
 
-// TestBackendActions_StreamTheirProgress asserts no entry decodes a single
-// summary. Each reads and rewrites a backend's copies, so a caller watching one
-// needs to see it move.
+// TestBackendActions_StreamTheirProgress asserts every entry that reads or
+// rewrites a backend's copies streams, so a caller watching one sees it move.
+// Requeue only moves queue rows and answers with one summary.
 func TestBackendActions_StreamTheirProgress(t *testing.T) {
 	t.Parallel()
 
 	for _, a := range backendActions() {
-		if a.result != nil {
-			t.Errorf("%s decodes a one-shot summary, want a stream", a.label)
+		if oneShot := a.path == adminapi.PathCleanupDLQRequeue; oneShot != (a.result != nil) {
+			t.Errorf("%s: one-shot decoder = %v, want %v", a.label, a.result != nil, oneShot)
 		}
 	}
 }

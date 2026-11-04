@@ -14,6 +14,7 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,7 +88,7 @@ func (r usageReconcileResult) describe() string {
 		deltas = append(deltas, name+" "+signedSize(r.Adjustments[name]))
 	}
 	return fmt.Sprintf("corrected %s: %s",
-		countOf(len(names), "backend", "backends"), strings.Join(deltas, ", "))
+		humanize.Count(int64(len(names)), "backend", "backends"), strings.Join(deltas, ", "))
 }
 
 // cacheFlushResult reports how much of the object data cache a flush dropped.
@@ -101,7 +102,7 @@ func (r cacheFlushResult) describe() string {
 	if r.EntriesDropped == 0 {
 		return "cache was already empty"
 	}
-	return "dropped " + countOf(r.EntriesDropped, "cache entry", "cache entries")
+	return "dropped " + humanize.Count(int64(r.EntriesDropped), "cache entry", "cache entries")
 }
 
 // cacheInvalidateKeyResult reports one key dropped from the cache. The cache
@@ -130,6 +131,19 @@ func (r usageFlushResult) describe() string { return "counters flushed to the da
 // four stream their progress, so the TUI renders the step events and the
 // terminal summary the server sends rather than decoding a final JSON body.
 
+// requeueResult reports how many dead-lettered cleanups went back into the
+// queue, and for which backend.
+type requeueResult struct {
+	adminapi.CleanupDLQRequeueResponse
+}
+
+func (r requeueResult) skipReason() string { return "" }
+
+func (r requeueResult) describe() string {
+	return fmt.Sprintf("requeued %s from %s",
+		humanize.Count(r.Requeued, "row", "rows"), cmp.Or(r.Backend, "all backends"))
+}
+
 // rotateKeyResult reports a pass that re-wrapped object keys under the current
 // primary key.
 type rotateKeyResult struct {
@@ -148,7 +162,7 @@ func rewriteSummary(verb string, succeeded, failed, total int) string {
 	if total == 0 {
 		return "nothing to " + strings.TrimSuffix(verb, "ed")
 	}
-	summary := verb + " " + countOf(succeeded, "object", "objects")
+	summary := verb + " " + humanize.Count(int64(succeeded), "object", "objects")
 	if failed > 0 {
 		summary += fmt.Sprintf(", %s failed", humanize.Comma(int64(failed)))
 	}
@@ -159,19 +173,10 @@ func rewriteSummary(verb string, succeeded, failed, total int) string {
 // responses carry no reason field, so the status is the whole of the
 // explanation the endpoint offers.
 func skippedBecause(status string) string {
-	if status == adminapi.StatusSkipped {
+	if status == adminstream.OutcomeSkipped {
 		return status
 	}
 	return ""
-}
-
-// countOf renders a count with its noun, grouped for readability.
-func countOf(n int, singular, plural string) string {
-	noun := plural
-	if n == 1 {
-		noun = singular
-	}
-	return humanize.Comma(int64(n)) + " " + noun
 }
 
 // signedSize renders a byte delta with an explicit sign, so a correction reads
