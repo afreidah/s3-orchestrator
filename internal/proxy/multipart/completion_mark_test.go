@@ -186,7 +186,7 @@ func TestCompleteMultipartUpload_EndFailureKeepsObject(t *testing.T) {
 // markManager returns a Manager holding only the store and logger that
 // withCompletionMark uses.
 func markManager(store Stores) *Manager {
-	return &Manager{stores: store, log: slog.New(slog.DiscardHandler)}
+	return &Manager{d: Deps{Stores: store}, log: slog.New(slog.DiscardHandler)}
 }
 
 // TestWithCompletionMark_RenewsWhileAssembling asserts the mark is renewed on

@@ -33,16 +33,9 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// AdvisoryLocker is the consumer-defined slice of the metadata store a
-// Service needs: one TryAdvisoryLock call per tick. The concrete
-// metadata store satisfies this implicitly.
-type AdvisoryLocker interface {
-	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
-}
-
 // Config bundles the inputs needed to construct a Service. Name and Work are
 // required. Name is the snake_case slug used for the metrics label and the
-// logger's component, and Log defaults to ComponentLogger(Name).
+// logger's component.
 //
 // Locker, when set, runs each tick under LockID so one instance runs it; nil
 // runs every tick on every instance. Interval is the wait between ticks, and
@@ -50,12 +43,11 @@ type AdvisoryLocker interface {
 // skips a tick without recording a failure, RunAtStartup also ticks as the
 // service starts, and OnError replaces the default log for a lock failure.
 type Config struct {
-	Locker       AdvisoryLocker
+	Locker       core.AdvisoryLocker
 	LockID       int64
 	Interval     time.Duration
 	Next         func() time.Duration
 	Name         string
-	Log          *slog.Logger
 	ShouldRun    func() bool
 	RunAtStartup bool
 	Work         func(ctx context.Context) error
@@ -67,6 +59,7 @@ type Config struct {
 // Prometheus staleness alerts.
 type Service struct {
 	cfg      Config
+	log      *slog.Logger
 	locked   bool
 	healthMu sync.Mutex
 	health   lifecycle.WorkerHealth
@@ -85,23 +78,14 @@ func (everyInstance) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx 
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ComponentLogger returns the logger scoped to a component slug, normally the
-// same slug as Service.Name.
-func ComponentLogger(slug string) *slog.Logger {
-	return slog.Default().With(logfmt.Component(slug))
-}
-
-// New constructs a Service from cfg, filling the logger and the locker of a
-// service that runs on every instance.
+// New constructs a Service from cfg, logging under its name and filling the
+// locker of a service that runs on every instance.
 //
 //nolint:gocritic // hugeParam: Config is a value struct by design; copying it once at construction is fine and the call sites read better than a pointer.
 func New(cfg Config) *Service {
-	s := &Service{cfg: cfg, locked: cfg.Locker != nil}
+	s := &Service{cfg: cfg, log: logfmt.Logger(cfg.Name), locked: cfg.Locker != nil}
 	if s.cfg.Locker == nil {
 		s.cfg.Locker = everyInstance{}
-	}
-	if s.cfg.Log == nil {
-		s.cfg.Log = ComponentLogger(cfg.Name)
 	}
 	return s
 }
@@ -169,20 +153,20 @@ func (s *Service) Health() lifecycle.WorkerHealth {
 func (s *Service) record(ctx context.Context, acquired bool, lockErr, workErr error) {
 	switch {
 	case errors.Is(lockErr, core.ErrDBUnavailable) || errors.Is(workErr, core.ErrDBUnavailable):
-		s.cfg.Log.DebugContext(ctx, "tick skipped, database unavailable")
+		s.log.DebugContext(ctx, "tick skipped, database unavailable")
 		s.recordSkip()
 	case lockErr != nil:
 		if s.cfg.OnError != nil {
 			s.cfg.OnError(lockErr)
 		} else {
-			s.cfg.Log.ErrorContext(ctx, "tick failed", "error", lockErr)
+			s.log.ErrorContext(ctx, "tick failed", "error", lockErr)
 		}
 		s.recordHealth(false, fmt.Errorf("advisory lock: %w", lockErr))
 	case !acquired:
-		s.cfg.Log.DebugContext(ctx, "tick skipped, another instance holds the lock")
+		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 		s.recordSkip()
 	case workErr != nil:
-		s.cfg.Log.ErrorContext(ctx, "pass failed", "error", workErr)
+		s.log.ErrorContext(ctx, "pass failed", "error", workErr)
 		s.recordHealth(false, workErr)
 	default:
 		s.recordHealth(true, nil)

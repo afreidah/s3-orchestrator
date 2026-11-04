@@ -10,7 +10,7 @@
 //   - usageFlushService: runs on every instance with no lock, and adapts
 //     its tick interval at runtime based on observed load.
 //   - fleetSnapshotService: recomputes the fleet-wide gauges on the
-//     telemetry.metrics.fleet_interval cadence through the runtime.
+//     telemetry.metrics.fleet_interval cadence through the metrics collector.
 //   - lifecycleService: a small tickrunner wrapper that needs the
 //     manager-side lifecycleOps surface to read rules and process them.
 //   - topicWatcher: applies what another instance announces over Redis,
@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -59,8 +60,8 @@ type usageFlushService struct {
 }
 
 // UsageFlushDeps groups what the flush tick draws on: the usage service that
-// owns the flush, the counters that say whether to tick faster, the runtime
-// that republishes the gauges afterwards, the backend state manager whose
+// owns the flush, the counters that say whether to tick faster, the metrics
+// collector that republishes the gauges afterwards, the backend state manager whose
 // cached states the tick reloads, and the usage-flush section of the running
 // configuration.
 type UsageFlushDeps struct {
@@ -78,7 +79,6 @@ func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
 	s := newUsageFlush(d)
 	return tickrunner.New(tickrunner.Config{
 		Name:     usageFlushSlug,
-		Log:      s.log,
 		Interval: s.current,
 		Next:     s.nextInterval,
 		Work:     s.flushTick,
@@ -99,7 +99,7 @@ func newUsageFlush(d *UsageFlushDeps) *usageFlushService {
 	must.NotNil("d.Config", d.Config)
 	return &usageFlushService{
 		UsageFlushDeps: *d,
-		log:            tickrunner.ComponentLogger(usageFlushSlug),
+		log:            logfmt.Logger(usageFlushSlug),
 		current:        d.Config.Config().Interval,
 	}
 }
@@ -171,7 +171,7 @@ func (s *usageFlushService) loadFleetState(ctx context.Context) {
 // fleet-wide gauges and admin status figures every interval. It runs in every
 // mode under its own advisory lock; an instance that finds a fresh snapshot
 // already published applies it instead of scanning the ledger again.
-func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker tickrunner.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
+func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker core.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: interval,
@@ -189,7 +189,7 @@ func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker tickrunner.Adv
 // service. Lives in DI (rather than next to a worker) because the work
 // surface is on *expiry.Manager via the lifecycleOps consumer interface -
 // there is no dedicated worker type.
-func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewLifecycleService(manager lifecycleOps, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: lifecycleTick,
@@ -214,16 +214,18 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 // resyncs whenever this instance may have missed an announcement: as its
 // subscription is established, and for a message it cannot read.
 type topicWatcher[T any] struct {
+	name   string
 	topic  sharedstate.Topic[T]
 	apply  func(context.Context, T)
 	resync func(context.Context)
 }
 
-// newTopicWatcher constructs the watch service for one topic.
-func newTopicWatcher[T any](topic sharedstate.Topic[T], apply func(context.Context, T), resync func(context.Context)) lifecycle.Runner {
+// newTopicWatcher constructs the watch service for one topic, registered and
+// logged under name.
+func newTopicWatcher[T any](name string, topic sharedstate.Topic[T], apply func(context.Context, T), resync func(context.Context)) lifecycle.Runner {
 	must.NotNil("apply", apply)
 	must.NotNil("resync", resync)
-	return &topicWatcher[T]{topic: topic, apply: apply, resync: resync}
+	return &topicWatcher[T]{name: name, topic: topic, apply: apply, resync: resync}
 }
 
 // Run watches the topic until ctx is done.
@@ -232,18 +234,28 @@ func (w *topicWatcher[T]) Run(ctx context.Context) error {
 	return nil
 }
 
+// Name returns the name the watcher was built with, which the lifecycle
+// manager registers it under.
+func (w *topicWatcher[T]) Name() string { return w.name }
+
+// Watcher names, which are also their log components.
+const (
+	provisioningWatchName = "provisioning_watch"
+	cacheWatchName        = "cache_watch"
+)
+
 // newProvisioningWatcher rebuilds this instance's provisioning view whenever
 // another instance announces a change, and on every resync. apply rebuilds
 // without announcing, since the change came from another instance.
 func newProvisioningWatcher(shared *sharedstate.Shared, apply func(ctx context.Context) error) lifecycle.Runner {
 	must.NotNil("apply", apply)
-	log := tickrunner.ComponentLogger("provisioning_watch")
+	log := logfmt.Logger(provisioningWatchName)
 	rebuild := func(ctx context.Context) {
 		if err := apply(ctx); err != nil {
 			log.ErrorContext(ctx, "provisioning rebuild failed", "error", err)
 		}
 	}
-	return newTopicWatcher(provisioningTopic(shared), func(ctx context.Context, _ struct{}) { rebuild(ctx) }, rebuild)
+	return newTopicWatcher(provisioningWatchName, provisioningTopic(shared), func(ctx context.Context, _ struct{}) { rebuild(ctx) }, rebuild)
 }
 
 // newCacheWatcher applies the cache flushes and invalidations other instances
@@ -251,7 +263,7 @@ func newProvisioningWatcher(shared *sharedstate.Shared, apply func(ctx context.C
 // invalidation it missed would otherwise leave it serving dropped entries.
 func newCacheWatcher(shared *sharedstate.Shared, c cache.ObjectCache) lifecycle.Runner {
 	must.NotNil("c", c)
-	return newTopicWatcher(cache.InvalidationTopic(shared),
+	return newTopicWatcher(cacheWatchName, cache.InvalidationTopic(shared),
 		func(_ context.Context, inv cache.Invalidation) { inv.Apply(c) },
 		func(context.Context) { c.Clear() })
 }

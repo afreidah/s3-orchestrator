@@ -75,25 +75,3 @@ func assertWildcardInvariants(t *testing.T, pattern, value string, p pattern) {
 		t.Errorf("pattern %q admitted %q shorter than its literal parts", pattern, value)
 	}
 }
-
-// FuzzParseHeaderList pins that the split never yields an entry the matcher
-// would compare with surrounding whitespace or an empty name, either of which
-// silently fails a rule the operator wrote correctly.
-func FuzzParseHeaderList(f *testing.F) {
-	f.Add("content-type")
-	f.Add("content-type, x-amz-date")
-	f.Add("  Content-Type ,, x-amz-date  ")
-	f.Add("")
-	f.Add(",")
-
-	f.Fuzz(func(t *testing.T, header string) {
-		for _, name := range parseHeaderList(header) {
-			if name == "" {
-				t.Errorf("parseHeaderList(%q) produced an empty name", header)
-			}
-			if name != strings.TrimSpace(name) {
-				t.Errorf("parseHeaderList(%q) produced %q with surrounding space", header, name)
-			}
-		}
-	})
-}

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -27,9 +29,11 @@ import (
 // -------------------------------------------------------------------------
 
 // Runner represents a long-running background task. Run blocks until ctx is
-// cancelled or a fatal error occurs.
+// cancelled or a fatal error occurs, and Name is the snake_case name the
+// supervisor logs it under.
 type Runner interface {
 	Run(ctx context.Context) error
+	Name() string
 }
 
 // Stopper is an optional interface for services that need explicit cleanup
@@ -38,27 +42,18 @@ type Stopper interface {
 	Stop(ctx context.Context) error
 }
 
-// entry pairs a registered Runner with the human-readable name used
-// in supervisor logs and metric labels. The Manager walks []entry to
-// start, supervise, and stop each service.
-type entry struct {
-	name   string
-	runner Runner
-}
+// restartBackoff spaces the restarts of a service that exits or panics, and a
+// service that ran for healthyRun before it failed starts again from the
+// first step.
+var restartBackoff = backoff.Exponential{Base: time.Second, Ceiling: 30 * time.Second}
 
-// Supervisor backoff: a service that exits or panics is restarted after
-// initialBackoff, doubled each subsequent immediate failure up to maxBackoff,
-// reset to initial once the service has run healthily for at least
-// backoffReset.
-const (
-	initialBackoff = 1 * time.Second
-	maxBackoff     = 30 * time.Second
-	backoffReset   = 60 * time.Second
-)
+// healthyRun is how long a service must run before its failure counts as a
+// fresh fault rather than another immediate one.
+const healthyRun = 60 * time.Second
 
 // Manager registers and supervises background services.
 type Manager struct {
-	services []entry
+	services []Runner
 	log      *slog.Logger
 }
 
@@ -69,13 +64,13 @@ type Manager struct {
 // NewManager creates an empty service manager that restarts a failed service
 // with the supervisor backoff.
 func NewManager() *Manager {
-	return &Manager{log: slog.Default().With(logfmt.Component("lifecycle_manager"))}
+	return &Manager{log: logfmt.Logger("lifecycle_manager")}
 }
 
-// Register adds a named service. Services start in registration order and stop
-// in reverse order.
-func (m *Manager) Register(name string, r Runner) {
-	m.services = append(m.services, entry{name: name, runner: r})
+// Register adds a service. Services start in registration order and stop in
+// reverse order.
+func (m *Manager) Register(r Runner) {
+	m.services = append(m.services, r)
 }
 
 // Names returns the registered service names in registration order.
@@ -83,8 +78,8 @@ func (m *Manager) Register(name string, r Runner) {
 // run mode; the supervisor loop itself does not consume this.
 func (m *Manager) Names() []string {
 	names := make([]string, len(m.services))
-	for i, e := range m.services {
-		names[i] = e.name
+	for i, r := range m.services {
+		names[i] = r.Name()
 	}
 	return names
 }
@@ -116,15 +111,13 @@ type HealthReporter interface {
 // startup logs.
 func (m *Manager) Health() []WorkerHealth {
 	out := make([]WorkerHealth, 0, len(m.services))
-	for _, e := range m.services {
-		hr, ok := e.runner.(HealthReporter)
+	for _, r := range m.services {
+		hr, ok := r.(HealthReporter)
 		if !ok {
 			continue
 		}
 		h := hr.Health()
-		if h.Name == "" {
-			h.Name = e.name
-		}
+		h.Name = r.Name()
 		out = append(out, h)
 	}
 	return out
@@ -135,8 +128,8 @@ func (m *Manager) Health() []WorkerHealth {
 func (m *Manager) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
-	for _, e := range m.services {
-		wg.Go(func() { m.supervise(ctx, e) })
+	for _, r := range m.services {
+		wg.Go(func() { m.supervise(ctx, r) })
 	}
 
 	wg.Wait()
@@ -148,8 +141,8 @@ func (m *Manager) Run(ctx context.Context) {
 // budget.
 func (m *Manager) Stop(timeout time.Duration) {
 	var stoppable int
-	for _, e := range m.services {
-		if _, ok := e.runner.(Stopper); ok {
+	for _, r := range m.services {
+		if _, ok := r.(Stopper); ok {
 			stoppable++
 		}
 	}
@@ -158,15 +151,15 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 	perService := timeout / time.Duration(stoppable)
 
-	for _, v := range slices.Backward(m.services) {
-		s, ok := v.runner.(Stopper)
+	for _, r := range slices.Backward(m.services) {
+		s, ok := r.(Stopper)
 		if !ok {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perService)
 		if err := s.Stop(ctx); err != nil {
 			m.log.ErrorContext(ctx, "service stop error",
-				"service", v.name,
+				"service", r.Name(),
 				"error", err,
 			)
 		}
@@ -178,14 +171,12 @@ func (m *Manager) Stop(timeout time.Duration) {
 // SUPERVISOR LOOP
 // -------------------------------------------------------------------------
 
-// supervise runs a single service in a loop and restarts it with
-// exponential backoff if Run returns or panics while ctx is still
-// alive. The backoff resets to initialBackoff after the service runs
-// healthily for at least backoffReset so a long-stable service
-// doesn't carry stale backoff state into a fresh fault.
-func (m *Manager) supervise(ctx context.Context, e entry) {
-	backoff := initialBackoff
-
+// supervise runs a single service in a loop and restarts it on restartBackoff
+// if Run returns or panics while ctx is still alive. A service that ran for
+// healthyRun starts again from the first step, so a long-stable service does
+// not carry stale backoff into a fresh fault.
+func (m *Manager) supervise(ctx context.Context, svc Runner) {
+	var restarts int32
 	for {
 		start := time.Now()
 
@@ -193,16 +184,16 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			defer func() {
 				if r := recover(); r != nil {
 					m.log.ErrorContext(ctx, "service panicked, restarting",
-						"service", e.name,
+						"service", svc.Name(),
 						"panic", fmt.Sprint(r),
 						"stack", string(debug.Stack()),
 					)
 				}
 			}()
 
-			if err := e.runner.Run(ctx); err != nil && ctx.Err() == nil {
+			if err := svc.Run(ctx); err != nil && ctx.Err() == nil {
 				m.log.ErrorContext(ctx, "service exited unexpectedly, restarting",
-					"service", e.name,
+					"service", svc.Name(),
 					"error", err,
 				)
 			}
@@ -211,24 +202,17 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		if ctx.Err() != nil {
 			return
 		}
-
-		// Reset backoff if the service ran long enough to be considered healthy.
-		if time.Since(start) >= backoffReset {
-			backoff = initialBackoff
+		if time.Since(start) >= healthyRun {
+			restarts = 0
 		}
-
+		wait := restartBackoff.For(restarts)
 		m.log.WarnContext(ctx, "restarting service after backoff",
-			"service", e.name,
-			"backoff", backoff,
+			"service", svc.Name(),
+			"backoff", wait,
 		)
-
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
+		if !syncutil.Sleep(ctx, wait) {
 			return
 		}
-
-		// Exponential backoff capped at maxBackoff.
-		backoff = min(backoff*2, maxBackoff)
+		restarts++
 	}
 }

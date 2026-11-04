@@ -16,6 +16,8 @@ import (
 	"encoding/xml"
 	"net/http"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -101,7 +103,7 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, buckets []string) (int
 // handleHeadBucket returns 200 with an empty body to confirm the bucket
 // exists. The bucket is guaranteed to exist because auth already resolved it.
 func (s *Server) handleHeadBucket(w http.ResponseWriter) (int, error) {
-	w.Header().Set(headerContentType, "application/xml")
+	w.Header().Set(httputil.HeaderContentType, httputil.MediaXML)
 	w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
 	w.WriteHeader(http.StatusOK)
 	return http.StatusOK, nil

@@ -86,7 +86,7 @@ func New(deps *Deps) *Coordinator {
 	return &Coordinator{
 		deps:    *deps,
 		hooks:   hooks,
-		log:     slog.Default().With(logfmt.Component("reload")),
+		log:     logfmt.Logger("reload"),
 		startup: deps.Live.Load(),
 	}
 }

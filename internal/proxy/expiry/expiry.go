@@ -61,7 +61,7 @@ type Manager struct {
 func New(store core.ExpiredObjectsLister, objects ObjectDeleter, cfg syncutil.Section[config.LifecycleConfig]) *Manager {
 	return &Manager{
 		Section: cfg, store: store, objects: objects,
-		log: slog.Default().With(logfmt.Component("lifecycle")),
+		log: logfmt.Logger("lifecycle"),
 	}
 }
 

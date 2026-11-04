@@ -74,7 +74,6 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)

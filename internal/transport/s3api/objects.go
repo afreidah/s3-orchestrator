@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
@@ -213,7 +214,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	setObjectHeaders(w, result.ContentType, result.Metadata, result.TagCount)
 	if result.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+		w.Header().Set(httputil.HeaderContentLength, strconv.FormatInt(result.Size, 10))
 	}
 
 	status := http.StatusOK
@@ -262,7 +263,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 	annotateObject(ctx, result.Size, result.ContentType)
 
 	setObjectHeaders(w, result.ContentType, result.Metadata, result.TagCount)
-	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+	w.Header().Set(httputil.HeaderContentLength, strconv.FormatInt(result.Size, 10))
 	setValidatorHeaders(w, result.ETag, result.LastModified)
 
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
@@ -420,7 +421,7 @@ func hasConditionals(r *http.Request) bool {
 // object both carry: content type, range support, user metadata, and how many
 // tags the object has, omitted for zero as S3 does.
 func setObjectHeaders(w http.ResponseWriter, contentType string, metadata map[string]string, tagCount int) {
-	w.Header().Set(headerContentType, contentType)
+	w.Header().Set(httputil.HeaderContentType, contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 	for k, v := range metadata {
 		w.Header().Set("x-amz-meta-"+k, v)

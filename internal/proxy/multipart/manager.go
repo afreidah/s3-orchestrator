@@ -68,56 +68,43 @@ type Stores interface {
 // so an abandoned upload's DEK does not outlive the upload. Concurrent calls
 // for the same upload on a cold cache each issue their own unwrap.
 type Manager struct {
-	core               Runtime                // infrastructure subset: backends, usage, timeout, error classification, metrics
-	coord              *writepath.Coordinator // write-path helpers shared with the object manager
-	stores             Stores                 // multipart row/part operations and the completion mark
-	encryptor          *encryption.Encryptor
-	codec              Codec
-	compression        config.CompressionConfig
-	dekCache           *syncutil.TTLCache[string, []byte]
-	integrityCfg       syncutil.Section[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
-	enforceMinPartSize bool                                     // reject non-final parts below the S3 5 MiB floor
-	log                *slog.Logger
+	d        Deps
+	dekCache *syncutil.TTLCache[string, []byte]
+	log      *slog.Logger
 }
 
 // New creates a Manager. Core, Coord and Stores must be non-nil. When
 // IntegrityCfg is nil or disabled, CompleteMultipartUpload skips the plaintext
 // hash that populates content_hash on the recorded location.
-func New(deps *Deps) *Manager {
-	must.NotNil("deps", deps)
-	must.NotNil("Core", deps.Core)
-	must.NotNil("Coord", deps.Coord)
-	must.NotNil("Stores", deps.Stores)
+func New(d *Deps) *Manager {
+	must.NotNil("d", d)
+	must.NotNil("d.Core", d.Core)
+	must.NotNil("d.Coord", d.Coord)
+	must.NotNil("d.Stores", d.Stores)
 	return &Manager{
-		core:               deps.Core,
-		coord:              deps.Coord,
-		stores:             deps.Stores,
-		encryptor:          deps.Encryptor,
-		codec:              deps.Codec,
-		compression:        deps.Compression,
-		dekCache:           syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
-		integrityCfg:       deps.IntegrityCfg,
-		enforceMinPartSize: deps.EnforceMinPartSize,
-		log:                slog.Default().With(logfmt.Component("multipart")),
+		d:        *d,
+		dekCache: syncutil.NewTTLCache[string, []byte](d.DEKCacheTTL),
+		log:      logfmt.Logger("multipart"),
 	}
 }
 
 // Deps groups the multipart manager's constructor parameters: backend
-// runtime, shared write coordinator, store surface, optional encryption /
-// compression, the DEK-cache TTL, and the shared integrity config. Codec is
-// supplied whether or not Compression.Enabled, matching the object manager:
-// an assembled object is encoded only when both are set.
+// runtime, shared write coordinator, store surface, optional encryption and
+// compression, the DEK-cache TTL, and the shared integrity config. Encryptor
+// is nil when encryption is disabled and Codec when no codec is configured.
+// Codec is supplied whether or not Compression.Enabled, matching the object
+// manager: an assembled object is encoded only when both are set. With
+// EnforceMinPartSize every non-final part must meet the S3 5 MiB floor.
 type Deps struct {
-	Core         Runtime
-	Coord        *writepath.Coordinator
-	Stores       Stores
-	Encryptor    *encryption.Encryptor // nil when encryption is disabled
-	Codec        Codec                 // nil when no codec is configured
-	Compression  config.CompressionConfig
-	DEKCacheTTL  time.Duration
-	IntegrityCfg syncutil.Section[config.IntegrityConfig]
-
-	EnforceMinPartSize bool // every non-final part must meet the S3 5 MiB floor
+	Core               Runtime
+	Coord              *writepath.Coordinator
+	Stores             Stores
+	Encryptor          *encryption.Encryptor
+	Codec              Codec
+	Compression        config.CompressionConfig
+	DEKCacheTTL        time.Duration
+	IntegrityCfg       syncutil.Section[config.IntegrityConfig]
+	EnforceMinPartSize bool
 }
 
 // Close stops the per-upload DEK cache eviction loop.
@@ -164,8 +151,8 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 		encryptionKey []byte
 		keyID         string
 	)
-	if mp.encryptor != nil {
-		_, wrappedDEK, kid, kerr := mp.encryptor.GenerateAndWrapDEK(ctx)
+	if mp.d.Encryptor != nil {
+		_, wrappedDEK, kid, kerr := mp.d.Encryptor.GenerateAndWrapDEK(ctx)
 		if kerr != nil {
 			observe.RecordSpanError(span, kerr)
 			return "", "", fmt.Errorf("wrap upload DEK: %w", kerr)
@@ -186,13 +173,13 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 		KeyID:         keyID,
 		Tags:          req.Tags,
 	}
-	if err := mp.coord.ClaimUploadTarget(ctx, span, operation, params); err != nil {
+	if err := mp.d.Coord.ClaimUploadTarget(ctx, span, operation, params); err != nil {
 		return "", "", err
 	}
 	backendName := params.BackendName
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-	mp.core.Acct().Operation(operation, backendName, start, nil)
+	mp.d.Core.Acct().Operation(operation, backendName, start, nil)
 
 	pobserve.MultipartCreated(ctx, span, key, backendName, uploadID)
 	return uploadID, backendName, nil
@@ -221,7 +208,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", err
 	}
 
-	be, err := mp.core.GetBackend(mu.BackendName)
+	be, err := mp.d.Core.GetBackend(mu.BackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -229,7 +216,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 
 	// Checked against what the part will occupy, which for an encrypted upload
 	// is the envelope rather than the bytes the client sent.
-	if !mp.core.Acct().Allow(mu.BackendName, s3op.UploadPart, 0, mp.physicalPartSize(mu, size)) {
+	if !mp.d.Core.Acct().Allow(mu.BackendName, s3op.UploadPart, 0, mp.physicalPartSize(mu, size)) {
 		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
@@ -249,36 +236,36 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	// write claims its target, and writes a path of its own, so a re-upload of
 	// this number never shares bytes with the part it replaces.
 	intent := writepath.NewCopyIntent(core.PartPath(uploadID, partNumber), mu.BackendName, uploadSize, form)
-	if err := mp.coord.ClaimCopyTarget(ctx, intent, core.AcceptForPart); err != nil {
+	if err := mp.d.Coord.ClaimCopyTarget(ctx, intent, core.AcceptForPart); err != nil {
 		observe.RecordSpanError(span, err)
 		if errors.Is(err, core.ErrTargetRefused) {
 			return "", core.ErrInsufficientStorage
 		}
 		return "", err
 	}
-	storedETag, err := mp.core.Put(ctx, operation, &s3be.PutRequest{
+	storedETag, err := mp.d.Core.Put(ctx, operation, &s3be.PutRequest{
 		Dst: s3be.Endpoint{Name: mu.BackendName, Backend: be}, Key: intent.StorageKey,
 		Body: uploadBody, Size: uploadSize, ContentType: "application/octet-stream",
 	})
 	if err != nil {
-		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
+		mp.d.Coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
 	plaintextETag := etag.Hex(partDigest)
-	replaced, err := mp.stores.RecordPart(ctx, &core.RecordPartParams{
+	replaced, err := mp.d.Stores.RecordPart(ctx, &core.RecordPartParams{
 		UploadID: uploadID, PartNumber: partNumber, ETag: storedETag,
 		PlaintextETag: plaintextETag, SizeBytes: uploadSize, Form: form, Intent: intent,
 		CompletionStaleBefore: completionStaleBefore(),
 	})
 	// A part replaced by this one, or this one when its intent was lost, was
 	// queued by the record's transaction.
-	mp.coord.Settle(ctx, replaced)
+	mp.d.Coord.Settle(ctx, replaced)
 	if err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, discarding part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
+		mp.d.Coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
@@ -286,7 +273,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	// The PUT was charged at what was sent, not at what the client handed
 	// over: an encrypted part carries its own envelope, and a large upload
 	// repeats that difference once per part.
-	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
+	mp.d.Core.Acct().Operation(operation, mu.BackendName, start, nil)
 	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
 	// The client is given the MD5 of its own bytes, which is what S3 returns
 	// and what it will send back in the completion manifest.
@@ -296,10 +283,10 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 // physicalPartSize reports how many bytes a part of this size will occupy once
 // encrypted. Parts are never compressed, so this is known before the read.
 func (mp *Manager) physicalPartSize(mu *core.MultipartUpload, size int64) int64 {
-	if mp.encryptor == nil || !mu.Encrypted {
+	if mp.d.Encryptor == nil || !mu.Encrypted {
 		return size
 	}
-	return mp.encryptor.CiphertextSize(size)
+	return mp.d.Encryptor.CiphertextSize(size)
 }
 
 // -------------------------------------------------------------------------
@@ -309,7 +296,7 @@ func (mp *Manager) physicalPartSize(mu *core.MultipartUpload, size int64) int64 
 // ListMultipartUploads returns active multipart uploads matching the given
 // prefix, up to maxUploads results. Pass-through to the metadata store.
 func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	return mp.stores.ListMultipartUploads(ctx, prefix, maxUploads)
+	return mp.d.Stores.ListMultipartUploads(ctx, prefix, maxUploads)
 }
 
 // GetParts returns all parts for a multipart upload, each reporting the ETag
@@ -334,7 +321,7 @@ func (mp *Manager) ListParts(ctx context.Context, bucket, key, uploadID string, 
 	}
 	// One extra row says whether the page is the last without a count query,
 	// so a zero-size page still reports whether any parts lie past the marker.
-	parts, err := mp.stores.ListParts(ctx, uploadID, partNumberMarker, maxParts+1)
+	parts, err := mp.d.Stores.ListParts(ctx, uploadID, partNumberMarker, maxParts+1)
 	if err != nil {
 		return nil, false, err
 	}
@@ -361,7 +348,7 @@ func (mp *Manager) UnwrapUploadDEK(ctx context.Context, mu *core.MultipartUpload
 	if cached, ok := mp.dekCache.Get(mu.UploadID); ok {
 		return cached, wrappedDEK, baseNonce, nil
 	}
-	unwrapped, err := mp.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, mu.KeyID)
+	unwrapped, err := mp.d.Encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, mu.KeyID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unwrap upload DEK: %w", err)
 	}
@@ -384,7 +371,7 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	sealed, err := storedform.Seal(ctx, mp.encryptor, body, size, &storedform.DataKey{DEK: dek, WrappedDEK: wrappedDEK, KeyID: mu.KeyID})
+	sealed, err := storedform.Seal(ctx, mp.d.Encryptor, body, size, &storedform.DataKey{DEK: dek, WrappedDEK: wrappedDEK, KeyID: mu.KeyID})
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -394,7 +381,7 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 // prepareUploadPartBody returns the body, size and stored form for one part,
 // encrypted under the upload's cached data key when the upload is encrypted.
 func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.StoredForm, error) {
-	if mp.encryptor == nil || !mu.Encrypted {
+	if mp.d.Encryptor == nil || !mu.Encrypted {
 		return body, size, nil, nil
 	}
 	out, ciphertextSize, form, err := mp.encryptWithUploadDEK(ctx, mu, body, size)
@@ -409,9 +396,9 @@ func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.Multipart
 // return the same NoSuchUpload error, so callers cannot probe for upload IDs
 // across buckets. Errors are recorded on span, the operation's own span.
 func (mp *Manager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID string, operation s3op.Operation) (*core.MultipartUpload, error) {
-	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.d.Stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return nil, mp.core.ClassifyWriteError(span, operation, err)
+		return nil, mp.d.Core.ClassifyWriteError(span, operation, err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
 		observe.RecordSpanError(span, err)
@@ -440,7 +427,7 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 // made ascending. A requested part that was never uploaded fails the
 // completion, naming every one missing.
 func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, uploadID string, partNumbers []int) ([]core.MultipartPart, error) {
-	allParts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartCount)
+	allParts, err := mp.d.Stores.ListParts(ctx, uploadID, 0, MaxPartCount)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, err
@@ -506,7 +493,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	start := time.Now()
 	uploadID := mu.UploadID
 
-	if _, err := mp.core.GetBackend(mu.BackendName); err != nil {
+	if _, err := mp.d.Core.GetBackend(mu.BackendName); err != nil {
 		observe.RecordSpanError(span, err)
 		return err
 	}
@@ -514,17 +501,17 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	// The upload and its parts go and the parts' bytes are queued in one
 	// transaction, so an abort that dies before the deletes run leaves them
 	// to the cleanup worker rather than on the backend with nothing naming them.
-	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonAbortPart, completionStaleBefore())
+	parts, err := mp.d.Stores.DeleteMultipartUpload(ctx, uploadID, reasonAbortPart, completionStaleBefore())
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return err
 	}
-	mp.coord.Settle(ctx, parts)
+	mp.d.Coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 
 	// The abort itself sends no request: parts are plain objects, so the only
 	// backend calls are the part deletes, charged where they are sent.
-	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
+	mp.d.Core.Acct().Operation(operation, mu.BackendName, start, nil)
 
 	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil
@@ -561,7 +548,7 @@ func (mp *Manager) abortMatching(ctx context.Context, filter core.MultipartUploa
 	pager := batch.Pager[core.MultipartUpload, string]{
 		PageSize: batch.FixedPage(abortScanPageSize),
 		List: func(ctx context.Context, limit int, after string) ([]core.MultipartUpload, error) {
-			return mp.stores.ScanMultipartUploads(ctx, filter, limit, after)
+			return mp.d.Stores.ScanMultipartUploads(ctx, filter, limit, after)
 		},
 		CursorOf: func(mu core.MultipartUpload) string { return mu.UploadID },
 	}
@@ -597,15 +584,15 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return "", err
 	}
-	started, err := mp.stores.BeginMultipartCompletion(ctx, uploadID, completionStaleBefore())
+	started, err := mp.d.Stores.BeginMultipartCompletion(ctx, uploadID, completionStaleBefore())
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
 	}
 	if !started {
 		// An upload aborted since the fetch is gone, not held.
-		if _, err := mp.stores.GetMultipartUpload(ctx, uploadID); err != nil {
-			return "", mp.core.ClassifyWriteError(span, operation, err)
+		if _, err := mp.d.Stores.GetMultipartUpload(ctx, uploadID); err != nil {
+			return "", mp.d.Core.ClassifyWriteError(span, operation, err)
 		}
 		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
 		return "", core.ErrCompletionInProgress
@@ -640,7 +627,7 @@ func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, comp
 	go func() {
 		defer close(renewed)
 		syncutil.Every(workCtx, completionRenewEvery, func(ctx context.Context) {
-			held, err := mp.stores.RenewMultipartCompletion(ctx, uploadID)
+			held, err := mp.d.Stores.RenewMultipartCompletion(ctx, uploadID)
 			if err == nil && !held {
 				err = errCompletionMarkLost
 			}
@@ -653,7 +640,7 @@ func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, comp
 	etag, err := complete(workCtx)
 	cancel(nil)
 	<-renewed
-	if endErr := mp.stores.EndMultipartCompletion(context.WithoutCancel(ctx), uploadID); endErr != nil {
+	if endErr := mp.d.Stores.EndMultipartCompletion(context.WithoutCancel(ctx), uploadID); endErr != nil {
 		mp.log.WarnContext(ctx, "failed to clear multipart completion mark", "upload_id", uploadID, "error", endErr)
 	}
 	return etag, err
@@ -675,11 +662,11 @@ func (mp *Manager) completeMultipartUploadLocked(
 	manifest []core.CompletePart,
 	start time.Time,
 ) (string, error) {
-	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.d.Stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return "", mp.core.ClassifyWriteError(span, operation, err)
+		return "", mp.d.Core.ClassifyWriteError(span, operation, err)
 	}
-	be, err := mp.core.GetBackend(mu.BackendName)
+	be, err := mp.d.Core.GetBackend(mu.BackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -703,7 +690,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// ETag and size checks run against the same rows assembly will read,
 	// under the same completion mark, so a part replaced between validation and
 	// assembly cannot slip through.
-	if err := validateManifestAgainstStored(manifest, parts, mp.enforceMinPartSize); err != nil {
+	if err := validateManifestAgainstStored(manifest, parts, mp.d.EnforceMinPartSize); err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
 	}
@@ -726,7 +713,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// the assembled object lands with a content_hash matching the
 	// regular PutObject path. Without this, the scrubber cannot verify
 	// multipart-completed objects.
-	hasher := mp.integrityCfg.Config().Hasher()
+	hasher := mp.d.IntegrityCfg.Config().Hasher()
 	// An upload whose parts predate per-part digests has no composite, and the
 	// MD5 of the assembled bytes is the only ETag left to give it. Every other
 	// upload already knows its own and must not pay for a second pass over
@@ -763,7 +750,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// The claim is pinned to the upload's own backend because the parts are
 	// already there: a backend without room must fail, not place it elsewhere.
 	intent := writepath.NewPendingIntent(mu.ObjectKey, uploadSize, form, identity, mu.Tags)
-	if err := mp.coord.ClaimWriteTarget(ctx, span, operation, intent, []string{mu.BackendName}); err != nil {
+	if err := mp.d.Coord.ClaimWriteTarget(ctx, span, operation, intent, []string{mu.BackendName}); err != nil {
 		return "", err
 	}
 
@@ -773,7 +760,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// the key leaves two distinct objects instead of two writers racing at one
 	// path. The backend's ETag describes the stored bytes and is discarded in
 	// favor of the composite.
-	_, err = mp.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
+	_, err = mp.d.Core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
 		Dst: s3be.Endpoint{Name: mu.BackendName, Backend: be}, Key: intent.StorageKey,
 		Body: uploadBody, Size: uploadSize, ContentType: mu.ContentType, Metadata: mu.Metadata,
 	})
@@ -798,7 +785,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// The create call's tags land in the same transaction, so a completed upload
 	// is never briefly untagged. The bytes are charged from the size the ledger
 	// records.
-	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(form)); err != nil {
+	if err := mp.d.Coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(form)); err != nil {
 		return "", err
 	}
 
@@ -809,7 +796,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 
 	// The part GETs, the assembled PUT and the part deletes were each charged
 	// where they were sent.
-	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
+	mp.d.Core.Acct().Operation(operation, mu.BackendName, start, nil)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	return identity.ETag, nil
@@ -850,11 +837,11 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 // caller's own, so the delete ignores any mark renewed before now. A removal
 // that fails leaves the upload to the stale-multipart sweep, which aborts it.
 func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, uploadID string) {
-	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonCompletePart, time.Now())
+	parts, err := mp.d.Stores.DeleteMultipartUpload(ctx, uploadID, reasonCompletePart, time.Now())
 	if err != nil {
 		span.RecordError(err)
 	}
-	mp.coord.Settle(ctx, parts)
+	mp.d.Coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 }
 
@@ -899,11 +886,11 @@ func (a *assembledBody) cleanup() {
 // back out of that buffer, since the part pipe delivers the plaintext only once
 // and re-reading the parts would charge their egress a second time.
 func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
-	if !storedform.ShouldCompress(&mp.compression, mp.codec, totalPlaintextSize) {
+	if !storedform.ShouldCompress(&mp.d.Compression, mp.d.Codec, totalPlaintextSize) {
 		return &assembledBody{body: src, size: totalPlaintextSize}, nil
 	}
 
-	enc, err := storedform.Compress(mp.codec, src, totalPlaintextSize, mp.compression.MinRatio)
+	enc, err := storedform.Compress(mp.d.Codec, src, totalPlaintextSize, mp.d.Compression.MinRatio)
 	if err != nil {
 		return nil, fmt.Errorf("compress assembled object: %w", err)
 	}
@@ -914,7 +901,7 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 		return a, nil
 	}
 
-	plain, err := mp.codec.Decompress(reader)
+	plain, err := mp.d.Codec.Decompress(reader)
 	if err != nil {
 		a.cleanup()
 		return nil, fmt.Errorf("decode discarded encoding: %w", err)
@@ -936,7 +923,7 @@ func (mp *Manager) buildAssembledUpload(
 ) (io.Reader, int64, *core.StoredForm, error) {
 	out, size := stored.body, stored.size
 	var form *core.StoredForm
-	if mp.encryptor != nil {
+	if mp.d.Encryptor != nil {
 		var err error
 		out, size, form, err = mp.encryptWithUploadDEK(ctx, mu, stored.body, stored.size)
 		if err != nil {
@@ -945,7 +932,7 @@ func (mp *Manager) buildAssembledUpload(
 		}
 	}
 	if stored.compressed {
-		form = storedform.Describe(form, mp.compression.Level, totalPlaintextSize)
+		form = storedform.Describe(form, mp.d.Compression.Level, totalPlaintextSize)
 	}
 	return out, size, form, nil
 }
@@ -1003,18 +990,18 @@ func (mp *Manager) streamOnePart(
 	uploadID string,
 	part *core.MultipartPart,
 ) error {
-	result, cancel, err := mp.core.Get(ctx, src.Name, src.Backend, part.Path(uploadID), "")
+	result, cancel, err := mp.d.Core.Get(ctx, src.Name, src.Backend, part.Path(uploadID), "")
 	if err != nil {
 		return fmt.Errorf("failed to read part %d: %w", part.PartNumber, err)
 	}
 	defer cancel()
 	defer func() { _ = result.Body.Close() }()
 
-	if err := copyPart(ctx, mp.encryptor, bw, result.Body, part); err != nil {
-		mp.core.Acct().APICall(ctx, s3op.GetObject, src.Name)
+	if err := copyPart(ctx, mp.d.Encryptor, bw, result.Body, part); err != nil {
+		mp.d.Core.Acct().APICall(ctx, s3op.GetObject, src.Name)
 		return err
 	}
-	mp.core.Acct().Egress(ctx, s3op.GetObject, src.Name, part.SizeBytes)
+	mp.d.Core.Acct().Egress(ctx, s3op.GetObject, src.Name, part.SizeBytes)
 	return nil
 }
 
@@ -1038,5 +1025,5 @@ func copyPart(ctx context.Context, enc *encryption.Encryptor, bw io.Writer, stor
 // key falls under bucketPrefix. Lives here rather than on a facade because
 // this is the type that already holds the multipart store.
 func (mp *Manager) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
-	return mp.stores.CountActiveMultipartUploads(ctx, bucketPrefix)
+	return mp.d.Stores.CountActiveMultipartUploads(ctx, bucketPrefix)
 }

@@ -13,7 +13,6 @@ package metrics
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -47,13 +46,12 @@ type panicDeps struct{ Deps }
 // one collector and loads it into another that never reads the store.
 func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
 	shared, _ := newShared()
-	computing := &Collector{
-		store:             fakeReplicationDeps{under: 2, over: 1, plaintext: 4},
-		replicationFactor: func() int { return 2 },
-		shared:            shared,
-		log:               slog.Default(),
-	}
-	loading := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
+	computing := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 2, over: 1, plaintext: 4},
+		ReplicationFactor: func() int { return 2 },
+		Shared:            shared,
+	})
+	loading := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
 
 	if err := computing.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
@@ -64,7 +62,7 @@ func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
 	}
 
 	want := computing.ReplicationSnapshot(context.Background())
-	loading.shared = nil // read the loaded copy, not the shared one
+	loading.d.Shared = nil // read the loaded copy, not the shared one
 	got := loading.ReplicationSnapshot(context.Background())
 	if got.UnderReplicated != 2 || got.OverReplicated != 1 || !got.ComputedAt.Equal(want.ComputedAt) {
 		t.Errorf("loaded snapshot = %+v, want %+v", got, want)
@@ -79,7 +77,7 @@ func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
 func TestFleetSnapshot_LoadWithNothingPublished(t *testing.T) {
 	t.Parallel()
 	shared, _ := newShared()
-	mc := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
+	mc := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
 	if err := mc.LoadFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("LoadFleetMetrics: %v", err)
 	}
@@ -95,17 +93,16 @@ func TestFleetSnapshot_LoadWithNothingPublished(t *testing.T) {
 func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
 	t.Parallel()
 	shared, mem := newShared()
-	computing := &Collector{
-		store:             fakeReplicationDeps{under: 1},
-		replicationFactor: func() int { return 2 },
-		shared:            shared,
-		log:               slog.Default(),
-	}
+	computing := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 1},
+		ReplicationFactor: func() int { return 2 },
+		Shared:            shared,
+	})
 	if err := computing.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
 	}
 
-	idle := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
+	idle := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
 	if got := idle.ReplicationSnapshot(context.Background()); !got.Ready || got.UnderReplicated != 1 {
 		t.Errorf("idle instance serves %+v, want the published snapshot", got)
 	}
@@ -123,7 +120,7 @@ func TestFleetSnapshot_LoadErrors(t *testing.T) {
 	boom := errors.New("redis down")
 	failing, failingMem := newShared()
 	failingMem.Fail(boom)
-	mc := &Collector{store: panicDeps{}, shared: failing, log: slog.Default()}
+	mc := testCollector(CollectorDeps{Store: panicDeps{}, Shared: failing})
 	if err := mc.LoadFleetMetrics(context.Background()); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
@@ -132,7 +129,7 @@ func TestFleetSnapshot_LoadErrors(t *testing.T) {
 	if err := garbledMem.PutShared(context.Background(), fleetSnapshotKey, []byte("{not json"), 0); err != nil {
 		t.Fatal(err)
 	}
-	mc = &Collector{store: panicDeps{}, shared: garbled, log: slog.Default()}
+	mc = testCollector(CollectorDeps{Store: panicDeps{}, Shared: garbled})
 	if err := mc.LoadFleetMetrics(context.Background()); err == nil {
 		t.Error("undecodable snapshot loaded without error")
 	}
@@ -144,12 +141,11 @@ func TestFleetSnapshot_PublishFailureKeepsLocalResult(t *testing.T) {
 	t.Parallel()
 	shared, mem := newShared()
 	mem.Fail(errors.New("redis down"))
-	mc := &Collector{
-		store:             fakeReplicationDeps{},
-		replicationFactor: func() int { return 1 },
-		shared:            shared,
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{},
+		ReplicationFactor: func() int { return 1 },
+		Shared:            shared,
+	})
 	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
 	}
@@ -167,13 +163,12 @@ func TestRefreshFleetIfStale_RecomputesAStaleSnapshot(t *testing.T) {
 	if err := mem.PutShared(context.Background(), fleetSnapshotKey, []byte(`{"computed_at":"`+old.Format(time.RFC3339Nano)+`"}`), 0); err != nil {
 		t.Fatal(err)
 	}
-	mc := &Collector{
-		store:             fakeReplicationDeps{under: 3},
-		replicationFactor: func() int { return 2 },
-		shared:            shared,
-		fleetInterval:     time.Minute,
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 3},
+		ReplicationFactor: func() int { return 2 },
+		Shared:            shared,
+		FleetInterval:     time.Minute,
+	})
 	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
 		t.Fatalf("RefreshFleetIfStale: %v", err)
 	}
@@ -188,13 +183,12 @@ func TestRefreshFleetIfStale_LoadFailureRecomputes(t *testing.T) {
 	t.Parallel()
 	shared, mem := newShared()
 	mem.Fail(errors.New("redis down"))
-	mc := &Collector{
-		store:             fakeReplicationDeps{under: 2},
-		replicationFactor: func() int { return 2 },
-		shared:            shared,
-		fleetInterval:     time.Minute,
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 2},
+		ReplicationFactor: func() int { return 2 },
+		Shared:            shared,
+		FleetInterval:     time.Minute,
+	})
 	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
 		t.Fatalf("RefreshFleetIfStale: %v", err)
 	}
@@ -226,17 +220,16 @@ func TestFleetSnapshot_LookupOrder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	shared, mem := newShared()
-	publisher := &Collector{
-		store:             fakeReplicationDeps{under: 1},
-		replicationFactor: func() int { return 2 },
-		shared:            shared,
-		log:               slog.Default(),
-	}
+	publisher := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 1},
+		ReplicationFactor: func() int { return 2 },
+		Shared:            shared,
+	})
 	if err := publisher.UpdateFleetMetrics(ctx); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
 	}
 
-	reader := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
+	reader := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
 	snap, err := reader.FleetSnapshot(ctx)
 	if err != nil || snap.Replication.UnderReplicated != 1 {
 		t.Fatalf("published lookup = %+v, %v; want the published snapshot", snap, err)
@@ -277,11 +270,10 @@ func TestFleetSnapshot_ComputesWhenNoneExists(t *testing.T) {
 // computes its own snapshot and loading is a no-op.
 func TestFleetSnapshot_SingleInstance(t *testing.T) {
 	t.Parallel()
-	mc := &Collector{
-		store:             fakeReplicationDeps{},
-		replicationFactor: func() int { return 1 },
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{},
+		ReplicationFactor: func() int { return 1 },
+	})
 	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
 	}

@@ -41,12 +41,12 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 	)
 	defer span.End()
 
-	result, err := o.stores.ListObjects(ctx, prefix, delimiter, startAfter, maxKeys)
+	result, err := o.d.Stores.ListObjects(ctx, prefix, delimiter, startAfter, maxKeys)
 	if err != nil {
 		return nil, listObjectsError(span, err)
 	}
 
-	o.core.Acct().Operation(operation, "", start, nil)
+	o.d.Core.Acct().Operation(operation, "", start, nil)
 
 	pobserve.ListCompleted(ctx, prefix, result.KeyCount(), result.IsTruncated)
 	span.SetStatus(codes.Ok, "")

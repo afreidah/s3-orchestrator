@@ -32,7 +32,7 @@ import (
 // store and a no-op accounting recorder.
 func newListTestManager(store Stores) *Manager {
 	rec := accounting.New(nil, func(_, _ string, _ time.Time, _ error) {})
-	return &Manager{stores: store, core: listTestRuntime{acct: rec}, log: slog.Default()}
+	return &Manager{d: Deps{Stores: store, Core: listTestRuntime{acct: rec}}, log: slog.Default()}
 }
 
 // listTestRuntime is a minimal Runtime: ListObjects only reaches the

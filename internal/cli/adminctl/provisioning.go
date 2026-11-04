@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/commalist"
 )
 
 // -------------------------------------------------------------------------
@@ -283,21 +284,8 @@ func grantAdd(args []string, c *client) int {
 		UserID:      user,
 		Kind:        string(resource.Kind),
 		Name:        resource.Name,
-		Permissions: splitPermissions(*perms),
+		Permissions: commalist.Split(*perms),
 	}, nil)
-}
-
-// splitPermissions turns the flag value into the list the request carries. The
-// server owns which names are valid, so this only splits and trims: rejecting
-// here as well would put the same list in two places to drift apart.
-func splitPermissions(s string) []string {
-	var out []string
-	for field := range strings.SplitSeq(s, ",") {
-		if name := strings.TrimSpace(field); name != "" {
-			out = append(out, name)
-		}
-	}
-	return out
 }
 
 // grantSet declares exactly what a user reaches on one resource. Unlike
@@ -310,7 +298,7 @@ func grantSet(args []string, c *client) int {
 	if !ok {
 		return 1
 	}
-	return c.sendJSON(http.MethodPut, grantPath(user, resource), adminapi.SetGrantRequest{Permissions: splitPermissions(*perms)}, nil)
+	return c.sendJSON(http.MethodPut, grantPath(user, resource), adminapi.SetGrantRequest{Permissions: commalist.Split(*perms)}, nil)
 }
 
 // grantRemove withdraws one user's access to one resource.

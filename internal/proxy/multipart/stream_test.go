@@ -33,10 +33,7 @@ import (
 // branch.
 func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{partBackend}), nil)
-	return &Manager{
-		core:      infra.New(&infra.Config{Usage: usage}),
-		encryptor: enc,
-	}
+	return &Manager{d: Deps{Core: infra.New(&infra.Config{Usage: usage}), Encryptor: enc}}
 }
 
 // partBackend is the backend the streamed parts are charged to.

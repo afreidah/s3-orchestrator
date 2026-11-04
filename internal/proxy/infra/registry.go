@@ -28,7 +28,7 @@ func (c *BackendRuntime) SetStateChecker(s StateChecker) {
 
 // GetBackend returns the named backend, or an error if it doesn't exist.
 func (c *BackendRuntime) GetBackend(name string) (backend.ObjectBackend, error) {
-	b, ok := c.backends[name]
+	b, ok := c.cfg.Backends[name]
 	if !ok {
 		return nil, fmt.Errorf("backend %s not found", name)
 	}
@@ -37,12 +37,12 @@ func (c *BackendRuntime) GetBackend(name string) (backend.ObjectBackend, error) 
 
 // Backends returns the backend map.
 func (c *BackendRuntime) Backends() map[string]backend.ObjectBackend {
-	return c.backends
+	return c.cfg.Backends
 }
 
 // BackendOrder returns the configured backend ordering.
 func (c *BackendRuntime) BackendOrder() []string {
-	return c.order
+	return c.cfg.Order
 }
 
 // BackendFlags returns the named backend's state flags. Returns none when no
@@ -64,7 +64,7 @@ func (c *BackendRuntime) Accepted(eligible []string, accept core.BackendFlags) [
 // ServedCalls returns the calls the named backend is serving. A backend with
 // no circuit breaker serves every call, and an unknown one serves none.
 func (c *BackendRuntime) ServedCalls(name string) core.BackendCalls {
-	b, ok := c.backends[name]
+	b, ok := c.cfg.Backends[name]
 	if !ok {
 		return 0
 	}
@@ -73,7 +73,7 @@ func (c *BackendRuntime) ServedCalls(name string) core.BackendCalls {
 
 // Unsupported returns the optional features the named backend has refused.
 func (c *BackendRuntime) Unsupported(name string) core.BackendFeatures {
-	b, ok := c.backends[name]
+	b, ok := c.cfg.Backends[name]
 	if !ok {
 		return 0
 	}
@@ -83,7 +83,7 @@ func (c *BackendRuntime) Unsupported(name string) core.BackendFeatures {
 // RefusedFor returns how long the named backend has refused any call in
 // required, or zero while it serves them all or has no circuit breaker.
 func (c *BackendRuntime) RefusedFor(name string, required core.BackendCalls) time.Duration {
-	b, ok := c.backends[name]
+	b, ok := c.cfg.Backends[name]
 	if !ok {
 		return 0
 	}
@@ -101,5 +101,5 @@ func (c *BackendRuntime) Serving(eligible []string, required core.BackendCalls) 
 // new bytes: their state flags accept writes and they serve every call a write
 // needs. Client writes, replicas, drains and rebalance moves all start here.
 func (c *BackendRuntime) WriteTargets() []string {
-	return c.Serving(c.Accepted(c.order, core.AcceptForWrite), core.RequiredForWrite)
+	return c.Serving(c.Accepted(c.cfg.Order, core.AcceptForWrite), core.RequiredForWrite)
 }

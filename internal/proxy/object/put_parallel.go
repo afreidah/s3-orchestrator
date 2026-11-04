@@ -88,15 +88,15 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 	// The slot is taken before anything is claimed, so a refused write has
 	// nothing to undo. It then places one copy and leaves the rest to the
 	// replicator.
-	release, admitted := o.detached.Begin()
+	release, admitted := o.d.Detached.Begin()
 	if !admitted {
 		telemetry.ReplicationWriteFanoutSkippedTotal.Inc()
 		o.log.WarnContext(ctx, "no slot for the copies this write would place; leaving them to the replicator",
-			"key", req.Key, "in_flight", o.detached.Depth())
+			"key", req.Key, "in_flight", o.d.Detached.Depth())
 		return "", errFanoutUnavailable
 	}
 
-	claimed, err := o.coord.ClaimWriteCopies(ctx, span, operation, o.copyIntents(req, plan), eligible)
+	claimed, err := o.d.Coord.ClaimWriteCopies(ctx, span, operation, o.copyIntents(req, plan), eligible)
 	if err != nil {
 		release()
 		return "", err
@@ -141,7 +141,7 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 // first records the object, which may be a companion.
 func (o *Manager) copyIntents(req *PutObjectRequest, plan *putPlan) []*core.PendingObject {
 	identity := putIdentity(plan.etagDigest, req)
-	intents := make([]*core.PendingObject, o.copiesPerWrite)
+	intents := make([]*core.PendingObject, o.d.CopiesPerWrite)
 	for i := range intents {
 		intents[i] = writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity, req.Tags)
 		if i > 0 {
@@ -171,17 +171,17 @@ func (f *copyFanout) upload(ctx context.Context, p *core.PendingObject) {
 // cached backend state, so a change made on another instance is caught late,
 // but a drain cannot finish while the intent exists.
 func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *putPlan, p *core.PendingObject) error {
-	be, err := o.core.GetBackend(p.BackendName)
+	be, err := o.d.Core.GetBackend(p.BackendName)
 	if err != nil {
 		return err
 	}
-	if _, err := o.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
+	if _, err := o.d.Core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
 		Dst: s3be.Endpoint{Name: p.BackendName, Backend: be}, Key: p.StorageKey,
 		Body: plan.body.Reader(), Size: plan.uploadSize, ContentType: req.ContentType, Metadata: req.Metadata,
 	}); err != nil {
 		return err
 	}
-	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
+	if !o.d.Core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
 		o.log.WarnContext(ctx, "backend stopped accepting writes mid-write; aborting commit",
 			"key", req.Key, "backend", p.BackendName)
 		o.refuseWriteTarget(ctx, p)
@@ -220,7 +220,7 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 		case abandoned:
 			f.leaveForReaper(ctx, out.intent, "an earlier copy's commit failed")
 		case committed:
-			if recorded, _ := f.mgr.coord.CommitCompanionCopy(ctx, out.intent); recorded {
+			if recorded, _ := f.mgr.d.Coord.CommitCompanionCopy(ctx, out.intent); recorded {
 				placed++
 			}
 		default:
@@ -248,7 +248,7 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
 	record := p.RecordFor(f.plan.form)
 	record.Placing = placingCopies(live)
-	if err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, s3op.PutObject, record); err != nil {
+	if err := f.mgr.d.Coord.RecordObjectAndPromoteIntent(ctx, span, s3op.PutObject, record); err != nil {
 		f.settle(writeOutcome{err: err})
 		return err
 	}

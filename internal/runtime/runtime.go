@@ -94,7 +94,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	r.obs = obs
 	// Scoped logger built after observability so it inherits the
 	// production handler chain rather than the bare default.
-	r.log = slog.Default().With(logfmt.Component("runtime"))
+	r.log = logfmt.Logger("runtime")
 
 	if limit := containerMemoryLimit(cgroupMemoryMaxPath(procSelfCgroup, cgroupRoot)); limit > 0 {
 		debug.SetMemoryLimit(limit)
@@ -159,7 +159,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// admin handler that builds the report resolves the lifecycle manager
 	// itself.
 	if cfg.Redis != nil {
-		r.svc.lifecyc.Register("instance_report", adminHandler.InstanceReporter())
+		r.svc.lifecyc.Register(adminHandler.InstanceReporter())
 	}
 
 	return r, nil

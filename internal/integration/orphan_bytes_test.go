@@ -535,7 +535,6 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingSpread,
-			Metrics:         newMetricsAdapter(testStore),
 		}),
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,

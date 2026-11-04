@@ -32,18 +32,18 @@ func (o *Manager) GetObjectTags(ctx context.Context, key string) ([]core.Tag, er
 	if !exists {
 		return nil, core.ErrObjectNotFound
 	}
-	return o.stores.GetObjectTags(ctx, key)
+	return o.d.Stores.GetObjectTags(ctx, key)
 }
 
 // PutObjectTags replaces an object's whole tag set. An empty set leaves the
 // object with no tags, which is what a Tagging document with an empty TagSet
 // means and is the same outcome as DeleteObjectTags.
 func (o *Manager) PutObjectTags(ctx context.Context, key string, tags []core.Tag) error {
-	return o.stores.ReplaceObjectTags(ctx, key, tags)
+	return o.d.Stores.ReplaceObjectTags(ctx, key, tags)
 }
 
 // DeleteObjectTags removes an object's whole tag set. Removing a set that is
 // already empty succeeds: the object is still there and still has no tags.
 func (o *Manager) DeleteObjectTags(ctx context.Context, key string) error {
-	return o.stores.ReplaceObjectTags(ctx, key, nil)
+	return o.d.Stores.ReplaceObjectTags(ctx, key, nil)
 }

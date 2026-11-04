@@ -35,7 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -80,7 +80,7 @@ func ProvideDeclared(i do.Injector) (*provisioning.Declared, error) {
 		return nil, err
 	}
 	declared := provisioning.NewDeclared()
-	declared.Set(p.buckets)
+	declared.Store(new(p.buckets))
 	return declared, nil
 }
 
@@ -257,7 +257,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	states := r.Resolve[*backendstate.Manager]()
 	opsSvc := r.Resolve[*ops.Services]()
 	aggregator := r.Resolve[*dashboard.Aggregator]()
-	runtime := r.Resolve[*infra.BackendRuntime]()
+	collector := r.Resolve[*metrics.Collector]()
 	live := r.Resolve[*config.Live]()
 	id := r.Resolve[instanceid.ID]()
 	shared := r.Resolve[*sharedstate.Shared]()
@@ -271,11 +271,12 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	ctx := context.Background()
 	// A disabled flight recorder leaves the admin handler a nil recorder, and
 	// the snapshot endpoint answers 503.
-	deps := &admin.Deps{
+	return admin.New(&admin.Deps{
 		BackendOps:   usageSvc,
 		Dashboard:    aggregator,
 		Ops:          opsSvc,
 		States:       states,
+		ReplMetrics:  collector,
 		StateStore:   stores,
 		DBHealthy:    cb.IsHealthy,
 		WorkerHealth: func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) },
@@ -294,25 +295,18 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 			StartedAt: time.Now().UTC(),
 		},
 		Shared: shared,
-	}
-	// Set only when the runtime built one; a nil *metrics.Collector in the
-	// interface field would defeat the replication endpoint's nil check.
-	if mc := runtime.MetricsCollector(); mc != nil {
-		deps.ReplMetrics = mc
-	}
-	return admin.New(deps), nil
+	}), nil
 }
 
-// ProvideNotifier creates the webhook notification system.
+// ProvideNotifier creates the webhook notification system, sharing its queue
+// depth through the metrics collector.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	stores := r.Resolve[metadataStore]()
-	rt := r.Resolve[*infra.BackendRuntime]()
+	collector := r.Resolve[*metrics.Collector]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	n := notify.NewNotifier(&cfg.Notifications, stores)
-	n.SetGaugePublisher(rt)
-	return n, nil
+	return notify.NewNotifier(&cfg.Notifications, stores, collector), nil
 }

@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -181,7 +180,7 @@ func (h *storedHasher) verify(ctx context.Context, read, want *core.ObjectLocati
 	if !want.Form().Has(core.StoredHashed) {
 		return CopyNotHashed
 	}
-	log := slog.Default().With(logfmt.Component(string(audit.WorkloadOf(ctx))))
+	log := logfmt.Logger(string(audit.WorkloadOf(ctx)))
 	if !admit(read.BackendName, read.SizeBytes) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		log.WarnContext(ctx, "integrity check declined by usage limits",

@@ -30,15 +30,14 @@ type LifecycleDeps struct {
 // Lifecycle serves the on-demand expiration sweep shared by the admin API and
 // the web UI.
 type Lifecycle struct {
-	expiry RuleProcessor
-	cfg    *config.Live
+	d LifecycleDeps
 }
 
 // NewLifecycle is the explicit-deps constructor. Expiry is nil when the
 // manager is not wired, which Run reports as unavailable.
 func NewLifecycle(d LifecycleDeps) *Lifecycle {
 	must.NotNil("d.Config", d.Config)
-	return &Lifecycle{expiry: d.Expiry, cfg: d.Config}
+	return &Lifecycle{d: d}
 }
 
 // Run applies every configured rule once and reports its tally; Succeeded
@@ -49,13 +48,13 @@ func NewLifecycle(d LifecycleDeps) *Lifecycle {
 // It does not take the scheduled tick's advisory lock, so a manual sweep can
 // overlap a scheduled one; applyRule is idempotent, so that is harmless.
 func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (batch.Summary, error) {
-	if l.expiry == nil {
+	if l.d.Expiry == nil {
 		return batch.Summary{}, ErrLifecycleUnavailable
 	}
-	rules := l.cfg.Load().Lifecycle.Rules
+	rules := l.d.Config.Load().Lifecycle.Rules
 	if len(rules) == 0 {
 		return batch.Summary{}, Skip("no lifecycle rules are configured")
 	}
 
-	return l.expiry.ProcessRules(ctx, rules, observer), nil
+	return l.d.Expiry.ProcessRules(ctx, rules, observer), nil
 }

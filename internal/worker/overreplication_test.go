@@ -39,7 +39,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 
 	ops.EXPECT().BackendFlags("b1").Return(core.FlagDraining)
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	score := c.scoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil)
 	if score != 0 {
 		t.Errorf("draining backend should score 0, got %f", score)
@@ -60,7 +60,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be})
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 200, BytesLimit: 1000}, // 20% utilized
 	}
@@ -100,7 +100,7 @@ func TestScoreCopy_RefusedCalls(t *testing.T) {
 			ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
 			expectFleet(ops, map[string]backend.ObjectBackend{"b1": cb})
 
-			c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}, Config: defaultReplication})
+			c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: &mockMetadataStore{}, Config: defaultReplication})
 			if score := c.scoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil); score < tc.minimum || score >= tc.minimum+1 {
 				t.Errorf("score = %f, want in [%v, %v)", score, tc.minimum, tc.minimum+1)
 			}
@@ -120,7 +120,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	ops.EXPECT().BackendFlags("gone").Return(core.BackendFlags(0))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{})
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	score := c.scoreCopy(&core.ObjectLocation{BackendName: "gone"}, nil)
 	if score != 0 {
 		t.Errorf("unknown backend should score 0, got %f", score)
@@ -148,7 +148,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	// b1 is more utilized (lower score -> removed first)
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "key1", reasonOverReplication, int64(100)))
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
@@ -188,7 +188,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	ops.EXPECT().Acct().Times(0)
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "key1", reasonOverReplication, int64(100)))
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
@@ -221,7 +221,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
@@ -241,7 +241,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 func TestClean_FactorOne_Noop(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(newMockOps(ctrl), NewMockPlacement(ctrl)), Store: &mockMetadataStore{}, Config: defaultReplication})
 
 	sum, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	sum, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -293,7 +293,7 @@ func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 
-	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultReplication})
+	c := NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultReplication})
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},

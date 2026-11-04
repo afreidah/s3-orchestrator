@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -61,7 +62,6 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 		Order:           []string{name},
 		RoutingStrategy: config.RoutingPack,
 		UsageLimits:     map[string]core.UsageLimits{name: {EgressByteLimit: 1000}},
-		Metrics:         store,
 	})
 	if !rt.Usage().WithinLimits(name, s3op.GetObject, 200, 0) {
 		t.Fatal("read refused before any baseline was loaded")
@@ -70,7 +70,7 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 	svc := newUsageFlush(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
 		Tracker: rt.Usage(),
-		Fleet:   rt,
+		Fleet:   metrics.New(&metrics.CollectorDeps{Store: store, Usage: rt.Usage()}),
 		States:  noStates{},
 		Config:  defaultFlush,
 	})

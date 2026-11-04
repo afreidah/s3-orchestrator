@@ -153,7 +153,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set(headerContentType, contentTypeHTML)
+	w.Header().Set(httputil.HeaderContentType, contentTypeHTML)
 	_, _ = buf.WriteTo(w)
 }
 

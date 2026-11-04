@@ -127,7 +127,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 // uploadContentType resolves the type to store an upload under, falling back
 // to the filename extension when the browser sent nothing useful.
 func uploadContentType(header *multipart.FileHeader) string {
-	contentType := header.Header.Get(headerContentType)
+	contentType := header.Header.Get(httputil.HeaderContentType)
 	if contentType == "" || contentType == httputil.MediaOctetStream {
 		if ct := mime.TypeByExtension(filepath.Ext(header.Filename)); ct != "" {
 			return ct

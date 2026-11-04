@@ -41,7 +41,7 @@ import (
 // but participates as a separate worker instance.
 func newAuxReplicator() *worker.Replicator {
 	return worker.NewReplicator(&worker.ReplicatorDeps{
-		Ops: testStack.Runtime, Placement: testCoord, Store: testStore,
+		Fleet: worker.Fleet{Ops: testStack.Runtime, Placement: testCoord, Metrics: testStack.Metrics}, Store: testStore,
 		Config: testStack.Config.Replication(), Integrity: testStack.Config.Integrity(),
 	})
 }

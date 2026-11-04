@@ -43,10 +43,6 @@ const maxUserMetadataBytes = 2048
 // envelope so v2 SDK clients can deserialize the result.
 const s3XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 
-// headerContentType is the canonical HTTP header name; using a single
-// constant avoids string-literal duplication across handlers.
-const headerContentType = "Content-Type"
-
 // The conditional request headers a GET, HEAD, or PUT evaluates against an
 // object's ETag and Last-Modified.
 const (
@@ -106,7 +102,7 @@ func uploadHeaders(r *http.Request) (contentType string, meta map[string]string,
 	if err := validateUserMetadata(meta); err != nil {
 		return "", nil, s3Err(http.StatusBadRequest, "MetadataTooLarge", err.Error())
 	}
-	return cmp.Or(r.Header.Get(headerContentType), "application/octet-stream"), meta, nil
+	return cmp.Or(r.Header.Get(httputil.HeaderContentType), httputil.MediaOctetStream), meta, nil
 }
 
 // queryCount reads a non-negative count from the query, refusing a malformed
@@ -450,8 +446,8 @@ func writeXML(w http.ResponseWriter, status int, v any) (int, error) {
 	if err := xml.NewEncoder(buf).Encode(v); err != nil {
 		return 0, fmt.Errorf("encode XML response: %w", err)
 	}
-	w.Header().Set(headerContentType, "application/xml")
-	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.Header().Set(httputil.HeaderContentType, httputil.MediaXML)
+	w.Header().Set(httputil.HeaderContentLength, strconv.Itoa(buf.Len()))
 	w.WriteHeader(status)
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		return status, fmt.Errorf("write XML response: %w", err)

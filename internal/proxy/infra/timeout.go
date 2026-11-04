@@ -27,15 +27,15 @@ import (
 // when no timeout is configured so the caller can always defer the
 // cancel without branching on timeout-vs-no-timeout.
 func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if c.backendTimeout <= 0 {
+	if c.cfg.BackendTimeout <= 0 {
 		return context.WithCancel(ctx)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining < c.backendTimeout {
+		if remaining := time.Until(deadline); remaining < c.cfg.BackendTimeout {
 			return context.WithTimeout(ctx, remaining)
 		}
 	}
-	return context.WithTimeout(ctx, c.backendTimeout)
+	return context.WithTimeout(ctx, c.cfg.BackendTimeout)
 }
 
 // Get issues a GET against the named backend under the configured timeout and

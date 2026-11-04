@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -91,7 +92,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	}
 	h.d.Ops.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber: newScrubber(t, sc),
-		Locker:   newGrantingLocker(t),
+		Locker:   testx.Locker{},
 		Config:   config.NewLive(running),
 	})
 }
@@ -270,19 +271,6 @@ type scrubberStub struct {
 	unreadable      []core.ObjectLocation
 }
 
-// newGrantingLocker builds an advisory locker that always takes the lock and
-// runs the work, which is what every handler test that is not about lock
-// contention wants.
-func newGrantingLocker(t *testing.T) *opstest.MockAdvisoryLocker {
-	t.Helper()
-	m := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
-	m.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
-			return true, fn(ctx)
-		}).AnyTimes()
-	return m
-}
-
 // newScrubber builds a ScrubberOps mock from cfg.
 func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	t.Helper()
@@ -366,6 +354,6 @@ func declaredBuckets(names ...string) *provisioning.Declared {
 		buckets = append(buckets, provisioning.Bucket{Name: n, Source: provisioning.SourceStore})
 	}
 	d := provisioning.NewDeclared()
-	d.Set(buckets)
+	d.Store(&buckets)
 	return d
 }

@@ -28,8 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
@@ -148,9 +148,16 @@ func (failingPipeline) Exec(context.Context) ([]redis.Cmder, error) {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// newRedisInstance builds one instance's runtime through ProvideBackendRuntime,
-// the provider production uses, with Redis configured and backed by shared.
-func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
+// redisInstance is one instance's usage tracker and metrics collector.
+type redisInstance struct {
+	usage   *counter.UsageTracker
+	metrics *metrics.Collector
+}
+
+// newRedisInstance builds one instance's collector through
+// ProvideMetricsCollector, the provider production uses, with Redis configured
+// and backed by shared.
+func newRedisInstance(t *testing.T, shared *memoryRedis) redisInstance {
 	t.Helper()
 	cfg := &config.Config{Redis: &config.RedisConfig{
 		Address:          "memory",
@@ -176,20 +183,20 @@ func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
 	do.Provide(inj, ProvideSharedState)
 	do.Provide(inj, ProvideUsageTracker)
 
-	rt, err := ProvideBackendRuntime(inj)
+	mc, err := ProvideMetricsCollector(inj)
 	if err != nil {
-		t.Fatalf("ProvideBackendRuntime: %v", err)
+		t.Fatalf("ProvideMetricsCollector: %v", err)
 	}
-	return rt
+	return redisInstance{usage: do.MustInvoke[*counter.UsageTracker](inj), metrics: mc}
 }
 
 // -------------------------------------------------------------------------
 // TESTS
 // -------------------------------------------------------------------------
 
-// fleetTick runs one fleet snapshot service tick on rt under locker.
-func fleetTick(rt *infra.BackendRuntime, locker tickrunner.AdvisoryLocker) {
-	NewFleetSnapshotService(rt, locker, time.Minute).(*tickrunner.Service).Tick(context.Background())
+// fleetTick runs one fleet snapshot service tick on mc under locker.
+func fleetTick(mc *metrics.Collector, locker core.AdvisoryLocker) {
+	NewFleetSnapshotService(mc, locker, time.Minute).(*tickrunner.Service).Tick(context.Background())
 }
 
 // TestUsageFlushService_ServesPublishedFleetSnapshot computes the snapshot on
@@ -202,19 +209,19 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 	computer := newRedisInstance(t, shared)
 	other := newRedisInstance(t, shared)
 
-	fleetTick(computer, testx.Locker{})
+	fleetTick(computer.metrics, testx.Locker{})
 	if err := newUsageFlush(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
-		Tracker: other.Usage(),
-		Fleet:   other,
+		Tracker: other.usage,
+		Fleet:   other.metrics,
 		States:  noStates{},
 		Config:  defaultFlush,
 	}).flushTick(context.Background()); err != nil {
 		t.Fatalf("flushTick: %v", err)
 	}
 
-	want := computer.MetricsCollector().ReplicationSnapshot(context.Background())
-	got := other.MetricsCollector().ReplicationSnapshot(context.Background())
+	want := computer.metrics.ReplicationSnapshot(context.Background())
+	got := other.metrics.ReplicationSnapshot(context.Background())
 	if !want.Ready {
 		t.Fatalf("fleet tick computed no replication snapshot: %+v", want)
 	}
@@ -233,11 +240,11 @@ func TestFleetSnapshotService_FreshSnapshotIsNotRecomputed(t *testing.T) {
 	first := newRedisInstance(t, shared)
 	second := newRedisInstance(t, shared)
 
-	fleetTick(first, testx.Locker{})
-	published := first.MetricsCollector().ReplicationSnapshot(context.Background())
-	fleetTick(second, testx.Locker{})
+	fleetTick(first.metrics, testx.Locker{})
+	published := first.metrics.ReplicationSnapshot(context.Background())
+	fleetTick(second.metrics, testx.Locker{})
 
-	got := second.MetricsCollector().ReplicationSnapshot(context.Background())
+	got := second.metrics.ReplicationSnapshot(context.Background())
 	if !published.Ready || !got.ComputedAt.Equal(published.ComputedAt) {
 		t.Errorf("second tick published %+v, want the fresh snapshot %+v left in place", got, published)
 	}

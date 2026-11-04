@@ -63,6 +63,10 @@ func (r *Roster[T]) Run(ctx context.Context) error {
 	return nil
 }
 
+// Name returns the name the roster's reports are filed under, which the
+// lifecycle manager also registers its heartbeat under.
+func (r *Roster[T]) Name() string { return r.cfg.Name }
+
 // List returns every running instance's report: this instance's built now,
 // first, then the others' as last published, ordered by instance. A report
 // that cannot be read is left out and its error returned with the rest, and

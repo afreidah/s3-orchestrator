@@ -44,7 +44,7 @@ type stubBackend struct{ backend.ObjectBackend }
 func TestBackendRegistry_GetAndAllAndOrder(t *testing.T) {
 	t.Parallel()
 	b1, b2 := &stubBackend{}, &stubBackend{}
-	r := &BackendRuntime{backends: map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, order: []string{"b1", "b2"}}
+	r := &BackendRuntime{cfg: Config{Backends: map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, Order: []string{"b1", "b2"}}}
 
 	got, err := r.GetBackend("b1")
 	if err != nil || got != b1 {
@@ -63,7 +63,7 @@ func TestBackendRegistry_GetAndAllAndOrder(t *testing.T) {
 
 func TestBackendRegistry_Accepted_NoCheckerWiredKeepsAll(t *testing.T) {
 	t.Parallel()
-	r := &BackendRuntime{order: []string{"a", "b"}}
+	r := &BackendRuntime{cfg: Config{Order: []string{"a", "b"}}}
 	got := r.Accepted([]string{"a", "b"}, core.AcceptForWrite)
 	if len(got) != 2 {
 		t.Errorf("Accepted = %v, want both (no checker wired)", got)
@@ -75,7 +75,7 @@ func TestBackendRegistry_Accepted_NoCheckerWiredKeepsAll(t *testing.T) {
 // both.
 func TestBackendRegistry_Accepted_AppliesTheMask(t *testing.T) {
 	t.Parallel()
-	r := &BackendRuntime{order: []string{"a", "b", "c"}}
+	r := &BackendRuntime{cfg: Config{Order: []string{"a", "b", "c"}}}
 	r.SetStateChecker(staticFlags{"b": core.FlagCordoned, "c": core.FlagDraining})
 	if got := r.Accepted([]string{"a", "b", "c"}, core.AcceptForWrite); len(got) != 1 || got[0] != "a" {
 		t.Errorf("Accepted for write = %v, want [a]", got)
@@ -92,12 +92,12 @@ func TestBackendRegistry_Accepted_AppliesTheMask(t *testing.T) {
 func TestUsagePolicy_EligibleForWrite_PreservesOrder(t *testing.T) {
 	t.Parallel()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
-	p := &BackendRuntime{
-		backends: map[string]backend.ObjectBackend{"b1": &stubBackend{}, "b2": &stubBackend{}, "b3": &stubBackend{}},
-		order:    []string{"b1", "b2", "b3"},
-		usage:    tracker,
-		profiles: map[string]core.BackendProfile{"b2": {MaxObjectSize: 100}},
-	}
+	p := &BackendRuntime{cfg: Config{
+		Backends: map[string]backend.ObjectBackend{"b1": &stubBackend{}, "b2": &stubBackend{}, "b3": &stubBackend{}},
+		Order:    []string{"b1", "b2", "b3"},
+		Usage:    tracker,
+		Profiles: map[string]core.BackendProfile{"b2": {MaxObjectSize: 100}},
+	}}
 
 	got := p.EligibleForWrite(s3op.PutObject, 0, 500)
 	// b2 is dropped (500 > 100 max); b1, b3 stay in configured order.
@@ -112,7 +112,7 @@ func TestUsagePolicy_EligibleForWrite_PreservesOrder(t *testing.T) {
 
 func TestTimeoutPolicy_WithTimeout_RespectsTighterParentDeadline(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
+	p := &BackendRuntime{cfg: Config{BackendTimeout: time.Hour}}
 	parent, parentCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer parentCancel()
 
@@ -333,7 +333,7 @@ func TestAdmissionGate_NoSemAcquireAlwaysSucceeds(t *testing.T) {
 
 func TestAdmissionGate_BoundedSemBlocksWhenFull(t *testing.T) {
 	t.Parallel()
-	g := &BackendRuntime{admissionSem: make(chan struct{}, 1)}
+	g := &BackendRuntime{cfg: Config{AdmissionSem: make(chan struct{}, 1)}}
 	if !g.AcquireAdmission(context.Background()) {
 		t.Fatal("first AcquireAdmission failed")
 	}

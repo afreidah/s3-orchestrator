@@ -33,18 +33,14 @@ type RebalanceDeps struct {
 // Rebalance serves the on-demand rebalance operation shared by the admin API
 // and the web UI. The rebalancer reports its own passes.
 type Rebalance struct {
-	rebalancer Rebalancer
-	cfg        *config.Live
+	d RebalanceDeps
 }
 
 // NewRebalance is the explicit-deps constructor. Rebalancer is nil when the
 // worker pool is not wired, which Run reports as unavailable.
 func NewRebalance(d RebalanceDeps) *Rebalance {
 	must.NotNil("d.Config", d.Config)
-	return &Rebalance{
-		rebalancer: d.Rebalancer,
-		cfg:        d.Config,
-	}
+	return &Rebalance{d: d}
 }
 
 // Run executes one rebalance cycle and reports its tally; Succeeded counts the
@@ -52,11 +48,11 @@ func NewRebalance(d RebalanceDeps) *Rebalance {
 // skip when the rebalancer plans no moves, so a caller can tell that apart from
 // a cycle that ran and moved nothing.
 func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.Summary, error) {
-	if r.rebalancer == nil {
+	if r.d.Rebalancer == nil {
 		return batch.Summary{}, ErrRebalancerUnavailable
 	}
 
-	sum, err := r.rebalancer.Rebalance(ctx, r.cfg.Load().Rebalance, observer)
+	sum, err := r.d.Rebalancer.Rebalance(ctx, r.d.Config.Load().Rebalance, observer)
 	if err != nil {
 		return batch.Summary{}, err
 	}

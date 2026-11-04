@@ -130,7 +130,7 @@ func NewCodecForLevel(name string, chunkSize int) (*Codec, error) {
 		enc:       enc,
 		dec:       dec,
 		chunkSize: chunkSize,
-		log:       slog.Default().With(logfmt.Component("compression")),
+		log:       logfmt.Logger("compression"),
 	}
 	c.bufPool.New = func() any {
 		b := make([]byte, chunkSize)

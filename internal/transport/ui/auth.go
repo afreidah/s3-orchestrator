@@ -249,7 +249,7 @@ func (h *Handler) resolveLogin(key, secret string) (*auth.User, bool) {
 // renderLoginError writes the login form with status and an inline error
 // message, which is empty on a plain GET of the page.
 func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
-	w.Header().Set(headerContentType, contentTypeHTML)
+	w.Header().Set(httputil.HeaderContentType, contentTypeHTML)
 	w.WriteHeader(status)
 	if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
 		Version: telemetry.Version,

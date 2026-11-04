@@ -55,7 +55,7 @@ func WriteJSONCodedError(w http.ResponseWriter, status int, _ string, message st
 // route is the metric label and the audit event scope (e.g. "s3", "admin").
 // It must come from a small fixed set, never from the request URL.
 func PanicRecover(route string, writeErr ErrorWriter) func(http.Handler) http.Handler {
-	log := slog.Default().With(logfmt.Component("httputil"))
+	log := logfmt.Logger("httputil")
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {

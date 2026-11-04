@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -376,7 +377,7 @@ func TestLogLevelHook_Applied(t *testing.T) {
 // TestQuotaMetricsHook_FailedResolution drives the Failed branch.
 func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
 	inj := do.New()
-	failingProvider[*infra.BackendRuntime](inj)
+	failingProvider[*metrics.Collector](inj)
 	h := &quotaMetricsHook{inj: inj}
 	status, err := h.Apply(context.Background(), &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {

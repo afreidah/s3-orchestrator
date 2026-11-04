@@ -71,11 +71,11 @@ func TestDropCorruptedLocation_RemovesRowAndCachedLocation(t *testing.T) {
 
 	be := seededBackend(t, key)
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.cache.Set(key, beName)
+	f.d.LocationCache.Set(key, beName)
 
 	f.dropCorruptedLocation(context.Background(), loc)
 
-	if cached, ok := f.cache.Get(key); ok {
+	if cached, ok := f.d.LocationCache.Get(key); ok {
 		t.Errorf("location cache still resolves %q to %q after the copy was discarded", key, cached)
 	}
 	if be.HasCopyOf(key) {
@@ -99,11 +99,11 @@ func TestDropCorruptedLocation_LeavesReplacedCopy(t *testing.T) {
 
 	be := seededBackend(t, key)
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.cache.Set(key, beName)
+	f.d.LocationCache.Set(key, beName)
 
 	f.dropCorruptedLocation(context.Background(), loc)
 
-	if _, ok := f.cache.Get(key); !ok {
+	if _, ok := f.d.LocationCache.Get(key); !ok {
 		t.Errorf("location cache dropped %q for a copy that was not removed", key)
 	}
 	if !be.HasCopyOf(key) {
@@ -154,11 +154,11 @@ func TestDropCorruptedLocation_KeepsCacheWhenDeleteFails(t *testing.T) {
 
 	be := backendtest.NewInMemory()
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.cache.Set(key, beName)
+	f.d.LocationCache.Set(key, beName)
 
 	f.dropCorruptedLocation(context.Background(), &core.ObjectLocation{ObjectKey: key, BackendName: beName})
 
-	if _, ok := f.cache.Get(key); !ok {
+	if _, ok := f.d.LocationCache.Get(key); !ok {
 		t.Errorf("location cache dropped %q even though the ledger delete failed", key)
 	}
 }

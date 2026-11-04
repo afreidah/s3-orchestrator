@@ -700,19 +700,19 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(placeMovingSource).AnyTimes()
 	storetest.Permissive(store)
 
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
 	if !w.executeOneMove(context.Background(), move, "spread") {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
-	if got := loadUsage(rt.Usage().Backend(), "src").APIRequests; got != 2 {
+	if got := loadUsage(f.Ops.Usage().Backend(), "src").APIRequests; got != 2 {
 		t.Errorf("src apiRequests = %d, want 2 (Egress + settled delete, no double-count)", got)
 	}
-	if got := loadUsage(rt.Usage().Backend(), "dest").APIRequests; got != 1 {
+	if got := loadUsage(f.Ops.Usage().Backend(), "dest").APIRequests; got != 1 {
 		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
 	}
 }
@@ -740,9 +740,9 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	dest := backendtest.NewInMemory()
 
 	store := newPermissiveStore(t)
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.executeOneMove(context.Background(), move, "spread") {
@@ -759,9 +759,9 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	dest.PutErr = errors.New("write error")
 
 	store := newPermissiveStore(t)
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.executeOneMove(context.Background(), move, "spread") {
@@ -784,9 +784,9 @@ func TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper(t *testing.T) {
 		Return(int64(0), nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.executeOneMove(context.Background(), move, "spread") {
@@ -819,9 +819,9 @@ func TestExecuteOneMove_RefusalSettleFails_RetriesTheRow(t *testing.T) {
 		DoAndReturn(stubRebalRetry(rr)).AnyTimes()
 	storetest.Permissive(store)
 
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 		t.Error("expected false")
@@ -851,9 +851,9 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 			store := storetest.NewMockMetadataStore(ctrl)
 			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(refusePlacement(declined, &reasons))
 			storetest.Permissive(store)
-			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+			_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 				&fleetOpts{Order: []string{"src", "dest"}})
-			w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+			w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 			if w.executeOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 				t.Error("expected false when the placement is declined")
@@ -886,9 +886,9 @@ func TestExecuteOneMove_SourceDeleteFails_RetriesTheRow(t *testing.T) {
 		DoAndReturn(stubRebalRetry(rr)).AnyTimes()
 	storetest.Permissive(store)
 
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	w := NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 
 	move := planMove("key", "src", "dest", 4)
 	if !w.executeOneMove(context.Background(), move, "spread") {

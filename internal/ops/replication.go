@@ -51,10 +51,7 @@ type ReplicationDeps struct {
 // the web UI. The workers report their own passes, so it only resolves the
 // running config and passes the request on.
 type Replication struct {
-	replicator Replicator
-	overRep    OverReplicationCleaner
-	backlog    BacklogCounter
-	cfg        *config.Live
+	d ReplicationDeps
 }
 
 // NewReplication is the explicit-deps constructor.
@@ -63,12 +60,7 @@ func NewReplication(d ReplicationDeps) *Replication {
 	must.NotNil("d.OverRep", d.OverRep)
 	must.NotNil("d.Backlog", d.Backlog)
 	must.NotNil("d.Config", d.Config)
-	return &Replication{
-		replicator: d.Replicator,
-		overRep:    d.OverRep,
-		backlog:    d.Backlog,
-		cfg:        d.Config,
-	}
+	return &Replication{d: d}
 }
 
 // -------------------------------------------------------------------------
@@ -83,7 +75,7 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	if err != nil {
 		return worker.ReplicationSummary{}, err
 	}
-	return r.replicator.Replicate(ctx, runCfg, observer)
+	return r.d.Replicator.Replicate(ctx, runCfg, observer)
 }
 
 // CountSurplus reports the current over-replication backlog at the running
@@ -94,7 +86,7 @@ func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 		return SurplusCount{}, err
 	}
 
-	backlog, err := r.backlog.CountReplicationBacklog(ctx, runCfg.Factor)
+	backlog, err := r.d.Backlog.CountReplicationBacklog(ctx, runCfg.Factor)
 	if err != nil {
 		return SurplusCount{}, err
 	}
@@ -112,14 +104,14 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 	if batchSize > 0 {
 		runCfg.BatchSize = min(batchSize, maxCleanBatchSize)
 	}
-	return r.overRep.Clean(ctx, runCfg, observer)
+	return r.d.OverRep.Clean(ctx, runCfg, observer)
 }
 
 // runConfig returns the running config for one manual cycle, whose defaults
 // the config loader filled. Reports ErrReplicationDisabled when the factor
 // leaves nothing to replicate.
 func (r *Replication) runConfig() (config.ReplicationConfig, error) {
-	runCfg := r.cfg.Load().Replication
+	runCfg := r.d.Config.Load().Replication
 	if runCfg.Factor <= 1 {
 		return config.ReplicationConfig{}, ErrReplicationDisabled
 	}

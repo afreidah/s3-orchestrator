@@ -24,7 +24,7 @@ func (h *Handler) handleTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "flight recorder is disabled (set debug.flight_recorder.enabled: true)")
 		return
 	}
-	w.Header().Set("Content-Type", httputil.MediaOctetStream)
+	w.Header().Set(httputil.HeaderContentType, httputil.MediaOctetStream)
 	w.Header().Set("Content-Disposition", `attachment; filename="trace.bin"`)
 	if _, err := h.d.FlightRec.WriteTo(w); err != nil {
 		// Headers are likely already flushed; log instead of writing a

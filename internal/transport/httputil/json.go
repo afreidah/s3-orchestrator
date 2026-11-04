@@ -28,15 +28,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
-// The Err values are the user-facing messages, written when DecodeJSONBody
-// cannot parse a request body and when RequireMethod rejects a method.
-// MaxJSONBody is the read cap for a request body that carries only a few
-// fields.
+// The Header and Media values are the header names and media types every
+// surface writes. The Err values are the user-facing messages, written when
+// DecodeJSONBody cannot parse a request body and when RequireMethod rejects a
+// method. MaxJSONBody is the read cap for a request body that carries only a
+// few fields.
 const (
-	contentTypeJSON   = "application/json"
-	headerContentType = "Content-Type"
-	MediaOctetStream  = "application/octet-stream"
-	MaxJSONBody       = 1 << 20
+	HeaderContentType   = "Content-Type"
+	HeaderContentLength = "Content-Length"
+	MediaJSON           = "application/json"
+	MediaXML            = "application/xml"
+	MediaOctetStream    = "application/octet-stream"
+	MaxJSONBody         = 1 << 20
 
 	ErrInvalidRequestBody = "invalid request body"
 	ErrMethodNotAllowed   = "method not allowed"
@@ -45,7 +48,7 @@ const (
 // WriteJSON writes body as a JSON response with the given status. Encode errors
 // are dropped because the header is already committed.
 func WriteJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set(headerContentType, contentTypeJSON)
+	w.Header().Set(HeaderContentType, MediaJSON)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
@@ -94,9 +97,9 @@ func rejectionStatus(kind ops.RejectionKind) int {
 // error is the copy's, for a caller that logs an interrupted download.
 func ServeAttachment(w http.ResponseWriter, name string, size int64, body io.Reader) error {
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(path.Base(name)))
-	w.Header().Set(headerContentType, MediaOctetStream)
+	w.Header().Set(HeaderContentType, MediaOctetStream)
 	if size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.Header().Set(HeaderContentLength, strconv.FormatInt(size, 10))
 	}
 	_, err := bufpool.Copy(w, body)
 	return err

@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/commalist"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -79,7 +80,7 @@ func New(resolve BucketResolver, writeErr httputil.ErrorWriter) *Policy {
 	return &Policy{
 		resolve:  resolve,
 		writeErr: writeErr,
-		log:      slog.Default().With(logfmt.Component("cors")),
+		log:      logfmt.Logger("cors"),
 	}
 }
 
@@ -153,8 +154,10 @@ func (p *Policy) matchPreflight(r *http.Request, origin string) *rule {
 	if !ok {
 		return nil
 	}
+	// An absent header is the browser sending nothing beyond the safelisted
+	// headers. Case is left as the browser sent it; the matcher folds it.
 	method := strings.ToUpper(strings.TrimSpace(r.Header.Get(headerRequestMethod)))
-	return reg.matchPreflight(bucket, origin, method, parseHeaderList(r.Header.Get(headerRequestHeaders)))
+	return reg.matchPreflight(bucket, origin, method, commalist.Split(r.Header.Get(headerRequestHeaders)))
 }
 
 // rejectPreflight refuses the preflight with no access-control headers. The
@@ -196,23 +199,4 @@ func (p *Policy) decorate(w http.ResponseWriter, r *http.Request, origin string)
 	if matched.exposeHeaders != "" {
 		w.Header().Set(headerExposeHeaders, matched.exposeHeaders)
 	}
-}
-
-// parseHeaderList splits an Access-Control-Request-Headers value into header
-// names. Returns nil for an absent or empty header, which is the browser
-// saying it intends to send nothing beyond the safelisted headers.
-//
-// Case is left as the browser sent it; the matcher folds it.
-func parseHeaderList(v string) []string {
-	if strings.TrimSpace(v) == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if name := strings.TrimSpace(part); name != "" {
-			out = append(out, name)
-		}
-	}
-	return out
 }

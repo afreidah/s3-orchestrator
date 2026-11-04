@@ -19,7 +19,6 @@ package backend
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/aws/smithy-go"
@@ -66,7 +65,7 @@ func (b *S3Backend) markUnsupported(ctx context.Context, feature core.BackendFea
 		return
 	}
 	telemetry.BackendUnsupported.WithLabelValues(b.name, feature.String()).Set(1)
-	slog.Default().With(logfmt.Component("backend")).WarnContext(ctx,
+	logfmt.Logger("backend").WarnContext(ctx,
 		"backend does not support a feature; using the fallback until restart",
 		"backend", b.name, "feature", feature.String(), logfmt.Err(err))
 }

@@ -82,42 +82,43 @@ func NoopCleanup() {
 	// meant to be a noop function
 }
 
-// Failover orchestrates per-key read failover across backends.
-// One instance per object.Manager; safe for concurrent reads.
+// Failover orchestrates per-key read failover across backends, with the
+// broadcaster as the degraded-mode fan-out used only on a DB outage. One
+// instance per object.Manager; safe for concurrent reads.
 type Failover struct {
-	core                 ReadRuntime
-	broadcaster          *Broadcaster // degraded-mode fan-out; used only on DB outage
-	degradedReadsEnabled bool         // false fails a degraded read fast instead of broadcasting
-	log                  *slog.Logger
+	d           FailoverDeps
+	broadcaster *Broadcaster
+	log         *slog.Logger
 }
 
 // FailoverDeps groups the read-failover constructor parameters. The three
 // degraded-mode flags are named fields so call sites can't transpose them.
+// BackendTimeout bounds the loser-drain goroutine, and zero takes a safe
+// default.
 type FailoverDeps struct {
 	Core                         ReadRuntime
 	Cache                        LocationCache
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
 	DegradedReadsEnabled         bool
-	BackendTimeout               time.Duration // bounds the loser-drain goroutine; zero takes a safe default
+	BackendTimeout               time.Duration
 }
 
 // New constructs a Failover. When DegradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(deps *FailoverDeps) *Failover {
-	must.NotNil("deps", deps)
-	must.NotNil("Core", deps.Core)
-	must.NotNil("Cache", deps.Cache)
+func New(d *FailoverDeps) *Failover {
+	must.NotNil("d", d)
+	must.NotNil("d.Core", d.Core)
+	must.NotNil("d.Cache", d.Cache)
 	return &Failover{
-		core:                 deps.Core,
-		degradedReadsEnabled: deps.DegradedReadsEnabled,
-		log:                  slog.Default().With(logfmt.Component("readpath")),
+		d:   *d,
+		log: logfmt.Logger("readpath"),
 		broadcaster: &Broadcaster{
-			core:         deps.Core,
-			cache:        deps.Cache,
-			parallel:     deps.ParallelBroadcast,
-			parallelism:  deps.DegradedBroadcastParallelism,
-			drainTimeout: drainTimeoutOrDefault(deps.BackendTimeout),
+			core:         d.Core,
+			cache:        d.Cache,
+			parallel:     d.ParallelBroadcast,
+			parallelism:  d.DegradedBroadcastParallelism,
+			drainTimeout: drainTimeoutOrDefault(d.BackendTimeout),
 		},
 	}
 }
@@ -168,7 +169,7 @@ func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, ke
 		if errors.Is(err, core.ErrDBUnavailable) {
 			span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
 			telemetry.DegradedReadsTotal.WithLabelValues(operation.String()).Inc()
-			if !f.degradedReadsEnabled {
+			if !f.d.DegradedReadsEnabled {
 				observe.MarkSpanError(span, "degraded reads disabled by operator")
 				return zero, "", core.ErrServiceUnavailable
 			}
@@ -194,7 +195,7 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 		op.span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 		name := locations[i].BackendName
 
-		be, err := f.core.GetBackend(name)
+		be, err := f.d.Core.GetBackend(name)
 		if err != nil {
 			lastErr = err
 			continue
@@ -218,7 +219,7 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 		if i > 0 {
 			op.span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
-		op.won(f.core, name, res.Size)
+		op.won(f.d.Core, name, res.Size)
 		return res.Value, name, nil
 	}
 

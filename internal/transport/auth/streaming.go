@@ -43,6 +43,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/commalist"
 )
 
 // -------------------------------------------------------------------------
@@ -233,19 +235,12 @@ func hasAwsChunkedEncoding(value string) bool {
 // parseTrailerNames splits a comma-separated x-amz-trailer header into a
 // sorted, lowercased list with empty entries dropped.
 func parseTrailerNames(value string) []string {
-	if value == "" {
-		return nil
+	names := commalist.Split(value)
+	for i, name := range names {
+		names[i] = strings.ToLower(name)
 	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	slices.Sort(out)
-	return out
+	slices.Sort(names)
+	return names
 }
 
 // NewChunkReader wraps body with a verifying decoder. The returned reader

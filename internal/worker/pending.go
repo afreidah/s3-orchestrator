@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -38,22 +39,15 @@ import (
 // backend. The min-age window protects in-flight PUTs whose commit has not
 // yet had a chance to clear the intent on the synchronous path.
 type PendingReaper struct {
-	deps        Ops
-	placement   Placement
-	store       core.PendingStore
-	log         *slog.Logger
-	concurrency int
-	minAge      time.Duration
-	batchSize   int
-	telemetry.SharedGauges
+	d   PendingReaperDeps
+	log *slog.Logger
 }
 
 // PendingReaperDeps groups the pending reaper's constructor parameters.
 // MinAge and BatchSize come from config, which fills their defaults;
 // Concurrency falls back to 4 when zero or negative.
 type PendingReaperDeps struct {
-	Ops         Ops
-	Placement   Placement
+	Fleet
 	Store       core.PendingStore
 	Concurrency int
 	MinAge      time.Duration
@@ -61,23 +55,15 @@ type PendingReaperDeps struct {
 }
 
 // NewPendingReaper creates a PendingReaper with the given dependencies.
-func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Placement", deps.Placement)
-	must.NotNil("Store", deps.Store)
-	concurrency := deps.Concurrency
-	if concurrency <= 0 {
-		concurrency = 4
+//
+//nolint:gocritic // hugeParam: the Deps are copied once, at construction.
+func NewPendingReaper(d PendingReaperDeps) *PendingReaper {
+	d.mustBeWired()
+	must.NotNil("d.Store", d.Store)
+	if d.Concurrency <= 0 {
+		d.Concurrency = 4
 	}
-	return &PendingReaper{
-		deps:        deps.Ops,
-		placement:   deps.Placement,
-		store:       deps.Store,
-		log:         workerLogger(audit.WorkloadPendingReaper),
-		concurrency: concurrency,
-		minAge:      deps.MinAge,
-		batchSize:   deps.BatchSize,
-	}
+	return &PendingReaper{d: d, log: logfmt.Logger(string(audit.WorkloadPendingReaper))}
 }
 
 // -------------------------------------------------------------------------
@@ -95,14 +81,14 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (batch.Summary,
 // Intents whose backend is refusing HEAD are counted per backend and logged
 // once each, rather than once per intent.
 func (r *PendingReaper) processPendingQueue(ctx context.Context) (batch.Summary, error) {
-	cutoff := time.Now().Add(-r.minAge)
-	intents, err := r.store.GetStalePending(ctx, cutoff, r.batchSize)
+	cutoff := time.Now().Add(-r.d.MinAge)
+	intents, err := r.d.Store.GetStalePending(ctx, cutoff, r.d.BatchSize)
 	if err != nil {
 		return batch.Summary{}, fmt.Errorf("fetch stale pending intents: %w", err)
 	}
 
 	var refused headRefusals
-	runner := batch.Runner[core.PendingObject]{Concurrency: r.concurrency, Admission: r.deps}
+	runner := batch.Runner[core.PendingObject]{Concurrency: r.d.Concurrency, Admission: r.d.Ops}
 	sum := runner.Run(ctx, intents, func(ctx context.Context, p core.PendingObject) batch.ItemResult {
 		return r.resolveOneIntent(ctx, &p, &refused)
 	})
@@ -111,8 +97,8 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) (batch.Summary,
 			"backend", name, "intents_skipped", refused.n[name])
 	}
 
-	if depth, err := r.store.PendingDepth(ctx); err == nil {
-		r.PublishGauges(ctx, telemetry.GaugeSourcePendingReaper,
+	if depth, err := r.d.Store.PendingDepth(ctx); err == nil {
+		r.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourcePendingReaper,
 			telemetry.WorkerGauges{PendingIntentsDepth: &depth})
 	}
 	return sum, nil
@@ -141,7 +127,7 @@ func (h *headRefusals) add(backend string) {
 // on what the backend and store report. An intent whose backend is refusing
 // HEAD counts as failed, so it stays queued, and is added to refused.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, refused *headRefusals) batch.ItemResult {
-	be, err := r.deps.GetBackend(p.BackendName)
+	be, err := r.d.Ops.GetBackend(p.BackendName)
 	if err != nil {
 		return batch.ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}
 	}
@@ -183,7 +169,7 @@ const (
 // classifies the result, so a 200 means this write's bytes are there. The
 // runtime charges the HEAD whatever the outcome.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
-	_, err := r.deps.Head(ctx, p.BackendName, be, core.StoragePath(p.ObjectKey, p.StorageKey))
+	_, err := r.d.Ops.Head(ctx, p.BackendName, be, core.StoragePath(p.ObjectKey, p.StorageKey))
 
 	switch {
 	case err == nil:
@@ -205,7 +191,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 		r.log.WarnContext(ctx, "backend not registered, dropping intent",
 			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID)
 	}
-	if err := r.store.DeletePending(ctx, p.IntentID); err != nil {
+	if err := r.d.Store.DeletePending(ctx, p.IntentID); err != nil {
 		r.log.ErrorContext(ctx, "delete pending intent",
 			"intent_id", p.IntentID, "error", err)
 		return batch.ItemFailed
@@ -219,7 +205,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 // handlers. Each handler updates metrics, audit logs, and the resolved/
 // failed counters as appropriate.
 func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject) batch.ItemOutcome {
-	result, cleanup, err := r.store.PromotePending(ctx, p)
+	result, cleanup, err := r.d.Store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
 			"intent_id", p.IntentID, "error", err)
@@ -228,7 +214,7 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	// Whatever bytes the resolution stopped recording - the copies a promotion
 	// displaced, or an intent's own upload it dropped - were queued in its
 	// transaction.
-	r.placement.Settle(ctx, cleanup)
+	r.d.Placement.Settle(ctx, cleanup)
 	switch result {
 	case core.PendingPromoteCommitted:
 		// The promotion charged the bytes and cleared the intent in one

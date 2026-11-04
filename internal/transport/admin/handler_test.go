@@ -428,7 +428,7 @@ func newTestHandler(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
-		log: slog.Default().With(logfmt.Component("admin")),
+		log: logfmt.Logger("admin"),
 		d: Deps{
 			Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 			LogLevel: &lv,

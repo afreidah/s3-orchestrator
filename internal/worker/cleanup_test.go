@@ -46,7 +46,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"orphan.txt"}).Return(nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -75,7 +75,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 		Return(map[string]error{"stuck.txt": errors.New("timeout")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -108,7 +108,7 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 
 	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -187,7 +187,7 @@ func passingOps(t *testing.T, deleteErr error) *MockOps {
 func TestProcessCleanupQueue_ClaimsUntilAShortBatch(t *testing.T) {
 	t.Parallel()
 	store, claims := claimingStore(t, freshRows(2*cleanupClaimBatch+20))
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Metrics: localMetrics{}, Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 
 	sum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	if sum.Succeeded != 2*cleanupClaimBatch+20 || claims.Load() != 3 {
@@ -201,7 +201,7 @@ func TestProcessCleanupQueue_ClaimsUntilAShortBatch(t *testing.T) {
 func TestProcessCleanupQueue_StopsAtTheBatchCap(t *testing.T) {
 	t.Parallel()
 	store, claims := claimingStore(t, freshRows(-1))
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Metrics: localMetrics{}, Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 
 	sum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	if claims.Load() != cleanupMaxBatchesPerTick || sum.Succeeded != cleanupMaxBatchesPerTick*cleanupClaimBatch {
@@ -215,7 +215,7 @@ func TestProcessCleanupQueue_StopsAtTheBatchCap(t *testing.T) {
 func TestProcessCleanupQueue_StopsOnABatchThatSettlesNothing(t *testing.T) {
 	t.Parallel()
 	store, claims := claimingStore(t, freshRows(-1))
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, errors.New("backend down")), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, errors.New("backend down")), Metrics: localMetrics{}, Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 
 	sum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	if claims.Load() != 1 || sum.Failed != cleanupClaimBatch {
@@ -241,7 +241,7 @@ func TestProcessCleanupQueue_BatchesRowsPerBackend(t *testing.T) {
 	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"a.txt", "b.txt"}).
 		Return(map[string]error{"b.txt": errors.New("timeout")})
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 2, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 2, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	sum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 
 	if sum.Succeeded != 1 || sum.Failed != 1 {
@@ -268,7 +268,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -291,7 +291,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	processed, _ := cleanSum.Succeeded, cleanSum.Failed
 
@@ -320,7 +320,7 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 		Return(map[string]error{"doomed.txt": errors.New("permanent failure")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -361,7 +361,7 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 		Return(map[string]error{"doomed2.txt": errors.New("upstream timeout")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	cleanSum := passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
@@ -392,7 +392,7 @@ func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
-	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Metrics: localMetrics{}, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	passOf(t)(w.ProcessCleanupQueue(context.Background()))
 	after := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
 

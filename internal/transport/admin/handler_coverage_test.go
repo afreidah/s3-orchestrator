@@ -47,7 +47,7 @@ func newCoverageHandler(t *testing.T) *Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		LogLevel:  &lv,
 		DBHealthy: func() bool { return true },

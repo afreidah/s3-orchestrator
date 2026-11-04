@@ -75,16 +75,20 @@ type Data struct {
 
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader,ScrubReachReader
 
-// FleetView is the backend-fleet surface the aggregator reads: the fleet
-// snapshot the ledger figures come from, and the live state and configured
-// profiles it decorates them with. *infra.BackendRuntime satisfies it.
+// FleetView is the live state and configured profiles the aggregator decorates
+// the snapshot's figures with. *infra.BackendRuntime satisfies it.
 type FleetView interface {
-	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 	BackendOrder() []string
 	BackendFlags(name string) core.BackendFlags
 	ServedCalls(name string) core.BackendCalls
 	Unsupported(name string) core.BackendFeatures
 	Profile(name string) core.BackendProfile
+}
+
+// FleetSnapshotter serves the fleet snapshot the ledger figures come from.
+// *metrics.Collector satisfies it.
+type FleetSnapshotter interface {
+	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 }
 
 // UsageReader is the usage surface the aggregator reads: each backend's usage
@@ -109,27 +113,27 @@ type DrainProgressReader interface {
 	GetDrainProgress(ctx context.Context, name string) (*backendstate.DrainProgress, error)
 }
 
+// Deps groups what the aggregator reads. Scrub may be nil, which scopes the
+// integrity figures to every backend; Drain may be nil when the deployment
+// runs no backend state manager.
+type Deps struct {
+	Store     core.DashboardStore
+	Usage     UsageReader
+	Scrub     ScrubReachReader
+	Fleet     FleetView
+	Snapshots FleetSnapshotter
+	Drain     DrainProgressReader
+}
+
 // Aggregator queries the metadata store and usage tracker to build
 // snapshots for the web UI.
 type Aggregator struct {
-	store core.DashboardStore
-	usage UsageReader
-	scrub ScrubReachReader
-	fleet FleetView
-	drain DrainProgressReader
+	d Deps
 }
 
 // New creates an Aggregator over the fleet's backends, in the fleet's order.
-// scrub may be nil, which scopes the integrity figures to every backend;
-// drainReader may be nil when the deployment runs no backend state manager.
-func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
-	return &Aggregator{
-		store: store,
-		usage: usage,
-		scrub: scrub,
-		fleet: fleet,
-		drain: drainReader,
-	}
+func New(d *Deps) *Aggregator {
+	return &Aggregator{d: *d}
 }
 
 // -------------------------------------------------------------------------
@@ -139,10 +143,10 @@ func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, f
 // scrubbableBackends is the set the scrub queue would draw from right now, or
 // every backend when no scrubber is wired.
 func (da *Aggregator) scrubbableBackends() []string {
-	if da.scrub == nil {
-		return da.fleet.BackendOrder()
+	if da.d.Scrub == nil {
+		return da.d.Fleet.BackendOrder()
 	}
-	return da.scrub.ReachableBackends()
+	return da.d.Scrub.ReachableBackends()
 }
 
 // splitCycleUsage separates each backend's cycle usage into its figures and
@@ -170,23 +174,23 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.Unsupported = make(map[string]core.BackendFeatures)
 	data.Profiles = make(map[string]core.BackendProfile)
 
-	for _, name := range da.fleet.BackendOrder() {
-		data.Profiles[name] = da.fleet.Profile(name)
-		if refused := core.AllCalls &^ da.fleet.ServedCalls(name); refused != 0 {
+	for _, name := range da.d.Fleet.BackendOrder() {
+		data.Profiles[name] = da.d.Fleet.Profile(name)
+		if refused := core.AllCalls &^ da.d.Fleet.ServedCalls(name); refused != 0 {
 			data.RefusedCalls[name] = refused
 		}
-		if unsupported := da.fleet.Unsupported(name); unsupported != 0 {
+		if unsupported := da.d.Fleet.Unsupported(name); unsupported != 0 {
 			data.Unsupported[name] = unsupported
 		}
-		flags := da.fleet.BackendFlags(name)
+		flags := da.d.Fleet.BackendFlags(name)
 		if flags == 0 {
 			continue
 		}
 		data.BackendFlags[name] = flags
-		if da.drain == nil || !flags.Any(core.DrainFlags) {
+		if da.d.Drain == nil || !flags.Any(core.DrainFlags) {
 			continue
 		}
-		if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {
+		if progress, err := da.d.Drain.GetDrainProgress(ctx, name); err == nil {
 			data.DrainingBackends[name] = *progress
 		}
 	}
@@ -200,7 +204,7 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 // period's usage and the live fleet state. It fails rather than report zeroes
 // when the snapshot is missing a figure because its store read failed.
 func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
-	snap, err := da.fleet.FleetSnapshot(ctx)
+	snap, err := da.d.Snapshots.FleetSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +214,8 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 
 	coverage := snap.Ledger.Coverage(da.scrubbableBackends(), time.Now())
 	data := &Data{
-		BackendOrder:           da.fleet.BackendOrder(),
-		UsageLimits:            da.usage.GetLimits(),
+		BackendOrder:           da.d.Fleet.BackendOrder(),
+		UsageLimits:            da.d.Usage.GetLimits(),
 		UsagePeriod:            counter.CurrentPeriod(),
 		QuotaStats:             snap.Quota,
 		ObjectCounts:           snap.Ledger.ObjectCounts(),
@@ -223,7 +227,7 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 		CompressionStats:       snap.Ledger.Compression(),
 		ActiveMultipartCounts:  snap.Multipart,
 	}
-	data.UsageStats, data.UsageCycles = splitCycleUsage(da.usage.CycleUsage())
+	data.UsageStats, data.UsageCycles = splitCycleUsage(da.d.Usage.CycleUsage())
 	da.decorateLiveState(ctx, data)
 	return data, nil
 }
@@ -235,7 +239,7 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 	if err != nil {
 		return nil, err
 	}
-	data.TopLevelEntries, err = da.store.ListDirectoryChildren(ctx, "", "", maxDirectoryChildren)
+	data.TopLevelEntries, err = da.d.Store.ListDirectoryChildren(ctx, "", "", maxDirectoryChildren)
 	if err != nil {
 		return nil, err
 	}
@@ -277,5 +281,5 @@ func (da *Aggregator) GetDirectoryChildren(ctx context.Context, prefix, startAft
 	if maxKeys <= 0 || maxKeys > maxDirectoryChildren {
 		maxKeys = maxDirectoryChildren
 	}
-	return da.store.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
+	return da.d.Store.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }

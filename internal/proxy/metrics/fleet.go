@@ -93,7 +93,7 @@ func (mc *Collector) RefreshFleetIfStale(ctx context.Context) error {
 	if err != nil {
 		mc.log.WarnContext(ctx, "fleet snapshot load failed, recomputing", "error", err)
 	}
-	if snap != nil && time.Since(snap.ComputedAt) < mc.fleetInterval/2 {
+	if snap != nil && time.Since(snap.ComputedAt) < mc.d.FleetInterval/2 {
 		mc.applyFleet(snap)
 		return nil
 	}
@@ -108,7 +108,7 @@ func (mc *Collector) loadPublished(ctx context.Context) (*FleetSnapshot, error) 
 
 // fleetValue names the published snapshot in shared state.
 func (mc *Collector) fleetValue() sharedstate.Value[FleetSnapshot] {
-	return sharedstate.NewValue[FleetSnapshot](mc.shared, fleetSnapshotKey, fleetSnapshotTTLIntervals*mc.fleetInterval)
+	return sharedstate.NewValue[FleetSnapshot](mc.d.Shared, fleetSnapshotKey, fleetSnapshotTTLIntervals*mc.d.FleetInterval)
 }
 
 // ReplicationSnapshot returns the newest replication state. With shared
@@ -176,13 +176,13 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 
 	// Counted here rather than from the dashboard so the figures keep moving
 	// on a deployment that scrapes Prometheus and never opens the web UI.
-	if ledger, err := mc.store.LedgerStats(ctx); err != nil {
+	if ledger, err := mc.d.Store.LedgerStats(ctx); err != nil {
 		mc.log.ErrorContext(ctx, "failed to read ledger stats", "error", err)
 	} else {
 		snap.Ledger = ledger
 	}
 
-	if multipart, err := mc.store.GetActiveMultipartCounts(ctx); err != nil {
+	if multipart, err := mc.d.Store.GetActiveMultipartCounts(ctx); err != nil {
 		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
 	} else {
 		snap.Multipart = multipart
@@ -199,15 +199,15 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 // returns a ready, zeroed snapshot, so the admin endpoint reports "not
 // replicating" rather than "not yet computed".
 func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapshot {
-	if mc.replicationFactor == nil {
+	if mc.d.ReplicationFactor == nil {
 		return nil
 	}
-	factor := mc.replicationFactor()
+	factor := mc.d.ReplicationFactor()
 	if factor <= 1 {
 		return &ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()}
 	}
 
-	backlog, err := mc.store.CountReplicationBacklog(ctx, factor)
+	backlog, err := mc.d.Store.CountReplicationBacklog(ctx, factor)
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to count replication backlog", "error", err)
 		return nil

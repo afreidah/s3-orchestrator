@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -53,36 +54,28 @@ const reasonOverReplication = "over_replication"
 // config from the running configuration.
 type OverReplicationCleaner struct {
 	syncutil.Section[config.ReplicationConfig]
-	log       *slog.Logger
-	ops       Ops
-	placement Placement
-	store     OverReplicationCleanerStore
+	d   OverReplicationCleanerDeps
+	log *slog.Logger
 }
 
 // OverReplicationCleanerDeps groups the cleaner's constructor dependencies:
-// fleet operations, write-path placement, the metadata store, and the
-// replication section of the running configuration.
+// the fleet, the metadata store, and the replication section of the running
+// configuration.
 type OverReplicationCleanerDeps struct {
-	Ops       Ops
-	Placement Placement
-	Store     OverReplicationCleanerStore
-	Config    syncutil.Section[config.ReplicationConfig]
+	Fleet
+	Store  OverReplicationCleanerStore
+	Config syncutil.Section[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner from its dependencies, all of
 // which are required.
-func NewOverReplicationCleaner(deps OverReplicationCleanerDeps) *OverReplicationCleaner {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Placement", deps.Placement)
-	must.NotNil("Store", deps.Store)
-	must.NotNil("Config", deps.Config)
-	return &OverReplicationCleaner{
-		Section:   deps.Config,
-		ops:       deps.Ops,
-		placement: deps.Placement,
-		store:     deps.Store,
-		log:       workerLogger(audit.WorkloadOverReplication),
-	}
+//
+//nolint:gocritic // hugeParam: the Deps are copied once, at construction.
+func NewOverReplicationCleaner(d OverReplicationCleanerDeps) *OverReplicationCleaner {
+	d.mustBeWired()
+	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Config", d.Config)
+	return &OverReplicationCleaner{Section: d.Config, d: d, log: logfmt.Logger(string(audit.WorkloadOverReplication))}
 }
 
 // -------------------------------------------------------------------------
@@ -93,7 +86,7 @@ func NewOverReplicationCleaner(deps OverReplicationCleanerDeps) *OverReplication
 // target replication factor. Returns the number of copies removed. observer,
 // when non-nil, receives a start and end step per object cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadOverReplication, Refresh: c.ops}
+	pass := cycle.Pass{Workload: audit.WorkloadOverReplication, Refresh: c.d.Metrics}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (OverReplicationSummary, error) {
 		return c.clean(ctx, cfg, observer)
 	})
@@ -129,7 +122,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	locations, err := c.store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+	locations, err := c.d.Store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	if err != nil {
 		return OverReplicationSummary{}, fmt.Errorf("failed to query over-replicated objects: %w", err)
 	}
@@ -139,7 +132,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	}
 
 	// Pre-fetch quota stats for copy scoring (utilization ratio).
-	quotaStats, qErr := c.store.GetQuotaStats(ctx)
+	quotaStats, qErr := c.d.Store.GetQuotaStats(ctx)
 	if qErr != nil {
 		c.log.WarnContext(ctx, "failed to get quota stats, scoring without utilization",
 			"error", qErr)
@@ -148,7 +141,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	// The pending gauge is the fleet snapshot's ledger count, which every
 	// instance serves; this pass's sets are one batch of it.
 	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
-	sum, removed := pass.run(ctx, c.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+	sum, removed := pass.run(ctx, c.d.Ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
 		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, cfg.Factor, quotaStats)
 		return n, cleanupItemResult(n, failures)
 	})
@@ -191,14 +184,14 @@ type scoredCopy struct {
 // Among healthy backends the most utilized scores lowest, so its copy is
 // removed first.
 func (c *OverReplicationCleaner) scoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
-	if !c.ops.BackendFlags(loc.BackendName).AcceptedBy(core.AcceptForWrite) {
+	if !c.d.Ops.BackendFlags(loc.BackendName).AcceptedBy(core.AcceptForWrite) {
 		return 0
 	}
 
-	if _, ok := c.ops.Backends()[loc.BackendName]; !ok {
+	if _, ok := c.d.Ops.Backends()[loc.BackendName]; !ok {
 		return 0
 	}
-	if !c.ops.ServedCalls(loc.BackendName).Has(core.RequiredForRead) {
+	if !c.d.Ops.ServedCalls(loc.BackendName).Has(core.RequiredForRead) {
 		return 1
 	}
 
@@ -236,7 +229,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// replicator never sees a ghost copy. A concurrent delete or earlier
 		// tick may have absorbed the excess, or a client overwrite replaced the
 		// victim; either is skipped.
-		err := c.placement.DropCopy(ctx, &victim, factor, reasonOverReplication)
+		err := c.d.Placement.DropCopy(ctx, &victim, factor, reasonOverReplication)
 		switch {
 		case errors.Is(err, core.ErrCopyNotExcess), errors.Is(err, core.ErrCopyChanged):
 			continue

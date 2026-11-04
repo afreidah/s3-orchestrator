@@ -14,7 +14,6 @@ import (
 	reflect "reflect"
 
 	backendstate "github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
-	metrics "github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -69,21 +68,6 @@ func (m *MockFleetView) BackendOrder() []string {
 func (mr *MockFleetViewMockRecorder) BackendOrder() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockFleetView)(nil).BackendOrder))
-}
-
-// FleetSnapshot mocks base method.
-func (m *MockFleetView) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FleetSnapshot", ctx)
-	ret0, _ := ret[0].(*metrics.FleetSnapshot)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FleetSnapshot indicates an expected call of FleetSnapshot.
-func (mr *MockFleetViewMockRecorder) FleetSnapshot(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FleetSnapshot", reflect.TypeOf((*MockFleetView)(nil).FleetSnapshot), ctx)
 }
 
 // Profile mocks base method.

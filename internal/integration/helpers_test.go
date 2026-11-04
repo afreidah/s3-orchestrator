@@ -357,7 +357,6 @@ func TestMain(m *testing.M) {
 			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         newMetricsAdapter(failableStore),
 		}),
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
@@ -891,7 +890,6 @@ func newThreeBackendStack(t *testing.T) (*proxytest.Stack, *proxytest.Workers) {
 			Order:           allBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         newMetricsAdapter(testFailableStore),
 		}),
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
@@ -904,40 +902,6 @@ func newThreeBackendStack(t *testing.T) (*proxytest.Stack, *proxytest.Workers) {
 // proxy consumer depends on. Identity at the type level - kept so the
 // call sites read uniformly with the production DI wiring.
 func newStores(src storetest.MetadataStore) storetest.MetadataStore { return src }
-
-// roleStore names the role union tests need on a single source value.
-type roleStore interface {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendStateStore
-	core.DashboardStore
-	core.UsageFlusher
-	core.UsageReader
-	core.AdvisoryLocker
-}
-
-// metricsAdapter carries the CB-wrapped role views MetricsCollector needs.
-type metricsAdapter struct {
-	core.DashboardStore
-	core.ReplicationStore
-	core.UsageReader
-}
-
-// newMetricsAdapter returns a proxy.MetricsDeps-compatible value backed
-// by src; CB protection lives in the underlying driver.
-func newMetricsAdapter(src roleStore) *metricsAdapter {
-	return &metricsAdapter{
-		DashboardStore:   src,
-		ReplicationStore: src,
-		UsageReader:      src,
-	}
-}
 
 // envOrDefault is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
@@ -1362,6 +1326,6 @@ func virtualBucketFor(accessKey, secret string) config.BucketConfig {
 // assembly performs before publishing it.
 func declaredForConfig(buckets []config.BucketConfig) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Set(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
+	d.Store(new(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets))
 	return d
 }

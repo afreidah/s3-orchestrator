@@ -48,23 +48,14 @@ type Stores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core           Runtime                // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
-	coord          *writepath.Coordinator // write-path helpers shared with the multipart manager
-	stores         Stores                 // direct store access for read paths and quota inspection
-	encryptor      *encryption.Encryptor
-	codec          Codec
-	compression    config.CompressionConfig
-	cache          *LocationCache
-	objectCache    objcache.ObjectCache // nil when object data caching is disabled
-	copiesPerWrite int                  // 1 leaves every copy after the first to the replicator
-	detached       DetachedRegistry
-	integrityCfg   syncutil.Section[config.IntegrityConfig]
-	failover       *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
-	log            *slog.Logger
+	d        Deps
+	failover *readpath.Failover
+	log      *slog.Logger
 }
 
 // Deps bundles New's dependencies. A nil Codec disables compression in both
-// directions.
+// directions, and a nil ObjectCache disables object data caching. A
+// CopiesPerWrite of 1 leaves every copy after the first to the replicator.
 type Deps struct {
 	Core      Runtime
 	Coord     *writepath.Coordinator
@@ -100,18 +91,8 @@ func New(d *Deps) *Manager {
 	if d.CopiesPerWrite > 1 {
 		must.NotNil("d.Detached", d.Detached)
 	}
-	return &Manager{
-		core:           d.Core,
-		coord:          d.Coord,
-		stores:         d.Stores,
-		encryptor:      d.Encryptor,
-		codec:          d.Codec,
-		compression:    d.Compression,
-		cache:          d.LocationCache,
-		objectCache:    d.ObjectCache,
-		copiesPerWrite: max(d.CopiesPerWrite, 1),
-		detached:       d.Detached,
-		integrityCfg:   d.IntegrityCfg,
+	m := &Manager{
+		d: *d,
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.Core,
 			Cache:                        d.LocationCache,
@@ -120,15 +101,17 @@ func New(d *Deps) *Manager {
 			DegradedReadsEnabled:         !d.DisableDegradedReads,
 			BackendTimeout:               d.BackendTimeout,
 		}),
-		log: slog.Default().With(logfmt.Component("object")),
+		log: logfmt.Logger("object"),
 	}
+	m.d.CopiesPerWrite = max(d.CopiesPerWrite, 1)
+	return m
 }
 
 // LocationCache returns the location cache the manager holds. Exposed for
 // the runtime, DI reload hooks, and tests so the lifecycle (Close, Clear)
 // can be driven without reaching into the unexported field.
 func (o *Manager) LocationCache() *LocationCache {
-	return o.cache
+	return o.d.LocationCache
 }
 
 // -------------------------------------------------------------------------
@@ -139,7 +122,7 @@ func (o *Manager) LocationCache() *LocationCache {
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
 func (o *Manager) CanAcceptWrite(size int64) bool {
-	return len(o.core.EligibleForWrite(s3op.PutObject, 0, size)) > 0
+	return len(o.d.Core.EligibleForWrite(s3op.PutObject, 0, size)) > 0
 }
 
 // BackendCapacityStats returns the current per-backend used/limit byte
@@ -148,7 +131,7 @@ func (o *Manager) CanAcceptWrite(size int64) bool {
 // a generic message. Returns nil on a DB lookup failure so the caller
 // can fall back to its terse default.
 func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
-	stats, err := o.stores.GetQuotaStats(ctx)
+	stats, err := o.d.Stores.GetQuotaStats(ctx)
 	if err != nil {
 		return nil
 	}
@@ -159,7 +142,7 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 // conditional write (If-None-Match: *) can fail before the body upload. It is
 // best effort, as in AWS: a concurrent PUT can still land before the commit.
 func (o *Manager) ObjectExists(ctx context.Context, key string) (bool, error) {
-	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
+	locs, err := core.ClientLocations(o.d.Stores.GetAllObjectLocations(ctx, key))
 	if errors.Is(err, core.ErrObjectNotFound) {
 		return false, nil
 	}

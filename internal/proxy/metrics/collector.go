@@ -45,18 +45,15 @@ type Deps interface {
 }
 
 // Collector records Prometheus metrics for manager-level operations and
-// periodically refreshes gauge values from the metadata store.
+// periodically refreshes gauge values from the metadata store. snapMu guards
+// repSnap, the last-computed replication state served to admin, and lastSnap,
+// the last snapshot applied here, computed or loaded.
 type Collector struct {
-	store             Deps
-	usage             *counter.UsageTracker
-	replicationFactor func() int // returns 0 when replication is disabled
-	shared            *sharedstate.Shared
-	fleetInterval     time.Duration
-	log               *slog.Logger
-
-	snapMu   sync.RWMutex        // guards repSnap and lastSnap
-	repSnap  ReplicationSnapshot // last-computed replication state, served to admin
-	lastSnap *FleetSnapshot      // last snapshot applied here, computed or loaded
+	d        CollectorDeps
+	log      *slog.Logger
+	snapMu   sync.RWMutex
+	repSnap  ReplicationSnapshot
+	lastSnap *FleetSnapshot
 }
 
 // CollectorDeps groups the metrics collector's constructor parameters.
@@ -74,15 +71,10 @@ type CollectorDeps struct {
 
 // New creates a Collector with references to the store and usage tracker
 // needed for gauge refreshes.
-func New(deps *CollectorDeps) *Collector {
-	return &Collector{
-		store:             deps.Store,
-		usage:             deps.Usage,
-		replicationFactor: deps.ReplicationFactor,
-		shared:            deps.Shared,
-		fleetInterval:     cmp.Or(deps.FleetInterval, config.DefaultFleetInterval),
-		log:               slog.Default().With(logfmt.Component("metrics_collector")),
-	}
+func New(d *CollectorDeps) *Collector {
+	mc := &Collector{d: *d, log: logfmt.Logger("metrics_collector")}
+	mc.d.FleetInterval = cmp.Or(d.FleetInterval, config.DefaultFleetInterval)
+	return mc
 }
 
 // -------------------------------------------------------------------------
@@ -92,7 +84,7 @@ func New(deps *CollectorDeps) *Collector {
 // UpdateQuotaMetrics runs a full refresh: the fleet gauges and this
 // instance's usage baselines.
 func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
-	stats, err := mc.store.GetQuotaStats(ctx)
+	stats, err := mc.d.Store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
@@ -107,7 +99,7 @@ func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
 // Every instance would read the same values from the store, so with several
 // instances only one runs it.
 func (mc *Collector) UpdateFleetMetrics(ctx context.Context) error {
-	stats, err := mc.store.GetQuotaStats(ctx)
+	stats, err := mc.d.Store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
@@ -120,7 +112,7 @@ func (mc *Collector) UpdateFleetMetrics(ctx context.Context) error {
 // against these baselines, so every instance must run it, whether or not it
 // flushed the counters itself.
 func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
-	stats, err := mc.store.GetQuotaStats(ctx)
+	stats, err := mc.d.Store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
@@ -131,7 +123,7 @@ func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
 // updateUsageGauges refreshes the tracker's cycle baselines, which the
 // in-process limit checks use, and republishes the usage gauges from them.
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	byWorkload, err := mc.usage.RefreshUsage(ctx, mc.store)
+	byWorkload, err := mc.d.Usage.RefreshUsage(ctx, mc.d.Store)
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
 		return
@@ -169,7 +161,7 @@ func updateWorkloadGauges(usage map[string]core.WorkloadUsage) {
 // counts with their ceilings, and when its cycle next resets, so an operator
 // sees which limit is close to refusing work and how long it has left.
 func (mc *Collector) updateLimitGauges(usage map[string]core.Usage) {
-	limits := mc.usage.GetLimits()
+	limits := mc.d.Usage.GetLimits()
 	now := time.Now()
 	for name, lim := range limits {
 		telemetry.UsageCycleResetTimestamp.WithLabelValues(name).Set(float64(lim.Period.Cycle(now).Next.Unix()))

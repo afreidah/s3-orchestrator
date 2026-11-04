@@ -46,7 +46,7 @@ import (
 // fails. When the object is encrypted, the response body is transparently
 // decrypted and the reported size reflects the original plaintext size.
 func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetResult, error) {
-	locs, lookupErr := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
+	locs, lookupErr := core.ClientLocations(o.d.Stores.GetAllObjectLocations(ctx, key))
 	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader, locs); ok {
 		return cached, nil
 	}
@@ -80,7 +80,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return nil, err
 	}
 	if !selfMetered.Load() {
-		o.core.Acct().Egress(ctx, s3op.GetObject, backendName, wireBytes.Load())
+		o.d.Core.Acct().Egress(ctx, s3op.GetObject, backendName, wireBytes.Load())
 	}
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
@@ -106,12 +106,12 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 // version without any invalidation. No rows, as on a store outage, is never a
 // hit. ok=false signals that the caller must read from a backend.
 func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string, locs []core.ObjectLocation) (*GetResult, bool) {
-	if o.objectCache == nil || rangeHeader != "" {
+	if o.d.ObjectCache == nil || rangeHeader != "" {
 		return nil, false
 	}
 	var entry *objcache.Entry
 	for i := range locs {
-		if e, ok := o.objectCache.Get(core.StoragePath(key, locs[i].StorageKey)); ok {
+		if e, ok := o.d.ObjectCache.Get(core.StoragePath(key, locs[i].StorageKey)); ok {
 			entry = e
 			break
 		}
@@ -165,7 +165,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}
 	actualRange := br.header
 
-	r, cancel, err := meteredGet(ctx, o.core, backend, beName, core.StoragePath(key, loc.StorageKey), actualRange)
+	r, cancel, err := meteredGet(ctx, o.d.Core, backend, beName, core.StoragePath(key, loc.StorageKey), actualRange)
 	if err != nil {
 		return fail, 0, err
 	}
@@ -269,8 +269,8 @@ func (o *Manager) buildPlaintextReader(
 	key, beName string,
 	br backendRange,
 ) error {
-	if loc != nil && loc.Encrypted && o.encryptor != nil {
-		if err := decryptResponse(ctx, o.encryptor, r, loc, br.rng, br.ptStart, br.ptEnd); err != nil {
+	if loc != nil && loc.Encrypted && o.d.Encryptor != nil {
+		if err := decryptResponse(ctx, o.d.Encryptor, r, loc, br.rng, br.ptStart, br.ptEnd); err != nil {
 			return err
 		}
 	}
@@ -293,7 +293,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 	key, beName string,
 	partial bool,
 ) {
-	icfg := o.integrityCfg.Config()
+	icfg := o.d.IntegrityCfg.Config()
 	if partial || loc == nil || loc.ContentHash == "" || !icfg.ShouldVerifyOnRead() {
 		return
 	}
@@ -318,7 +318,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 // stale row. A copy a client overwrite or delete replaced mid-read is left
 // alone: that write already queued the discarded bytes.
 func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
-	err := o.coord.DropCopy(ctx, loc, 0, reasonIntegrityFailed)
+	err := o.d.Coord.DropCopy(ctx, loc, 0, reasonIntegrityFailed)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return
@@ -327,7 +327,7 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLoc
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return
 	}
-	o.cache.Delete(loc.ObjectKey)
+	o.d.LocationCache.Delete(loc.ObjectKey)
 }
 
 // reasonIntegrityFailed labels the cleanup of a copy a read found corrupt.
@@ -358,13 +358,13 @@ func applyStoredIdentity(res *s3be.GetObjectResult, loc *core.ObjectLocation) {
 // over the per-entry admission limit all skip the tee entirely, so the body
 // streams through with no proxy-side buffering.
 func (o *Manager) populateObjectCache(path, rangeHeader string, result *s3be.GetObjectResult) {
-	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 || !o.objectCache.Admit(result.Size) {
+	if o.d.ObjectCache == nil || rangeHeader != "" || result.Size <= 0 || !o.d.ObjectCache.Admit(result.Size) {
 		return
 	}
 	meta := result.ObjectAttrs
 	buf := bytes.NewBuffer(make([]byte, 0, result.Size))
 	result.Body = ioutilx.TeeOnComplete(result.Body, result.Size, buf, func() {
-		o.objectCache.PutBytes(path, buf.Bytes(), meta)
+		o.d.ObjectCache.PutBytes(path, buf.Bytes(), meta)
 	})
 }
 

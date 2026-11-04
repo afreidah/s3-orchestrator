@@ -26,7 +26,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -127,8 +126,8 @@ type servicesFixture struct {
 // -------------------------------------------------------------------------
 
 // newServicesFixture builds the stack and the workers the service
-// constructors need. Mirrors what the per-worker DI providers do at
-// runtime, just inline so the test stays free of the do.Injector.
+// constructors need, wired as the per-worker DI providers wire them, so the
+// test stays free of the do.Injector.
 func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
@@ -138,7 +137,6 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 
@@ -151,28 +149,16 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 		c.Rebalance.Interval = 6 * time.Hour
 		c.Integrity.ScrubberInterval = 6 * time.Hour
 	})
-	coord := writepath.New(rt, mock)
-	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Rebalance()})
-	rp := worker.NewReplicator(&worker.ReplicatorDeps{
-		Ops: rt, Placement: coord, Store: mock, Config: live.Replication(), Integrity: live.Integrity(),
-	})
-	or := worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Replication()})
-	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: mock, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	sc := worker.NewScrubber(&worker.ScrubberDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Integrity()})
-
-	rec := reconcile.NewManager(&reconcile.Deps{
-		Backends: rt, Stores: mock, Usage: rt.Acct(),
-	})
-	exp := expiry.New(mock, st.Objects, live.Lifecycle())
+	w := proxytest.BuildWorkers(st, mock)
 	return &servicesFixture{
 		stack:         st,
-		expirer:       exp,
-		reconciler:    rec,
-		rebalancer:    rb,
-		replicator:    rp,
-		overRep:       or,
-		cleanupWorker: cw,
-		scrubber:      sc,
+		expirer:       expiry.New(mock, st.Objects, live.Lifecycle()),
+		reconciler:    reconcile.NewManager(&reconcile.Deps{Backends: rt, Stores: mock, Usage: rt.Acct()}),
+		rebalancer:    w.Rebalancer,
+		replicator:    w.Replicator,
+		overRep:       w.OverReplicationCleaner,
+		cleanupWorker: w.CleanupWorker,
+		scrubber:      w.Scrubber,
 	}
 }
 

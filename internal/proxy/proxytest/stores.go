@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -60,9 +61,6 @@ type RuntimeOptions struct {
 	AdmissionSem    chan struct{}
 	Backend         counter.Backend
 	QuotaBaselines  map[string]core.QuotaStat
-
-	Metrics           metrics.Deps // when set, installs a collector
-	ReplicationFactor func() int   // under-replication gauge; read only when Metrics is set
 }
 
 // NewQuotaTracker builds a quota tracker with baselines primed, as production
@@ -119,24 +117,15 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		counters = counter.NewLocalCounterBackend(names)
 	}
 	tracker := counter.NewUsageTracker(counters, opts.UsageLimits)
-	var collector *metrics.Collector
-	if opts.Metrics != nil {
-		collector = metrics.New(&metrics.CollectorDeps{
-			Store:             opts.Metrics,
-			Usage:             tracker,
-			ReplicationFactor: opts.ReplicationFactor,
-		})
-	}
 	return infra.New(&infra.Config{
-		Backends:         opts.Backends,
-		Order:            names,
-		BackendTimeout:   opts.BackendTimeout,
-		Usage:            tracker,
-		Quota:            NewQuotaTracker(names, opts.QuotaBaselines),
-		RoutingStrategy:  opts.RoutingStrategy,
-		Profiles:         opts.Profiles,
-		MetricsCollector: collector,
-		AdmissionSem:     opts.AdmissionSem,
+		Backends:        opts.Backends,
+		Order:           names,
+		BackendTimeout:  opts.BackendTimeout,
+		Usage:           tracker,
+		Quota:           NewQuotaTracker(names, opts.QuotaBaselines),
+		RoutingStrategy: opts.RoutingStrategy,
+		Profiles:        opts.Profiles,
+		AdmissionSem:    opts.AdmissionSem,
 	})
 }
 
@@ -152,10 +141,12 @@ func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore) *usage.S
 // Stack is the set of collaborators internal/di builds, assembled the same way
 // and handed back as separate values. It carries no behaviour of its own: a
 // test reaches for the collaborator it is exercising. Config is the running
-// configuration every collaborator reads its reloadable sections from.
+// configuration every collaborator reads its reloadable sections from, and
+// Metrics the collector over the stack's store, with no shared state.
 type Stack struct {
 	Runtime   *infra.BackendRuntime
 	Coord     *writepath.Coordinator
+	Metrics   *metrics.Collector
 	Objects   *object.Manager
 	Multipart *multipart.Manager
 	States    *backendstate.Manager
@@ -173,6 +164,20 @@ func New(t testing.TB, store storetest.MetadataStore, opts *StackOptions) *Stack
 	s := Build(store, opts)
 	t.Cleanup(func() { CloseStack(s) })
 	return s
+}
+
+// Fleet is the fleet the stack's workers are built over, as di wires it.
+func (s *Stack) Fleet() worker.Fleet {
+	return worker.Fleet{Ops: s.Runtime, Placement: s.Coord, Metrics: s.Metrics}
+}
+
+// Dashboard builds the dashboard aggregator over the stack and store, as di
+// wires it, with the integrity figures scoped to every backend.
+func (s *Stack) Dashboard(store core.DashboardStore) *dashboard.Aggregator {
+	return dashboard.New(&dashboard.Deps{
+		Store: store, Usage: s.Runtime.Usage(),
+		Fleet: s.Runtime, Snapshots: s.Metrics, Drain: s.States,
+	})
 }
 
 // CloseStack stops the background goroutines the stack owns. New registers it
@@ -198,6 +203,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	// pass against a shape that cannot exist.
 	live := config.NewLive(&config.Config{})
 	coord := writepath.New(rt, store)
+	collector := metrics.New(&metrics.CollectorDeps{Store: store, Usage: rt.Usage()})
 
 	mp := multipart.New(&multipart.Deps{
 		Core:         rt,
@@ -231,11 +237,12 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	return &Stack{
 		Runtime:   rt,
 		Coord:     coord,
+		Metrics:   collector,
 		Objects:   om,
 		Multipart: mp,
 		States:    states,
 		Drainer: worker.NewDrainer(worker.DrainerDeps{
-			Ops: rt, Placement: coord, Store: store,
+			Fleet: worker.Fleet{Ops: rt, Placement: coord, Metrics: collector}, Store: store,
 			AbortUploads: mp.AbortMultipartUploadsOnBackend,
 			OnRecords:    states.SetStates,
 		}),
@@ -282,29 +289,27 @@ func BuildWorkers(s *Stack, m storetest.MetadataStore) *Workers {
 // encrypted, compressed, or both, mirroring what di.ProvideScrubber and
 // di.ProvideReplicator wire in production.
 func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features WorkerFeatures) *Workers {
-	rt, coord, live := s.Runtime, s.Coord, s.Config
+	f, live := s.Fleet(), s.Config
 	return &Workers{
-		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: m, Config: live.Rebalance()}),
+		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Fleet: f, Store: m, Config: live.Rebalance()}),
 		Replicator: worker.NewReplicator(&worker.ReplicatorDeps{
-			Ops:       rt,
-			Placement: coord,
+			Fleet:     f,
 			Store:     m,
 			Config:    live.Replication(),
 			Integrity: live.Integrity(),
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: m, Config: live.Replication()}),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Fleet: f, Store: m, Config: live.Replication()}),
 		CleanupWorker: worker.NewCleanupWorker(worker.CleanupWorkerDeps{
-			Ops: rt, Store: m, Concurrency: cleanupConcurrency,
+			Ops: s.Runtime, Metrics: s.Metrics, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,
 		}),
 		PendingReaper: worker.NewPendingReaper(worker.PendingReaperDeps{
-			Ops: rt, Placement: coord, Store: m, MinAge: 5 * time.Minute, BatchSize: 50,
+			Fleet: f, Store: m, MinAge: 5 * time.Minute, BatchSize: 50,
 		}),
 		Scrubber: worker.NewScrubber(&worker.ScrubberDeps{
-			Ops:       rt,
-			Placement: coord,
+			Fleet:     f,
 			Store:     m,
 			Config:    live.Integrity(),
 			Encryptor: features.Encryptor,

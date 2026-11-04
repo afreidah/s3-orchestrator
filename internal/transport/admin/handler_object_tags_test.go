@@ -45,7 +45,7 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		DBHealthy: cb.IsHealthy,
 		Ops: &ops.Services{Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,

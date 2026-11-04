@@ -49,7 +49,7 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 	t.Helper()
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		DBHealthy: cb.IsHealthy,
 		Ops:       &ops.Services{Objects: objectsOver(t, mock)},
 		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
@@ -162,7 +162,7 @@ func objectsAPIHandler(t *testing.T) (*Handler, *opstest.MockObjectAPI, *http.Se
 	t.Helper()
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		Ops: &ops.Services{Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),

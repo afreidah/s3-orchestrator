@@ -95,7 +95,7 @@ func (p Pass) report(ctx context.Context, elapsed time.Duration, res Result, err
 	telemetry.WorkerCycleDurationSeconds.WithLabelValues(wl).Observe(elapsed.Seconds())
 	if p.Refresh != nil && res.Changed() {
 		if rerr := p.Refresh.UpdateQuotaMetrics(ctx); rerr != nil {
-			slog.Default().With(logfmt.Component(wl)).WarnContext(ctx, "quota metrics refresh failed after pass", "error", rerr)
+			logfmt.Logger(wl).WarnContext(ctx, "quota metrics refresh failed after pass", "error", rerr)
 		}
 	}
 	if err == nil && !res.Reported() {

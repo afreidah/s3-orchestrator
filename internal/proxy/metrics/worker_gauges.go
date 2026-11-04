@@ -29,7 +29,7 @@ const workerGaugesTTL = 10 * time.Minute
 
 // workerGauges names one worker's published gauges in shared state.
 func (mc *Collector) workerGauges(source string) sharedstate.Value[telemetry.WorkerGauges] {
-	return sharedstate.NewValue[telemetry.WorkerGauges](mc.shared, "worker_gauges:"+source, workerGaugesTTL)
+	return sharedstate.NewValue[telemetry.WorkerGauges](mc.d.Shared, "worker_gauges:"+source, workerGaugesTTL)
 }
 
 // PublishWorkerGauges applies a worker's gauges on this instance and shares them

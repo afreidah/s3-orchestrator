@@ -43,14 +43,14 @@ func (o *Manager) headSourceForCopy(
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.StoredForm, bool) {
 	for i := range locations {
-		if !o.core.Acct().Allow(locations[i].BackendName, s3op.CopyObject, 0, 0) {
+		if !o.d.Core.Acct().Allow(locations[i].BackendName, s3op.CopyObject, 0, 0) {
 			continue
 		}
-		be, err := o.core.GetBackend(locations[i].BackendName)
+		be, err := o.d.Core.GetBackend(locations[i].BackendName)
 		if err != nil {
 			continue
 		}
-		headResult, err := o.core.Head(ctx, locations[i].BackendName, be, core.StoragePath(sourceKey, locations[i].StorageKey))
+		headResult, err := o.d.Core.Head(ctx, locations[i].BackendName, be, core.StoragePath(sourceKey, locations[i].StorageKey))
 		if err != nil {
 			continue
 		}
@@ -84,13 +84,13 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		return "", err
 	}
 
-	locations, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, sourceKey))
+	locations, err := core.ClientLocations(o.d.Stores.GetAllObjectLocations(ctx, sourceKey))
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
-		return "", o.core.ClassifyWriteError(span, operation, err)
+		return "", o.d.Core.ClassifyWriteError(span, operation, err)
 	}
 
 	size, contentType, metadata, srcForm, ok := o.headSourceForCopy(ctx, sourceKey, locations)
@@ -111,10 +111,10 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// the bytes against the backend and gives a failed commit something the
 	// reaper can resolve. A native attempt that falls back claims nothing new.
 	intent := writepath.NewPendingIntent(destKey, size, srcForm, srcIdentity, tags)
-	if err := o.coord.SelectWriteTarget(ctx, span, operation, intent); err != nil {
+	if err := o.d.Coord.SelectWriteTarget(ctx, span, operation, intent); err != nil {
 		return "", err
 	}
-	destBackend, err := o.core.GetBackend(intent.BackendName)
+	destBackend, err := o.d.Core.GetBackend(intent.BackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -144,7 +144,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		}
 	}
 
-	src, etag, err := s3be.CopyFromAny(ctx, o.core, &s3be.SourcedCopy{
+	src, etag, err := s3be.CopyFromAny(ctx, o.d.Core, &s3be.SourcedCopy{
 		Key:     sourceKey,
 		Sources: locations,
 		Dst:     s3be.Endpoint{Name: intent.BackendName, Backend: destBackend},
@@ -197,7 +197,7 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 	if req.ReplaceTags {
 		return req.Tags, nil
 	}
-	tags, err := o.stores.GetObjectTags(ctx, req.SourceKey)
+	tags, err := o.d.Stores.GetObjectTags(ctx, req.SourceKey)
 	if err != nil {
 		return nil, fmt.Errorf("read source tags: %w", err)
 	}
@@ -243,13 +243,13 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 	if !ok {
 		return "", false, nil
 	}
-	cctx, ccancel := o.core.WithTimeout(ctx)
+	cctx, ccancel := o.d.Core.WithTimeout(ctx)
 	defer ccancel()
 	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.intent.StorageKey, req.contentType, req.metadata)
 	if errors.Is(err, s3be.ErrCopyNotSupported) {
 		return "", false, nil
 	}
-	o.core.Acct().APICall(ctx, s3op.CopyObject, req.intent.BackendName)
+	o.d.Core.Acct().APICall(ctx, s3op.CopyObject, req.intent.BackendName)
 	if err == nil {
 		etag, err = o.finalizeCopy(ctx, req, etag, true)
 		return etag, true, err
@@ -273,7 +273,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 // caller falls back. HEAD errors other than 404 are logged as warnings.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *copyContext, origErr error) (string, bool) {
 	dst := req.intent
-	head, headErr := o.core.Head(ctx, dst.BackendName, req.destBackend, dst.StorageKey)
+	head, headErr := o.d.Core.Head(ctx, dst.BackendName, req.destBackend, dst.StorageKey)
 	base := []any{
 		"source_key", req.sourceKey,
 		"dest_key", dst.ObjectKey,

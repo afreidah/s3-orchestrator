@@ -51,7 +51,6 @@ const (
 	sessionTTL        = 24 * time.Hour
 
 	contentTypeHTML      = "text/html; charset=utf-8"
-	headerContentType    = "Content-Type"
 	loginPath            = "/login"
 	errLoginRenderFailed = "failed to render login page"
 )
@@ -132,7 +131,7 @@ func New(d *Deps) *Handler {
 	cfg := d.Config.Load()
 	return &Handler{
 		d:              *d,
-		log:            slog.Default().With(logfmt.Component("ui")),
+		log:            logfmt.Logger("ui"),
 		templates:      loadTemplates(),
 		logs:           admin.LogsHandler(d.LogBuffer),
 		sessionKey:     deriveSessionKey(&cfg.UI),

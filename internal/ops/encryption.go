@@ -50,21 +50,14 @@ type EncryptionDeps struct {
 // are nil when the orchestrator was started without encryption, which every
 // operation reports as ErrEncryptionDisabled.
 type Encryption struct {
-	log       *slog.Logger
-	encryptor *encryption.Encryptor
-	store     RewriteStore
-	mover     Mover
+	d   EncryptionDeps
+	log *slog.Logger
 }
 
 // NewEncryption is the explicit-deps constructor.
 func NewEncryption(d EncryptionDeps) *Encryption {
 	must.NotNil("d.Mover", d.Mover)
-	return &Encryption{
-		log:       slog.Default().With(logfmt.Component("ops")),
-		encryptor: d.Encryptor,
-		store:     d.Store,
-		mover:     d.Mover,
-	}
+	return &Encryption{d: d, log: logfmt.Logger(logComponent)}
 }
 
 // -------------------------------------------------------------------------
@@ -77,7 +70,7 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
 func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
-	if e.encryptor == nil || e.store == nil {
+	if e.disabled() {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
 	op := bulkRewriteOp{
@@ -99,7 +92,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
 func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
-	if e.encryptor == nil || e.store == nil {
+	if e.disabled() {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
 	op := bulkRewriteOp{
@@ -120,7 +113,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 // remain configured, since unwrapping happens with them. Object bytes are
 // untouched. A copy a newer write replaced mid-pass counts as skipped.
 func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bool) (batch.Summary, error) {
-	if e.encryptor == nil || e.store == nil {
+	if e.disabled() {
 		return batch.Summary{}, ErrEncryptionDisabled
 	}
 	if (oldKeyID != "") == allStale {
@@ -128,13 +121,13 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bo
 	}
 	filter := core.FormFilter{With: core.StoredEncrypted, KeyID: oldKeyID}
 	if allStale {
-		filter.ExceptKeyID = e.encryptor.Provider().KeyID()
+		filter.ExceptKeyID = e.d.Encryptor.Provider().KeyID()
 	}
 
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(rotateBatchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListCopiesByForm(ctx, &filter, limit, after)
+			return e.d.Store.ListCopiesByForm(ctx, &filter, limit, after)
 		},
 		CursorOf: core.CursorOf,
 	}
@@ -164,17 +157,17 @@ func (e *Encryption) rotateOneLocation(ctx context.Context, loc *core.ObjectLoca
 		return e.rotateFailed(ctx, "unpack failed", loc.ObjectKey, unpackErr)
 	}
 
-	dek, unwrapErr := e.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
+	dek, unwrapErr := e.d.Encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
 	if unwrapErr != nil {
 		return e.rotateFailed(ctx, "unwrap failed", loc.ObjectKey, unwrapErr)
 	}
 
-	newWrapped, newKeyID, wrapErr := e.encryptor.Provider().WrapDEK(ctx, dek)
+	newWrapped, newKeyID, wrapErr := e.d.Encryptor.Provider().WrapDEK(ctx, dek)
 	if wrapErr != nil {
 		return e.rotateFailed(ctx, "wrap failed", loc.ObjectKey, wrapErr)
 	}
 
-	err := e.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{
+	err := e.d.Store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{
 		EncryptionKey: encryption.PackKeyData(baseNonce, newWrapped),
 		KeyID:         newKeyID,
 	})
@@ -202,5 +195,11 @@ func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err erro
 // pass changes only the envelope, so an encoding is carried through rather
 // than decoded and no codec is needed.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, store: e.store, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
+	return bulkRewriteEnv{log: e.log, store: e.d.Store, mover: e.d.Mover, layers: &storedform.Layers{Encryptor: e.d.Encryptor}}
+}
+
+// disabled reports whether the orchestrator runs without encryption, which
+// every operation here refuses with ErrEncryptionDisabled.
+func (e *Encryption) disabled() bool {
+	return e.d.Encryptor == nil || e.d.Store == nil
 }
