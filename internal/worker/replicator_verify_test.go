@@ -60,8 +60,8 @@ func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator
 	ms.placeCopySize = int64(len(verifyOnBody))
 	placeThroughStore(pl, ms)
 
-	r := newTestReplicator(ops, pl, ms)
-	r.integrity = syncutil.Fixed(cfg)
+	r := newTestReplicator(fleetOf(ops, pl), ms)
+	r.d.Integrity = syncutil.Fixed(cfg)
 	return r, ops, pl, ms
 }
 
@@ -224,8 +224,8 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
 	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	r := newTestReplicator(ops, NewMockPlacement(ctrl), ms)
-	r.integrity = verifyOnReplicate
+	r := newTestReplicator(fleetOf(ops, NewMockPlacement(ctrl)), ms)
+	r.d.Integrity = verifyOnReplicate
 
 	before := promtest.ToFloat64(telemetry.IntegrityUsageDeclinedTotal)
 	if got := verifyReplica(r, "b2", replicaPath, sourceRow(hashString(verifyOnBody))); got != CopyDeclined {
@@ -252,8 +252,7 @@ func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 	plain, stored := encodeForScrub(t, codec)
 
 	r := NewReplicator(&ReplicatorDeps{
-		Ops:       ops,
-		Placement: NewMockPlacement(ctrl),
+		Fleet:     fleetOf(ops, NewMockPlacement(ctrl)),
 		Store:     ms,
 		Config:    defaultReplication,
 		Integrity: verifyOnReplicate,
@@ -298,8 +297,7 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 	}
 
 	r := NewReplicator(&ReplicatorDeps{
-		Ops:       ops,
-		Placement: NewMockPlacement(ctrl),
+		Fleet:     fleetOf(ops, NewMockPlacement(ctrl)),
 		Store:     ms,
 		Config:    defaultReplication,
 		Integrity: verifyOnReplicate,

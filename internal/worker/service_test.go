@@ -29,9 +29,9 @@ func TestServices_NamedForWorkloadOnTheConfiguredInterval(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops, pl, store := newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{}
-	rb := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: store,
+	rb := NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: store,
 		Config: syncutil.Fixed(&config.RebalanceConfig{Interval: 2 * time.Hour})})
-	rep := newTestReplicator(ops, pl, store)
+	rep := newTestReplicator(fleetOf(ops, pl), store)
 
 	for _, tc := range []struct {
 		svc      *tickrunner.Service
@@ -52,7 +52,7 @@ func TestServices_NamedForWorkloadOnTheConfiguredInterval(t *testing.T) {
 func TestServices_DisabledWorkerRunsNoPass(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	rb := NewRebalancer(RebalancerDeps{Ops: NewMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{},
+	rb := NewRebalancer(RebalancerDeps{Fleet: fleetOf(NewMockOps(ctrl), NewMockPlacement(ctrl)), Store: &mockMetadataStore{},
 		Config: syncutil.Fixed(&config.RebalanceConfig{Enabled: false, Interval: time.Hour})})
 	NewRebalancerService(rb, testx.Locker{}).(*tickrunner.Service).Tick(t.Context())
 }

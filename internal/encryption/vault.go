@@ -87,7 +87,7 @@ func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, err
 		tokenFile:     cfg.TokenFile,
 		renewInterval: cfg.RenewInterval,
 		cancel:        cancel,
-		log:           slog.Default().With(logfmt.Component("vault_kms")),
+		log:           logfmt.Logger("vault_kms"),
 	}
 
 	go syncutil.Every(ctx, p.renewInterval, p.refreshToken)

@@ -89,7 +89,7 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, ops.MaxUploadSize)
 	defer body.Close()
 	StoreObject(w, r, h.log, h.d.Ops.Objects, &object.PutObjectRequest{
-		Key: r.PathValue(paramKey), Body: body, Size: r.ContentLength, ContentType: r.Header.Get("Content-Type"),
+		Key: r.PathValue(paramKey), Body: body, Size: r.ContentLength, ContentType: r.Header.Get(httputil.HeaderContentType),
 	})
 }
 

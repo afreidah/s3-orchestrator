@@ -43,7 +43,7 @@ import (
 // and allows them after the TTL expires.
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
-	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{}, &recordingGauges{})
 	t.Cleanup(n.Close)
 
 	dampenKey := event.BackendCapacityWarning + ":oci"
@@ -64,7 +64,7 @@ func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
 // that will eventually evict entries, preventing unbounded memory growth.
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_TTLCacheEvicts(t *testing.T) {
-	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{}, &recordingGauges{})
 	defer n.Close()
 
 	// The cache exists and is functional.
@@ -316,7 +316,7 @@ func TestNewNotifier_RegistersAndDeregisters(t *testing.T) {
 		Endpoints: []config.NotificationEndpoint{{URL: "https://example.com", Events: []string{"*"}}},
 	}
 	ms := &mockOutboxStore{}
-	n := NewNotifier(cfg, ms)
+	n := NewNotifier(cfg, ms, &recordingGauges{})
 
 	event.Publish(event.ServiceStarted, "", nil)
 	if got := ms.inserts(); got != 1 {
@@ -569,6 +569,7 @@ func drainNotifier(store OutboxStore, endpoints ...config.NotificationEndpoint) 
 		log:       slog.Default(),
 		endpoints: endpoints,
 		store:     store,
+		gauges:    &recordingGauges{},
 		client:    &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -613,7 +614,7 @@ func TestDrain_PublishesOutboxBacklog(t *testing.T) {
 	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}, depth: 42}
 	pub := &recordingGauges{}
 	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
-	n.SetGaugePublisher(pub)
+	n.gauges = pub
 
 	_, _ = n.drain(context.Background())
 
@@ -716,7 +717,7 @@ func TestDrain_UnknownEndpointCompleted(t *testing.T) {
 func TestTick_DrainsUnderNotifierLock(t *testing.T) {
 	srv := statusServer(t, http.StatusOK)
 	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}}
-	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint(srv.URL, 3)}}, ms)
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint(srv.URL, 3)}}, ms, &recordingGauges{})
 	t.Cleanup(n.Close)
 
 	n.Tick(context.Background())
@@ -740,7 +741,7 @@ func TestRun_ClosesOnShutdown(t *testing.T) {
 	event.SetEmitter(nil)
 	t.Cleanup(func() { event.SetEmitter(nil) })
 	ms := &mockOutboxStore{}
-	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint("https://example.com", 3)}}, ms)
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint("https://example.com", 3)}}, ms, &recordingGauges{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

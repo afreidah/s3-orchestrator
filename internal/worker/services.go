@@ -14,7 +14,6 @@ package worker
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
@@ -30,12 +29,6 @@ const (
 	drainTick        = 10 * time.Second
 )
 
-// workerLogger returns a worker's logger, its component named for the
-// workload, so its lines carry the same name as its service and metrics.
-func workerLogger(wl audit.Workload) *slog.Logger {
-	return tickrunner.ComponentLogger(string(wl))
-}
-
 // passWork adapts a pass to a tick's work. The pass reports itself, so the
 // tick needs only its error.
 func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Context) error {
@@ -48,7 +41,7 @@ func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Con
 // NewReplicatorService constructs the replication service, which runs while
 // the replication factor is above one. It also runs a pass as it starts, so a
 // restart does not leave objects under-replicated for a whole interval.
-func NewReplicatorService(rep *Replicator, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewReplicatorService(rep *Replicator, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:       locker,
 		LockID:       core.LockReplicator,
@@ -64,7 +57,7 @@ func NewReplicatorService(rep *Replicator, locker tickrunner.AdvisoryLocker) lif
 
 // NewOverReplicationService constructs the over-replication cleanup service,
 // which runs while the replication factor is above one.
-func NewOverReplicationService(c *OverReplicationCleaner, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewOverReplicationService(c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:    locker,
 		LockID:    core.LockOverReplication,
@@ -79,7 +72,7 @@ func NewOverReplicationService(c *OverReplicationCleaner, locker tickrunner.Advi
 
 // NewRebalancerService constructs the rebalancer service, which runs while
 // rebalancing is enabled.
-func NewRebalancerService(r *Rebalancer, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewRebalancerService(r *Rebalancer, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:    locker,
 		LockID:    core.LockRebalancer,
@@ -95,7 +88,7 @@ func NewRebalancerService(r *Rebalancer, locker tickrunner.AdvisoryLocker) lifec
 // NewDrainerService constructs the drain service. The tick only decides how
 // soon a new or resumed drain is picked up: a pass works each drain until it
 // finishes or stalls.
-func NewDrainerService(d *Drainer, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewDrainerService(d *Drainer, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		LockID:   core.LockDrain,
@@ -110,7 +103,7 @@ func NewDrainerService(d *Drainer, locker tickrunner.AdvisoryLocker) lifecycle.R
 // NewScrubberService constructs the integrity scrubber service, which runs
 // while integrity is enabled. A zero scrubber interval turns the sweep off,
 // and the caller registers no service for it.
-func NewScrubberService(s *Scrubber, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewScrubberService(s *Scrubber, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:    locker,
 		LockID:    core.LockScrubber,
@@ -124,7 +117,7 @@ func NewScrubberService(s *Scrubber, locker tickrunner.AdvisoryLocker) lifecycle
 }
 
 // NewCleanupQueueService constructs the cleanup queue service.
-func NewCleanupQueueService(w *CleanupWorker, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewCleanupQueueService(w *CleanupWorker, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		LockID:   core.LockCleanupQueue,
@@ -136,7 +129,7 @@ func NewCleanupQueueService(w *CleanupWorker, locker tickrunner.AdvisoryLocker) 
 
 // NewPendingReaperService constructs the pending reaper service, which
 // resolves abandoned PUT intents every tick.
-func NewPendingReaperService(r *PendingReaper, locker tickrunner.AdvisoryLocker, tick time.Duration) lifecycle.Runner {
+func NewPendingReaperService(r *PendingReaper, locker core.AdvisoryLocker, tick time.Duration) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		LockID:   core.LockPendingReaper,
@@ -147,7 +140,7 @@ func NewPendingReaperService(r *PendingReaper, locker tickrunner.AdvisoryLocker,
 }
 
 // NewReconcileService constructs the scheduled reconcile service.
-func NewReconcileService(r *Reconciler, locker tickrunner.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
+func NewReconcileService(r *Reconciler, locker core.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		LockID:   core.LockReconcile,

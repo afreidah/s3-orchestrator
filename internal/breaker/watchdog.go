@@ -46,3 +46,6 @@ func (w *watchdog) Run(ctx context.Context) error {
 	syncutil.Every(audit.WithWorkload(ctx, audit.WorkloadProbe), w.interval, w.registry.ProbeAll)
 	return nil
 }
+
+// Name returns the name the lifecycle manager registers the watchdog under.
+func (w *watchdog) Name() string { return "cb_watchdog" }

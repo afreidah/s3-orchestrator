@@ -59,13 +59,18 @@ func (f fakeReplicationDeps) CountReplicationBacklog(context.Context, int) (core
 	return core.ReplicationBacklog{Under: f.under, Over: f.over}, nil
 }
 
+// testCollector builds a collector over d as given, without the fleet interval
+// New defaults, so a test that never ticks leaves it zero.
+func testCollector(d CollectorDeps) *Collector {
+	return &Collector{d: d, log: slog.Default()}
+}
+
 func TestCollector_ReplicationSnapshot(t *testing.T) {
 	t.Parallel()
-	mc := &Collector{
-		store:             fakeReplicationDeps{under: 2, over: 5},
-		replicationFactor: func() int { return 2 },
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{under: 2, over: 5},
+		ReplicationFactor: func() int { return 2 },
+	})
 
 	if mc.ReplicationSnapshot(context.Background()).Ready {
 		t.Error("snapshot should not be ready before the first compute")
@@ -85,11 +90,10 @@ func TestCollector_ReplicationSnapshot(t *testing.T) {
 
 func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
 	t.Parallel()
-	mc := &Collector{
-		store:             fakeReplicationDeps{},
-		replicationFactor: func() int { return 1 }, // disabled
-		log:               slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{
+		Store:             fakeReplicationDeps{},
+		ReplicationFactor: func() int { return 1 },
+	})
 	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
 	}
@@ -103,7 +107,7 @@ func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
 // periodic path. Computing it only when the web UI asks would leave a
 // Prometheus-only deployment reading a gauge that never moves.
 func TestCollector_PublishesPlaintextCopies(t *testing.T) {
-	mc := &Collector{store: fakeReplicationDeps{plaintext: 17}, log: slog.Default()}
+	mc := testCollector(CollectorDeps{Store: fakeReplicationDeps{plaintext: 17}})
 
 	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)
@@ -119,10 +123,7 @@ func TestCollector_PublishesPlaintextCopies(t *testing.T) {
 // would read as a fully encrypted fleet.
 func TestCollector_PlaintextCountFailureLeavesGauge(t *testing.T) {
 	telemetry.EncryptionPlaintextCopies.Set(9)
-	mc := &Collector{
-		store: fakeReplicationDeps{plaintext: 0, countErr: errors.New("ledger unavailable")},
-		log:   slog.Default(),
-	}
+	mc := testCollector(CollectorDeps{Store: fakeReplicationDeps{plaintext: 0, countErr: errors.New("ledger unavailable")}})
 
 	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateFleetMetrics: %v", err)

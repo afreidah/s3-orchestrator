@@ -31,7 +31,7 @@ import (
 // backends without read-after-write consistency make unreadable copies
 // routine.
 func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.PendingObject, source *core.ObjectLocation, out *replicationOutcome) bool {
-	if !r.integrity.Config().ShouldVerifyOnReplicate() {
+	if !r.d.Integrity.Config().ShouldVerifyOnReplicate() {
 		return true
 	}
 	// StreamCopy moves bytes verbatim, so the source row describes the new
@@ -49,7 +49,7 @@ func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.Pend
 			slog.String("src_backend", source.BackendName),
 			slog.String("target_backend", intent.BackendName),
 		)
-		r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
+		r.d.Placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 		out.VerifyMismatch++
 		return false
 	default:

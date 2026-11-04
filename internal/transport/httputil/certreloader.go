@@ -47,7 +47,7 @@ func NewCertReloader(certFile, keyFile string) (*CertReloader, error) {
 		certFile: certFile,
 		keyFile:  keyFile,
 		cert:     &cert,
-		log:      slog.Default().With(logfmt.Component("cert_reloader")),
+		log:      logfmt.Logger("cert_reloader"),
 	}, nil
 }
 

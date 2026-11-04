@@ -388,7 +388,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
 
 **Producer-side interfaces are an anti-pattern.** `*infra.BackendRuntime`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
-**Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
+**Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `logfmt.Logger("<slug>")` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
 
 **Single-method interface names follow the Go `-er` convention.** A single-method interface is named after its method, with the verb in agent-noun form: `Read` -> `Reader`, `Close` -> `Closer`, `Stringer` for `String()`. Names ending in `-Ops`, `-Store`, `-ing`, or other shapes that do not describe an actor get flagged by `golangci-lint` / sonar (rule S8196) and should be renamed:
 
@@ -793,8 +793,7 @@ dependency surfaces at boot, not at first use.
   provider. Take it as a parameter and let the provider resolve it.
 - Passing a `*slog.Logger` through the constructor argument list.
   Long-lived components hold a private `log *slog.Logger` field set
-  inside the constructor body via
-  `slog.Default().With(logfmt.Component("name"))`. Metrics use the
+  inside the constructor body via `logfmt.Logger("name")`. Metrics use the
   `observe/telemetry` package-level vars directly. Free helper
   functions call `slog.XContext(ctx, ...)` directly. See
   [`docs/contributing/logging.md`](contributing/logging.md).
@@ -817,7 +816,13 @@ A flat `Deps` is the default. Capability sub-structs, grouping fields by
 where they come from, are reserved for genuinely large configs - and are
 worth a second look before reaching for: the last one grew four sub-structs
 that nothing read, which stayed invisible because a config nobody reads still
-compiles.
+compiles. The exception is a set every sibling takes, such as `worker.Fleet`,
+which their Deps embed.
+
+The type keeps its `Deps` whole in a `d` field rather than copying each one
+into a private field of its own. A value the constructor derives, such as a
+default or a collaborator it builds, is set on the stored `d` or held beside
+it.
 
 Constructors at the DI/wiring boundary panic on missing required
 dependencies via `internal/util/must`. The boundary is the set of
@@ -1058,23 +1063,14 @@ once in its constructor with the canonical `component` attribute:
 
 ```go
 type PendingReaper struct {
-    deps      Ops
-    placement Placement
-    store     core.PendingStore
-    log       *slog.Logger
-    // ...
+    d   PendingReaperDeps
+    log *slog.Logger
 }
 
-func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
-    must.NotNil("Ops", deps.Ops)
-    // ...
-    return &PendingReaper{
-        deps:      deps.Ops,
-        placement: deps.Placement,
-        store:     deps.Store,
-        log:       slog.Default().With(logfmt.Component("pending_reaper")),
-        // ...
-    }
+func NewPendingReaper(d PendingReaperDeps) *PendingReaper {
+    d.mustBeWired()
+    must.NotNil("d.Store", d.Store)
+    return &PendingReaper{d: d, log: logfmt.Logger("pending_reaper")}
 }
 
 r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",

@@ -382,7 +382,7 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	src, dest := backendtest.NewMockObjectBackend(ctrl), backendtest.NewMockObjectBackend(ctrl)
 	store := newPermissiveStore(t)
-	rt, _ := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest}, &fleetOpts{
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest}, &fleetOpts{
 		Order: []string{"src", "dest"},
 		QuotaBaselines: map[string]core.QuotaStat{
 			"src":  {BackendName: "src", BytesLimit: 100, BytesUsed: 90},
@@ -397,7 +397,8 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 			return req.Source.SizeBytes, nil
 		})
 
-	d := NewDrainer(DrainerDeps{Ops: rt, Placement: placement, Store: store, AbortUploads: func(context.Context, string) {}})
+	f.Placement = placement
+	d := NewDrainer(DrainerDeps{Fleet: f, Store: store, AbortUploads: func(context.Context, string) {}})
 	obj := &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}
 	if !d.moveOff(context.Background(), "src", obj) {
 		t.Fatal("moveOff reported failure")
@@ -424,11 +425,11 @@ func TestDrain_MovesEverythingOffAndCompletes(t *testing.T) {
 	}
 	startDrain(t, store, "b1")
 
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 	var aborted []string
 	var seen []core.BackendStateRecord
 	d := NewDrainer(DrainerDeps{
-		Ops: rt, Placement: coord, Store: store,
+		Fleet: f, Store: store,
 		AbortUploads: func(_ context.Context, name string) { aborted = append(aborted, name) },
 		OnRecords:    func(drains []core.BackendStateRecord) { seen = drains },
 	})

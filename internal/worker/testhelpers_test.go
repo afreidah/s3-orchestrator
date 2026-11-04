@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -108,14 +109,32 @@ func intentOn(backendName, objectKey string) gomock.Matcher {
 // -------------------------------------------------------------------------
 
 // newMockOps builds an Ops mock that already answers Quota() with a real
-// tracker and accepts the quota refresh a pass that changed something makes.
-// Every fixture needs both, because an unanswered call inside a worker pool
-// deadlocks the dispatcher instead of failing the test.
+// tracker. Every fixture needs it, because an unanswered call inside a worker
+// pool deadlocks the dispatcher instead of failing the test.
 func newMockOps(ctrl *gomock.Controller) *MockOps {
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().Quota().Return(counter.NewQuotaTracker()).AnyTimes()
-	ops.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
 	return ops
+}
+
+// localMetrics stands in for the metrics collector of a single instance with
+// no shared state: a published gauge is applied here, and the quota refresh a
+// pass that changed something makes does nothing.
+type localMetrics struct{}
+
+// UpdateQuotaMetrics accepts the refresh and does nothing.
+func (localMetrics) UpdateQuotaMetrics(context.Context) error { return nil }
+
+// PublishWorkerGauges applies the gauges on this instance, as the collector
+// does before it shares them.
+func (localMetrics) PublishWorkerGauges(_ context.Context, _ string, g telemetry.WorkerGauges) {
+	g.Apply()
+}
+
+// fleetOf is the fleet a mock-based worker test builds its worker over, with
+// the metrics of a single instance.
+func fleetOf(ops Ops, pl Placement) Fleet {
+	return Fleet{Ops: ops, Placement: pl, Metrics: localMetrics{}}
 }
 
 // passOf returns a pass's tally, failing the test when the pass errored, so a
@@ -175,8 +194,8 @@ var (
 // integrity off, which is the shape most replication tests want: copies move
 // verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate
 // set its integrity section and pass their own decoders through ReplicatorDeps.
-func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator {
-	return NewReplicator(&ReplicatorDeps{Ops: ops, Placement: pl, Store: store, Config: defaultReplication, Integrity: defaultIntegrity})
+func newTestReplicator(f Fleet, store ReplicatorStore) *Replicator {
+	return NewReplicator(&ReplicatorDeps{Fleet: f, Store: store, Config: defaultReplication, Integrity: defaultIntegrity})
 }
 
 // admitClaims has pl accept every copy-target claim, recording each intent

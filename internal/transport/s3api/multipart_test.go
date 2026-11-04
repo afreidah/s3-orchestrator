@@ -726,7 +726,6 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mockStore,
 		}),
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)

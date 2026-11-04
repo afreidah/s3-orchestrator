@@ -116,7 +116,7 @@ func (h *Handler) streamPass[R any](w http.ResponseWriter, r *http.Request, p *P
 // itself stops with the request context.
 func newEventStream(w http.ResponseWriter) func(adminstream.Event) {
 	clearWriteDeadline(w)
-	w.Header().Set("Content-Type", adminstream.ContentType)
+	w.Header().Set(httputil.HeaderContentType, adminstream.ContentType)
 	enc := json.NewEncoder(w)
 	flusher, canFlush := w.(http.Flusher)
 	var mu sync.Mutex

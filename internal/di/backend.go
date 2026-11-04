@@ -377,43 +377,51 @@ func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
 }
 
 // ProvideBackendRuntime builds the backend runtime: the fleet registry,
-// admission semaphore, timeout policy, error classification, and metrics
-// collector, over the shared usage tracker. A first-class,
-// independently-resolvable dependency that workers, drain and every proxy
-// collaborator share.
+// admission semaphore, timeout policy and error classification, over the
+// shared usage tracker. A first-class, independently-resolvable dependency
+// that workers, drain and every proxy collaborator share.
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
-	live := r.Resolve[*config.Live]()
 	br := r.Resolve[*BackendsResult]()
-	metricsDeps := r.Resolve[metrics.Deps]()
 	usage := r.Resolve[*counter.UsageTracker]()
-	shared := r.Resolve[*sharedstate.Shared]()
 	if r.err != nil {
 		return nil, r.err
 	}
 
 	// Baselines are empty until the quota flush service primes them from
 	// backend_quotas, which it does before the listener accepts a request.
-	quota := counter.NewQuotaTracker()
+	return infra.New(&infra.Config{
+		Backends:        br.Backends,
+		Order:           br.Order,
+		BackendTimeout:  cfg.Server.BackendTimeout,
+		Usage:           usage,
+		Quota:           counter.NewQuotaTracker(),
+		RoutingStrategy: cfg.RoutingStrategy,
+		Profiles:        br.Profiles,
+		AdmissionSem:    admissionSemFor(&cfg.Server),
+	}), nil
+}
 
-	collector := metrics.New(&metrics.CollectorDeps{
-		Store:             metricsDeps,
+// ProvideMetricsCollector builds the collector that publishes the quota,
+// fleet and worker gauges, sharing them through the shared state when several
+// instances run.
+func ProvideMetricsCollector(i do.Injector) (*metrics.Collector, error) {
+	r := NewResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
+	store := r.Resolve[metrics.Deps]()
+	usage := r.Resolve[*counter.UsageTracker]()
+	shared := r.Resolve[*sharedstate.Shared]()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return metrics.New(&metrics.CollectorDeps{
+		Store:             store,
 		Usage:             usage,
 		ReplicationFactor: func() int { return live.Load().Replication.Factor },
 		Shared:            shared,
 		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,
-	})
-	return infra.New(&infra.Config{
-		Backends:         br.Backends,
-		Order:            br.Order,
-		BackendTimeout:   cfg.Server.BackendTimeout,
-		Usage:            usage,
-		Quota:            quota,
-		RoutingStrategy:  cfg.RoutingStrategy,
-		Profiles:         br.Profiles,
-		MetricsCollector: collector,
-		AdmissionSem:     admissionSemFor(&cfg.Server),
 	}), nil
 }
 
@@ -468,13 +476,17 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
+	collector := r.Resolve[*metrics.Collector]()
 	stores := r.Resolve[metadataStore]()
 	scrubber := r.Resolve[*worker.Scrubber]()
 	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return dashboard.New(stores, rt.Usage(), scrubber, rt, states), nil
+	return dashboard.New(&dashboard.Deps{
+		Store: stores, Usage: rt.Usage(), Scrub: scrubber,
+		Fleet: rt, Snapshots: collector, Drain: states,
+	}), nil
 }
 
 // ProvideExpiryManager builds the lifecycle-expiration manager over the

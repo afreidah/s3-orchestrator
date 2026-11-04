@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Builds the two collaborators every worker takes - an Ops (the backend
-// runtime) and a Placement (the write coordinator) - directly from their own
-// constructors. Workers depend on those two interfaces and nothing else, so a
-// worker test needs no proxy stack and none of the composition around it.
+// Builds the fleet every worker takes - an Ops (the backend runtime), a
+// Placement (the write coordinator) and the metrics collector - directly from
+// their own constructors. Workers depend on those interfaces and nothing else,
+// so a worker test needs no proxy stack and none of the composition around it.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -69,12 +69,13 @@ func (d drainingSet) Flags(name string) core.BackendFlags {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// newFleet builds the runtime and coordinator a worker is constructed from.
-// The store is the wide metadata store; each worker constructor narrows it to
-// its own role interface.
+// newFleet builds the fleet a worker is constructed from: the runtime, the
+// coordinator, and a metrics collector over the store. The runtime is returned
+// as well for the assertions that read its counters. The store is the wide
+// metadata store; each worker constructor narrows it to its own role interface.
 func newFleet(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
-) (*infra.BackendRuntime, *writepath.Coordinator) {
+) (*infra.BackendRuntime, Fleet) {
 	t.Helper()
 	if opts == nil {
 		opts = &fleetOpts{}
@@ -93,13 +94,12 @@ func newFleet(
 		routing = config.RoutingPack
 	}
 	rt := infra.New(&infra.Config{
-		Backends:         backends,
-		Order:            names,
-		BackendTimeout:   fleetTimeout,
-		Usage:            usage,
-		Quota:            newFleetQuota(names, opts.QuotaBaselines),
-		RoutingStrategy:  routing,
-		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
+		Backends:        backends,
+		Order:           names,
+		BackendTimeout:  fleetTimeout,
+		Usage:           usage,
+		Quota:           newFleetQuota(names, opts.QuotaBaselines),
+		RoutingStrategy: routing,
 	})
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))
@@ -108,7 +108,11 @@ func newFleet(
 		}
 		rt.SetStateChecker(d)
 	}
-	return rt, writepath.New(rt, store)
+	return rt, Fleet{
+		Ops:       rt,
+		Placement: writepath.New(rt, store),
+		Metrics:   metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
+	}
 }
 
 // loadUsage returns a backend's unflushed counters as a fresh value, for the
@@ -155,9 +159,9 @@ func newCleanupFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) (*CleanupWorker, *infra.BackendRuntime) {
 	t.Helper()
-	rt, _ := newFleet(t, store, backends, opts)
+	rt, f := newFleet(t, store, backends, opts)
 	return NewCleanupWorker(CleanupWorkerDeps{
-		Ops: rt, Store: store, Concurrency: 10,
+		Ops: rt, Metrics: f.Metrics, Store: store, Concurrency: 10,
 		InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute,
 	}), rt
 }
@@ -167,8 +171,8 @@ func newReplicatorFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *Replicator {
 	t.Helper()
-	rt, coord := newFleet(t, store, backends, opts)
-	return newTestReplicator(rt, coord, store)
+	_, f := newFleet(t, store, backends, opts)
+	return newTestReplicator(f, store)
 }
 
 // newRebalancerFor builds a Rebalancer over a fleet of the named backends.
@@ -176,8 +180,8 @@ func newRebalancerFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *Rebalancer {
 	t.Helper()
-	rt, coord := newFleet(t, store, backends, opts)
-	return NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
+	_, f := newFleet(t, store, backends, opts)
+	return NewRebalancer(RebalancerDeps{Fleet: f, Store: store, Config: defaultRebalance})
 }
 
 // newDrainerFor builds a Drainer over a fleet of the named backends. Aborting
@@ -186,11 +190,8 @@ func newDrainerFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *Drainer {
 	t.Helper()
-	rt, coord := newFleet(t, store, backends, opts)
-	return NewDrainer(DrainerDeps{
-		Ops: rt, Placement: coord, Store: store,
-		AbortUploads: func(context.Context, string) {},
-	})
+	_, f := newFleet(t, store, backends, opts)
+	return NewDrainer(DrainerDeps{Fleet: f, Store: store, AbortUploads: func(context.Context, string) {}})
 }
 
 // newOverRepFor builds an OverReplicationCleaner over a fleet of the named
@@ -199,6 +200,6 @@ func newOverRepFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *OverReplicationCleaner {
 	t.Helper()
-	rt, coord := newFleet(t, store, backends, opts)
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultReplication})
+	_, f := newFleet(t, store, backends, opts)
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: f, Store: store, Config: defaultReplication})
 }

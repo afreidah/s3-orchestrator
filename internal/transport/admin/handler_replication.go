@@ -79,13 +79,8 @@ type replicationSnapshotter interface {
 // handleReplicationStatus returns the last-computed replication backlog
 // (under-replicated and over-replicated counts plus the factor), served from
 // the fleet snapshot so it can be polled cheaply and every instance gives the
-// same answer. Returns 503 when the collector is not wired or no snapshot has
-// been computed yet.
+// same answer. Returns 503 when no snapshot has been computed yet.
 func (h *Handler) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	if h.d.ReplMetrics == nil {
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "replication status not available")
-		return
-	}
 	snap := h.d.ReplMetrics.ReplicationSnapshot(r.Context())
 	if !snap.Ready {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "replication status not yet computed")

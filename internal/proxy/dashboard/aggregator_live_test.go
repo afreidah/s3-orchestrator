@@ -9,12 +9,14 @@
 // the interesting cases are the ones where a dependency is absent or errors.
 //
 // These exercise the aggregator directly against the DashboardStore and
-// FleetView mocks instead of standing up a full proxy stack.
+// FleetView mocks and a fixed snapshot instead of standing up a full proxy
+// stack.
 // -------------------------------------------------------------------------------
 
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -50,17 +52,31 @@ func emptySnapshot() *metrics.FleetSnapshot {
 	}
 }
 
-// expectSnapshot has fleet serve snap as the fleet snapshot, however many
-// times the aggregator asks.
-func expectSnapshot(fleet *MockFleetView, snap *metrics.FleetSnapshot) {
-	fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(snap, nil).AnyTimes()
+// snapshotOf serves snap, or err, as the fleet snapshot however many times the
+// aggregator asks.
+type snapshotOf struct {
+	snap *metrics.FleetSnapshot
+	err  error
 }
 
-// newStubFleet returns a FleetView serving snap over an idle fleet of the
-// named backends, each serving every call with no flags set.
-func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot, order ...string) *MockFleetView {
+// FleetSnapshot returns the snapshot, or the error, the test set.
+func (s snapshotOf) FleetSnapshot(context.Context) (*metrics.FleetSnapshot, error) {
+	return s.snap, s.err
+}
+
+// liveAggregator builds an aggregator over fleet and drain, with an empty
+// snapshot and a store and usage tracker that answer every read.
+func liveAggregator(ctrl *gomock.Controller, fleet FleetView, drain DrainProgressReader) *Aggregator {
+	return New(&Deps{
+		Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
+		Fleet: fleet, Snapshots: snapshotOf{snap: emptySnapshot()}, Drain: drain,
+	})
+}
+
+// newStubFleet returns a FleetView over an idle fleet of the named backends,
+// each serving every call with no flags set.
+func newStubFleet(ctrl *gomock.Controller, order ...string) *MockFleetView {
 	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, snap)
 	fleet.EXPECT().BackendOrder().Return(order).AnyTimes()
 	fleet.EXPECT().Profile(gomock.Any()).Return(core.BackendProfile{}).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
@@ -69,12 +85,10 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot, order ..
 	return fleet
 }
 
-// newLiveFleet returns a FleetView serving an empty snapshot over the named
-// backends, each with an empty profile. Each test states the flags and served
-// calls it is about.
+// newLiveFleet returns a FleetView over the named backends, each with an empty
+// profile. Each test states the flags and served calls it is about.
 func newLiveFleet(ctrl *gomock.Controller, order ...string) *MockFleetView {
 	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return(order).AnyTimes()
 	fleet.EXPECT().Profile(gomock.Any()).Return(core.BackendProfile{}).AnyTimes()
 	return fleet
@@ -109,7 +123,7 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
 	fleet.EXPECT().Unsupported("b1").Return(core.FeatureRange).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	agg := liveAggregator(ctrl, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -135,7 +149,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported("b1").Return(core.BackendFeatures(0)).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	agg := liveAggregator(ctrl, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -166,7 +180,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), "draining").
 		Return(&backendstate.DrainProgress{Active: true, ObjectsRemaining: 6, ObjectsMoved: 4}, nil).Times(1)
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
+	agg := liveAggregator(ctrl, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -199,7 +213,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("boom")).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
+	agg := liveAggregator(ctrl, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -220,7 +234,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	agg := liveAggregator(ctrl, fleet, nil)
 	data, err := agg.GetData(t.Context())
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
@@ -238,7 +252,6 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
@@ -246,7 +259,7 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	want := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "b", MaxObjectSize: 5 << 30}
 	fleet.EXPECT().Profile("b1").Return(want).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	agg := liveAggregator(ctrl, fleet, nil)
 	data, err := agg.GetStatus(t.Context())
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)

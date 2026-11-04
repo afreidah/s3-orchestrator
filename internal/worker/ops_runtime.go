@@ -5,12 +5,14 @@
 //
 // The non-store infrastructure the background workers need from the proxy
 // layer: backend fleet discovery, admission gating, data-movement primitives,
-// and usage accounting, plus the store-coupled placement facet.
+// and usage accounting, plus the store-coupled placement facet and the metrics
+// a worker reports through. Fleet bundles the three every data-moving worker
+// takes.
 // -------------------------------------------------------------------------------
 
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,Placement,BackendSyncer,FleetOps,UsageReconciler
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,Placement,Metrics,BackendSyncer,FleetOps,UsageReconciler
 
 import (
 	"context"
@@ -18,9 +20,12 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // Ops is the subset of *infra.BackendRuntime every background worker takes.
@@ -42,7 +47,31 @@ type Ops interface {
 	Usage() *counter.UsageTracker
 	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
-	UpdateQuotaMetrics(ctx context.Context) error
+}
+
+// Metrics is what a worker reports through: the quota gauges a pass that moved
+// data refreshes, and the fleet-wide gauges a lock holder publishes.
+// *metrics.Collector satisfies it.
+type Metrics interface {
+	cycle.Refresher
+	telemetry.GaugePublisher
+}
+
+// Fleet is what every data-moving worker draws on: the backend runtime, the
+// write coordinator, and the metrics it reports through. A worker's Deps embed
+// it, and its constructor checks it with mustBeWired.
+type Fleet struct {
+	Ops       Ops
+	Placement Placement
+	Metrics   Metrics
+}
+
+// mustBeWired panics unless every part of the fleet is set, since a missing
+// one is a wiring bug that would otherwise surface on the first pass.
+func (f *Fleet) mustBeWired() {
+	must.NotNil("d.Ops", f.Ops)
+	must.NotNil("d.Placement", f.Placement)
+	must.NotNil("d.Metrics", f.Metrics)
 }
 
 // Placement is the store-coupled write-path facet (target selection, claim,

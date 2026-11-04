@@ -67,7 +67,7 @@ func signedServer(t *testing.T, admin map[core.Resource]core.PermissionSet) stri
 	}
 
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		Registry: func() *auth.BucketRegistry { return registry },
 		LogLevel: &lv,
 	}}
@@ -231,7 +231,7 @@ func TestSigned_ConfigDeclaresTheRootCredential(t *testing.T) {
 	}
 
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		Registry: func() *auth.BucketRegistry { return registry },
 		LogLevel: &lv,
 	}}

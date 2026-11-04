@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -228,7 +229,7 @@ type quotaMetricsHook struct {
 
 func (*quotaMetricsHook) Name() string { return "quota_metrics" }
 func (h *quotaMetricsHook) Apply(ctx context.Context, _ *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
-		return rt.UpdateQuotaMetrics(ctx)
+	return applyResolved(h.inj, "metrics collector", func(mc *metrics.Collector) error {
+		return mc.UpdateQuotaMetrics(ctx)
 	})
 }

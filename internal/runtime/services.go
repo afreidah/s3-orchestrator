@@ -24,7 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -48,7 +48,7 @@ type bootstrapped struct {
 	objects   *object.Manager
 	multipart *multipart.Manager
 	usage     *usage.Service
-	runtime   *infra.BackendRuntime
+	metrics   *metrics.Collector
 	detached  *writepath.DetachedUploads
 	lifecyc   *lifecycle.Manager
 }
@@ -68,7 +68,7 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 	b := bootstrapped{
 		store:     r.Resolve[core.LifecycleAdmin](),
 		breaker:   r.Resolve[*breaker.CircuitBreaker](),
-		runtime:   r.Resolve[*infra.BackendRuntime](),
+		metrics:   r.Resolve[*metrics.Collector](),
 		objects:   r.Resolve[*object.Manager](),
 		multipart: r.Resolve[*multipart.Manager](),
 		usage:     r.Resolve[*usage.Service](),
@@ -90,7 +90,7 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 	}
 
 	ctx := context.Background()
-	if err := b.runtime.UpdateQuotaMetrics(ctx); err != nil {
+	if err := b.metrics.UpdateQuotaMetrics(ctx); err != nil {
 		slog.WarnContext(ctx, "initial quota metrics refresh failed",
 			logfmt.Component("runtime"),
 			"error", err,

@@ -102,6 +102,7 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideUsageTracker)
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendRuntime)
+	do.Provide(inj, ProvideMetricsCollector)
 	do.Provide(inj, ProvideWriteCoordinator)
 	do.Provide(inj, ProvideDetachedUploads)
 	do.Provide(inj, ProvideMultipartManager)

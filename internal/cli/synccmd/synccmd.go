@@ -33,12 +33,8 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// synccmdLogger returns the scoped logger for the synccmd CLI; built
-// lazily so init-time slog state is captured rather than a stale
-// snapshot.
-func synccmdLogger() *slog.Logger {
-	return slog.Default().With(logfmt.Component("synccmd"))
-}
+// logComponent names the sync command's log lines.
+const logComponent = "synccmd"
 
 // Options holds the parsed CLI flags for `s3-orchestrator sync`.
 type Options struct {
@@ -70,13 +66,13 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 	}
 	defer adminDB.Close()
 	if err := refuseDrained(ctx, adminDB, backendCfg.Name); err != nil {
-		synccmdLogger().ErrorContext(ctx, "sync refused", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "sync refused", "error", err)
 		return 1
 	}
 
 	s3b, err := backend.NewS3Backend(ctx, backendCfg)
 	if err != nil {
-		synccmdLogger().ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
 		return 1
 	}
 
@@ -88,7 +84,7 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 		cmp.Or(cfg.Compression.ChunkSize, config.DefaultCompressionChunkSize),
 	)
 	if err != nil {
-		synccmdLogger().ErrorContext(ctx, "failed to initialize compression codec", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to initialize compression codec", "error", err)
 		return 1
 	}
 	defer codec.Close()
@@ -101,7 +97,7 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 		Opts:       opts,
 	}
 	if err := runImport(ctx, s3b, run); err != nil {
-		synccmdLogger().ErrorContext(ctx, "sync failed", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "sync failed", "error", err)
 		return 1
 	}
 	return 0
@@ -141,7 +137,7 @@ func bucketNames(cfg *config.Config) []string {
 func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig, int) {
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
-		synccmdLogger().ErrorContext(context.Background(), "Failed to load config", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(context.Background(), "Failed to load config", "error", err)
 		return nil, nil, 1
 	}
 	for i := range cfg.Backends {
@@ -149,7 +145,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 			return cfg, &cfg.Backends[i], 0
 		}
 	}
-	synccmdLogger().ErrorContext(context.Background(), "Backend not found in config", "backend", backendName)
+	logfmt.Logger(logComponent).ErrorContext(context.Background(), "Backend not found in config", "backend", backendName)
 	return nil, nil, 1
 }
 
@@ -209,15 +205,15 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 		err = fmt.Errorf("unsupported database driver: %q", cfg.Database.Driver)
 	}
 	if err != nil {
-		synccmdLogger().ErrorContext(ctx, "failed to connect to database", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to connect to database", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.RunMigrations(ctx); err != nil {
-		synccmdLogger().ErrorContext(ctx, "failed to run migrations", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to run migrations", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		synccmdLogger().ErrorContext(ctx, "failed to sync quota limits", "error", err)
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to sync quota limits", "error", err)
 		return nil, nil, 1
 	}
 	return objects, adminDB, 0
@@ -259,7 +255,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	if opts.DryRun {
 		mode = "dry-run"
 	}
-	synccmdLogger().InfoContext(
+	logfmt.Logger(logComponent).InfoContext(
 		ctx, "starting sync",
 		"backend", run.BackendCfg.Name,
 		"virtual_bucket", opts.BucketName,
@@ -276,7 +272,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 			Stores: run.Store,
 			Codec:  run.Codec,
 			Source: "sync",
-			Log:    synccmdLogger(),
+			Log:    logfmt.Logger(logComponent),
 		},
 		BackendName: run.BackendCfg.Name,
 		Prefixes:    reconcile.BucketPrefixes(run.Buckets),
@@ -286,7 +282,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	// Unmetered: the CLI runs outside the server and holds no usage counters.
 	total, err := pages.ImportListing(ctx, s3b, opts.Prefix, nil, func(page, total reconcile.PageResult) {
 		pageNum++
-		synccmdLogger().InfoContext(
+		logfmt.Logger(logComponent).InfoContext(
 			ctx, "synced page",
 			"page", pageNum, "imported", page.Imported, "skipped", page.Skipped,
 			"total_imported", total.Imported, "total_skipped", total.Skipped,
@@ -296,7 +292,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 		return err
 	}
 
-	synccmdLogger().InfoContext(
+	logfmt.Logger(logComponent).InfoContext(
 		ctx, "sync complete",
 		"backend", run.BackendCfg.Name,
 		"imported", total.Imported,

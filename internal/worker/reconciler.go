@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -79,12 +80,10 @@ type BackendSyncer interface {
 	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*reconcile.Result, error)
 }
 
-// FleetOps is the fleet-wide surface the reconciler walks and republishes:
-// the backends to visit, which of them reconcile accepts, and the quota gauges
-// to refresh once a pass has changed what they report.
-// *infra.BackendRuntime satisfies it.
+// FleetOps is the fleet-wide surface the reconciler walks: the backends to
+// visit, and which of them reconcile accepts. *infra.BackendRuntime satisfies
+// it.
 type FleetOps interface {
-	UpdateQuotaMetrics(ctx context.Context) error
 	BackendOrder() []string
 	Accepted(eligible []string, accept core.BackendFlags) []string
 }
@@ -106,21 +105,20 @@ type BucketNamer interface {
 // Reconciler scans backends for untracked objects and imports them into the
 // metadata database.
 type Reconciler struct {
-	log     *slog.Logger
-	syncer  BackendSyncer
-	fleet   FleetOps
-	usage   UsageReconciler
-	buckets BucketNamer
+	d   ReconcilerDeps
+	log *slog.Logger
 }
 
 // ReconcilerDeps groups what a pass draws on: the diff engine, the fleet it
-// walks, the buckets it recognises, and the counters it corrects once the diff
-// has landed.
+// walks, the buckets it recognises, the counters it corrects once the diff has
+// landed, and the quota gauges it refreshes once a pass changed what they
+// report.
 type ReconcilerDeps struct {
 	Syncer  BackendSyncer
 	Fleet   FleetOps
 	Usage   UsageReconciler
 	Buckets BucketNamer
+	Metrics cycle.Refresher
 }
 
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
@@ -131,13 +129,8 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.Usage", d.Usage)
 	must.NotNil("d.Buckets", d.Buckets)
-	return &Reconciler{
-		log:     workerLogger(audit.WorkloadReconcile),
-		syncer:  d.Syncer,
-		fleet:   d.Fleet,
-		usage:   d.Usage,
-		buckets: d.Buckets,
-	}
+	must.NotNil("d.Metrics", d.Metrics)
+	return &Reconciler{d: *d, log: logfmt.Logger(string(audit.WorkloadReconcile))}
 }
 
 // errNoBuckets refuses a pass with no declared bucket to recognise objects by.
@@ -151,7 +144,7 @@ var errNoBuckets = errors.New("no buckets declared")
 // any object the ledger does not track is imported. It then corrects the
 // usage counters' drift.
 func (r *Reconciler) Run(ctx context.Context) (ReconcileResult, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.fleet}
+	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.d.Metrics}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (ReconcileResult, error) {
 		buckets, err := r.declared()
 		if err != nil {
@@ -176,7 +169,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.fleet}
+	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.d.Metrics}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (ReconcileResult, error) {
 		return r.pass(ctx, backends, buckets, observer, r.reconcileFully), nil
 	})
@@ -189,7 +182,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer
 // declared returns the buckets a pass recognises objects by, refusing a pass
 // when there are none.
 func (r *Reconciler) declared() ([]string, error) {
-	buckets := r.buckets.Names()
+	buckets := r.d.Buckets.Names()
 	if len(buckets) == 0 {
 		return nil, errNoBuckets
 	}
@@ -217,14 +210,14 @@ func (r *Reconciler) pass(ctx context.Context, backends, buckets []string, obser
 // importUntracked imports the objects on one backend that the ledger does not
 // track, and removes nothing.
 func (r *Reconciler) importUntracked(ctx context.Context, name string, buckets []string) (ReconcileResult, error) {
-	imported, skipped, err := r.syncer.SyncBackend(ctx, name, "", buckets)
+	imported, skipped, err := r.d.Syncer.SyncBackend(ctx, name, "", buckets)
 	return ReconcileResult{Imported: imported, NotImported: skipped}, err
 }
 
 // reconcileFully imports one backend's untracked objects and removes its
 // stale rows. A failed reconcile still reports what it did before failing.
 func (r *Reconciler) reconcileFully(ctx context.Context, name string, buckets []string) (ReconcileResult, error) {
-	found, err := r.syncer.ReconcileBackend(ctx, name, buckets)
+	found, err := r.d.Syncer.ReconcileBackend(ctx, name, buckets)
 	if found == nil {
 		return ReconcileResult{}, err
 	}
@@ -240,7 +233,7 @@ func (r *Reconciler) reconcileFully(ctx context.Context, name string, buckets []
 // (drift can exist with zero imports); a failure is logged and swallowed so it
 // never aborts the reconcile cycle.
 func (r *Reconciler) reconcileUsage(ctx context.Context) {
-	adjustments, err := r.usage.ReconcileUsage(ctx)
+	adjustments, err := r.d.Usage.ReconcileUsage(ctx)
 	if err != nil {
 		r.log.WarnContext(ctx, "usage reconciliation failed", "error", err)
 		return
@@ -258,7 +251,7 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 // flags reconcile accepts. A drain is refused, since importing from it would
 // re-add rows the drain is moving off; a cordon is not.
 func (r *Reconciler) scannable() []string {
-	return r.fleet.Accepted(r.fleet.BackendOrder(), core.AcceptForReconcile)
+	return r.d.Fleet.Accepted(r.d.Fleet.BackendOrder(), core.AcceptForReconcile)
 }
 
 // backendsFor returns the backends an operator-driven reconcile scans: the one
@@ -267,7 +260,7 @@ func (r *Reconciler) backendsFor(backendName string) ([]string, error) {
 	if backendName == "" {
 		return r.scannable(), nil
 	}
-	if len(r.fleet.Accepted([]string{backendName}, core.AcceptForReconcile)) == 0 {
+	if len(r.d.Fleet.Accepted([]string{backendName}, core.AcceptForReconcile)) == 0 {
 		return nil, fmt.Errorf("backend %q has a drain record; reconcile skips it", backendName)
 	}
 	return []string{backendName}, nil

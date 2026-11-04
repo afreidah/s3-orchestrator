@@ -239,7 +239,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		opts.Encryptor = h.enc
 	}
 	if spec.Compression != nil {
-		codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel,spec.Compression.ChunkSize)
+		codec, err := compression.NewCodecForLevel(config.DefaultCompressionLevel, spec.Compression.ChunkSize)
 		if err != nil {
 			t.Fatalf("harness codec: %v", err)
 		}
@@ -260,7 +260,6 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		Order:           h.order,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: routing,
-		Metrics:         newMetricsAdapter(h.store),
 	})
 	h.stack = proxytest.New(t, stores, &opts)
 	// The tracker starts empty, so admission would judge every write against a

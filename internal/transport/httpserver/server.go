@@ -119,7 +119,7 @@ func New(deps Deps) (*Server, error) {
 		metrics:        metricsSrv,
 		certReloader:   reloader,
 		requireMetrics: deps.Cfg.Telemetry.Metrics.ListenerRequired(),
-		log:            slog.Default().With(logfmt.Component("httpserver")),
+		log:            logfmt.Logger("httpserver"),
 	}, nil
 }
 

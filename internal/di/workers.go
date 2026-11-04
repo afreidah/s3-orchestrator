@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // One Provide<Worker> per background worker. Each provider invokes the
-// backend runtime (which satisfies worker.Ops),
-// the write coordinator, and the opened store, which already satisfies every
+// backend runtime (which satisfies worker.Ops), the write coordinator, the
+// metrics collector, and the opened store, which already satisfies every
 // per-worker store contract via implicit interface satisfaction, plus the
 // running configuration each worker reads its section from. resolveWorkerCore
 // centralizes that dependency pattern so each provider stays a single short
@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -36,11 +37,12 @@ import (
 // -------------------------------------------------------------------------
 
 // workerCore bundles the dependencies every background worker needs: the
-// runtime, coordinator and store, and the running configuration the workers
-// read their sections from.
+// runtime, coordinator, metrics collector and store, and the running
+// configuration the workers read their sections from.
 type workerCore struct {
 	Runtime *infra.BackendRuntime
 	Coord   *writepath.Coordinator
+	Metrics *metrics.Collector
 	Stores  metadataStore
 	Live    *config.Live
 }
@@ -49,16 +51,22 @@ type workerCore struct {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// workerCoreFrom pulls the runtime, coordinator, store and running config
-// through an in-flight resolver, so a caller that needs more than the core
-// resolves everything in one batch.
+// workerCoreFrom pulls the runtime, coordinator, collector, store and running
+// config through an in-flight resolver, so a caller that needs more than the
+// core resolves everything in one batch.
 func workerCoreFrom(r *Resolver) workerCore {
 	return workerCore{
 		Runtime: r.Resolve[*infra.BackendRuntime](),
 		Coord:   r.Resolve[*writepath.Coordinator](),
+		Metrics: r.Resolve[*metrics.Collector](),
 		Stores:  r.Resolve[metadataStore](),
 		Live:    r.Resolve[*config.Live](),
 	}
+}
+
+// fleet is the fleet every data-moving worker is built over.
+func (c *workerCore) fleet() worker.Fleet {
+	return worker.Fleet{Ops: c.Runtime, Placement: c.Coord, Metrics: c.Metrics}
 }
 
 // resolveWorkerCore resolves the core every worker provider depends on.
@@ -77,9 +85,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores, Config: c.Live.Rebalance()})
-	rb.SetGaugePublisher(c.Runtime)
-	return rb, nil
+	return worker.NewRebalancer(worker.RebalancerDeps{Fleet: c.fleet(), Store: c.Stores, Config: c.Live.Rebalance()}), nil
 }
 
 // ProvideReplicator constructs the replication worker. It takes the encryptor
@@ -95,8 +101,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 		return nil, err
 	}
 	return worker.NewReplicator(&worker.ReplicatorDeps{
-		Ops:       c.Runtime,
-		Placement: c.Coord,
+		Fleet:     c.fleet(),
 		Store:     c.Stores,
 		Config:    c.Live.Replication(),
 		Integrity: c.Live.Integrity(),
@@ -123,7 +128,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores, Config: c.Live.Replication()}), nil
+	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Fleet: c.fleet(), Store: c.Stores, Config: c.Live.Replication()}), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves
@@ -134,20 +139,20 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	rt := r.Resolve[*infra.BackendRuntime]()
+	collector := r.Resolve[*metrics.Collector]()
 	stores := r.Resolve[metadataStore]()
 	id := r.Resolve[instanceid.ID]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	w := worker.NewCleanupWorker(worker.CleanupWorkerDeps{
+	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 		Ops:              rt,
+		Metrics:          collector,
 		Store:            stores,
 		Concurrency:      cfg.CleanupQueue.Concurrency,
 		InstanceID:       id.String(),
 		ClaimGracePeriod: cfg.CleanupQueue.ClaimGracePeriod,
-	})
-	w.SetGaugePublisher(rt)
-	return w, nil
+	}), nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. It is always
@@ -158,15 +163,12 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 		return nil, err
 	}
 	pending := c.Live.Load().WritePath.PendingPattern
-	r := worker.NewPendingReaper(worker.PendingReaperDeps{
-		Ops:       c.Runtime,
-		Placement: c.Coord,
+	return worker.NewPendingReaper(worker.PendingReaperDeps{
+		Fleet:     c.fleet(),
 		Store:     c.Stores,
 		MinAge:    pending.MinAge,
 		BatchSize: pending.BatchSize,
-	})
-	r.SetGaugePublisher(c.Runtime)
-	return r, nil
+	}), nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
@@ -179,16 +181,13 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := worker.NewScrubber(&worker.ScrubberDeps{
-		Ops:       c.Runtime,
-		Placement: c.Coord,
+	return worker.NewScrubber(&worker.ScrubberDeps{
+		Fleet:     c.fleet(),
 		Store:     c.Stores,
 		Config:    c.Live.Integrity(),
 		Encryptor: enc,
 		Codec:     codec,
-	})
-	s.SetGaugePublisher(c.Runtime)
-	return s, nil
+	}), nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered
@@ -199,6 +198,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
+	collector := r.Resolve[*metrics.Collector]()
 	declared := r.Resolve[*provisioning.Declared]()
 	rec := r.Resolve[*reconcile.Manager]()
 	usageSvc := r.Resolve[*usage.Service]()
@@ -210,6 +210,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 		Fleet:   rt,
 		Usage:   usageSvc,
 		Buckets: declared,
+		Metrics: collector,
 	}), nil
 }
 
@@ -239,8 +240,7 @@ func ProvideDrainer(i do.Injector) (*worker.Drainer, error) {
 		return nil, r.err
 	}
 	return worker.NewDrainer(worker.DrainerDeps{
-		Ops:          c.Runtime,
-		Placement:    c.Coord,
+		Fleet:        c.fleet(),
 		Store:        c.Stores,
 		AbortUploads: mp.AbortMultipartUploadsOnBackend,
 		OnRecords:    dm.SetStates,

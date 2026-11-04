@@ -37,8 +37,8 @@ func newTagTestManager(t *testing.T) (*Manager, *storetest.MockMetadataStore) {
 	t.Helper()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	m := newListTestManager(store)
-	m.cache = NewLocationCache(time.Minute)
-	t.Cleanup(m.cache.Close)
+	m.d.LocationCache = NewLocationCache(time.Minute)
+	t.Cleanup(m.d.LocationCache.Close)
 	return m, store
 }
 

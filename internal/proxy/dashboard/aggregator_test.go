@@ -46,7 +46,7 @@ func TestAggregator_Success(t *testing.T) {
 	store := storetest.NewMockDashboardStore(ctrl)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
-	fleet := newStubFleet(ctrl, &metrics.FleetSnapshot{
+	snap := snapshotOf{snap: &metrics.FleetSnapshot{
 		Quota: map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
 		Ledger: core.LedgerStats{"b1": {
 			Objects:    5,
@@ -54,9 +54,9 @@ func TestAggregator_Success(t *testing.T) {
 			Compressed: core.CompressionStat{Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
 		}},
 		Multipart: map[string]int64{"b1": 1},
-	}, "b1")
+	}}
 
-	da := New(store, usage, nil, fleet, nil)
+	da := New(&Deps{Store: store, Usage: usage, Fleet: newStubFleet(ctrl, "b1"), Snapshots: snap})
 	data, err := da.GetData(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 			}
 			c.fail(store, errors.New("db down"))
 
-			da := New(store, stubUsage(ctrl), nil, newStubFleet(ctrl, emptySnapshot()), nil)
+			da := New(&Deps{Store: store, Usage: stubUsage(ctrl), Fleet: newStubFleet(ctrl), Snapshots: snapshotOf{snap: emptySnapshot()}})
 			if _, err := da.GetData(t.Context()); err == nil {
 				t.Fatalf("GetData succeeded despite %s failing", c.name)
 			}
@@ -164,10 +164,10 @@ func TestAggregator_SnapshotFailuresFailGetStatus(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctrl := gomock.NewController(t)
-			fleet := NewMockFleetView(ctrl)
-			fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(c.snap, c.err)
-
-			da := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+			da := New(&Deps{
+				Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
+				Fleet: NewMockFleetView(ctrl), Snapshots: snapshotOf{c.snap, c.err},
+			})
 			if _, err := da.GetStatus(t.Context()); err == nil {
 				t.Fatal("GetStatus succeeded without a complete snapshot")
 			}
@@ -196,7 +196,7 @@ func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 			store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), maxDirectoryChildren).
 				Return(&core.DirectoryListResult{}, nil).Times(1)
 
-			da := New(store, stubUsage(ctrl), nil, nil, nil)
+			da := New(&Deps{Store: store, Usage: stubUsage(ctrl)})
 			if _, err := da.GetDirectoryChildren(t.Context(), "", "", c.maxKeys); err != nil {
 				t.Fatal(err)
 			}
@@ -213,7 +213,7 @@ func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), "photos/", "cat.jpg", 25).
 		Return(&core.DirectoryListResult{}, nil).Times(1)
 
-	da := New(store, stubUsage(ctrl), nil, nil, nil)
+	da := New(&Deps{Store: store, Usage: stubUsage(ctrl)})
 	if _, err := da.GetDirectoryChildren(t.Context(), "photos/", "cat.jpg", 25); err != nil {
 		t.Fatal(err)
 	}

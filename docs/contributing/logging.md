@@ -40,19 +40,12 @@ calls flow through it.
 
 ```go
 type PendingReaper struct {
-    deps  Ops
-    store core.PendingStore
-    log   *slog.Logger
-    // ...
+    d   PendingReaperDeps
+    log *slog.Logger
 }
 
-func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
-    return &PendingReaper{
-        deps:  deps.Ops,
-        store: deps.Store,
-        log:   slog.Default().With(logfmt.Component("pending_reaper")),
-        // ...
-    }
+func NewPendingReaper(d PendingReaperDeps) *PendingReaper {
+    return &PendingReaper{d: d, log: logfmt.Logger("pending_reaper")}
 }
 
 // Use the scoped logger; the message no longer carries the prefix.
@@ -223,7 +216,7 @@ caller: a rejected request, or a background worker acting on its own.
 
 1. Pick a `snake_case` component name (e.g. `vault_token_renewer`).
 2. Add a `log *slog.Logger` field to the struct.
-3. In the constructor, set `log: slog.Default().With(logfmt.Component("name"))`.
+3. In the constructor, set `log: logfmt.Logger("name")`.
 4. Use `r.log.XContext(ctx, ...)` everywhere in the type's methods.
 5. Use the canonical attribute keys from the glossary; if a new key
    is needed, add it to the table above in the same PR.

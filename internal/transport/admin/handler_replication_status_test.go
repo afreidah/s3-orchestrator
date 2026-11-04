@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Covers the replication-status endpoint: the typed snapshot response, 503 when
-// the collector is not wired, and 503 before the first snapshot is computed.
+// Covers the replication-status endpoint: the typed snapshot response, and 503
+// before the first snapshot is computed.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -45,16 +45,6 @@ func TestHandleReplicationStatus_ReturnsSnapshot(t *testing.T) {
 	}
 	if resp.Factor != 2 || resp.UnderReplicated != 143 || resp.OverReplicated != 12 {
 		t.Errorf("resp = %+v", resp)
-	}
-}
-
-func TestHandleReplicationStatus_NotWiredReturns503(t *testing.T) {
-	t.Parallel()
-	h := &Handler{} // replication nil
-	w := httptest.NewRecorder()
-	h.handleReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/replication", nil))
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", w.Code)
 	}
 }
 

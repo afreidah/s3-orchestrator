@@ -15,7 +15,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -41,7 +40,6 @@ func newService(t *testing.T, cfg Config) *Service {
 	cfg.Name = t.Name()
 	cfg.Interval = interval
 	cfg.LockID = core.LockRebalancer
-	cfg.Log = slog.New(slog.DiscardHandler)
 	if cfg.Work == nil {
 		cfg.Work = func(context.Context) error { return nil }
 	}

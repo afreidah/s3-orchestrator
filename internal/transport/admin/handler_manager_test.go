@@ -29,7 +29,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -63,7 +62,6 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)
@@ -72,9 +70,9 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	svc := testOps(st, workers, mock, nil)
-	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		BackendOps: st.Usage,
-		Dashboard:  dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
+		Dashboard:  st.Dashboard(mock),
 		Ops:        svc,
 		Config:     st.Config,
 		States:     st.States,
@@ -257,7 +255,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -650,7 +648,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{DBHealthy: cb.IsHealthy, Ops: &ops.Services{Objects: objectsOver(t, mock)}, LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -840,14 +838,13 @@ func newKnownBackendHandler(t *testing.T, opts ...func(*storetest.MockMetadataSt
 			Backends:        map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()},
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		BackendOps: st.Usage,
-		Dashboard:  dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
+		Dashboard:  st.Dashboard(mock),
 		States:     st.States,
 		StateStore: mock,
 		LogLevel:   &lv,

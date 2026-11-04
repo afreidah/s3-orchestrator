@@ -27,7 +27,7 @@ const DefaultMultipartCleanupTick = 1 * time.Hour
 // NewCleanupService constructs the multipart-cleanup background
 // service backed by mgr.CleanupStaleMultipartUploads, abandoning uploads
 // older than staleTimeout.
-func NewCleanupService(mgr *Manager, locker tickrunner.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
+func NewCleanupService(mgr *Manager, locker core.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: DefaultMultipartCleanupTick,

@@ -18,6 +18,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
 )
 
 // healthCheckTimeout bounds one check so a hung dependency cannot stall the
@@ -44,9 +46,9 @@ type RecoveryProber struct {
 	log      *slog.Logger
 	now      func() time.Time
 
-	mu      sync.Mutex
-	nextDue time.Time
-	backoff time.Duration
+	mu       sync.Mutex
+	nextDue  time.Time
+	failures int32
 }
 
 // Compile-time check.
@@ -71,13 +73,12 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 
 	cb := p.breaker
 	if cb.State() != StateOpen {
-		p.nextDue, p.backoff = time.Time{}, 0
+		p.nextDue, p.failures = time.Time{}, 0
 		return
 	}
 	now := p.now()
 	if p.nextDue.IsZero() {
-		p.backoff = max(cb.openTimeout, DefaultWatchdogInterval)
-		p.nextDue = now.Add(p.backoff)
+		p.nextDue = now.Add(p.wait())
 		return
 	}
 	if now.Before(p.nextDue) {
@@ -92,13 +93,22 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 	cancel()
 	if err == nil {
 		cb.Recover()
-		p.nextDue, p.backoff = time.Time{}, 0
+		p.nextDue, p.failures = time.Time{}, 0
 		return
 	}
 
-	p.backoff = min(p.backoff*2, max(p.recovery.MaxBackoff, cb.openTimeout, DefaultWatchdogInterval))
-	p.nextDue = now.Add(p.backoff)
+	p.failures++
+	wait := p.wait()
+	p.nextDue = now.Add(wait)
 	p.log.WarnContext(ctx, "recovery check failed; circuit stays open",
 		"error", err,
-		"next_check_in", p.backoff)
+		"next_check_in", wait)
+}
+
+// wait returns how long to wait before the next check: the open timeout,
+// doubled per failed check up to MaxBackoff, or up to the open timeout when
+// that is longer. Neither is shorter than the watchdog tick.
+func (p *RecoveryProber) wait() time.Duration {
+	base := max(p.breaker.openTimeout, DefaultWatchdogInterval)
+	return backoff.Exponential{Base: base, Ceiling: max(p.recovery.MaxBackoff, base)}.For(p.failures)
 }

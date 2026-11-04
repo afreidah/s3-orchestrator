@@ -91,7 +91,7 @@ func authzMux(t *testing.T, mock core.ObjectStore, perms core.PermissionSet, adm
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	registry := registryGranting(t, perms, admin)
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		DBHealthy: cb.IsHealthy,
 		Ops:       &ops.Services{Objects: objectsOver(t, mock)},
 		Registry:  func() *auth.BucketRegistry { return registry },
@@ -158,7 +158,7 @@ func routeFor(t *testing.T, method, pattern string) *route {
 func decideAdmin(t *testing.T, admin map[core.Resource]core.PermissionSet, rt *route, target string) bool {
 	t.Helper()
 	registry := registryGranting(t, 0, admin)
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+	h := &Handler{log: logfmt.Logger("admin"), d: Deps{
 		Registry: func() *auth.BucketRegistry { return registry },
 	}}
 	r := asGranted(t, rt.Method, target)

@@ -44,9 +44,7 @@ type Deps struct {
 // Service flushes usage counters to the store and reconciles the drift the
 // incremental counter accumulates.
 type Service struct {
-	usage  *counter.UsageTracker
-	quota  *counter.QuotaTracker
-	stores Stores
+	d Deps
 }
 
 // New constructs the service. Usage, Quota and Stores are required.
@@ -55,7 +53,7 @@ func New(d *Deps) *Service {
 	must.NotNil("d.Usage", d.Usage)
 	must.NotNil("d.Quota", d.Quota)
 	must.NotNil("d.Stores", d.Stores)
-	return &Service{usage: d.Usage, quota: d.Quota, stores: d.Stores}
+	return &Service{d: *d}
 }
 
 // -------------------------------------------------------------------------
@@ -65,7 +63,7 @@ func New(d *Deps) *Service {
 // FlushUsage writes this instance's counters, and with Redis the staged shared
 // ones, to the store.
 func (s *Service) FlushUsage(ctx context.Context) error {
-	return s.usage.FlushUsage(ctx, s.stores)
+	return s.d.Usage.FlushUsage(ctx, s.d.Stores)
 }
 
 // ReconcileUsage recomputes each backend's stored byte count from the object
@@ -73,7 +71,7 @@ func (s *Service) FlushUsage(ctx context.Context) error {
 // It then refreshes the quota baselines, or admission would keep judging writes
 // against the replaced totals.
 func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
-	adjustments, err := s.stores.ReconcileUsage(ctx)
+	adjustments, err := s.d.Stores.ReconcileUsage(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -92,11 +90,11 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 // first write is judged against real rows rather than an empty snapshot, and
 // after every flush so the deltas just written are not counted twice.
 func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
-	stats, err := s.stores.GetQuotaStats(ctx)
+	stats, err := s.d.Stores.GetQuotaStats(ctx)
 	if err != nil {
 		return fmt.Errorf("read backend quota usage: %w", err)
 	}
-	s.quota.SetBaselines(stats)
+	s.d.Quota.SetBaselines(stats)
 	return nil
 }
 
@@ -104,6 +102,6 @@ func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
 // their health. The fleet snapshot and worker gauges are then shared through
 // it too.
 func (s *Service) RedisCounterConfigured() bool {
-	_, ok := s.usage.Backend().(counter.SharedBackend)
+	_, ok := s.d.Usage.Backend().(counter.SharedBackend)
 	return ok
 }

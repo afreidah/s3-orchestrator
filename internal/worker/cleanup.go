@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cleanup"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -33,12 +34,9 @@ import (
 
 // CleanupWorker processes the cleanup queue rows no request is settling.
 type CleanupWorker struct {
-	log              *slog.Logger
-	store            core.CleanupStore
-	settler          *cleanup.Settler
-	instanceID       string
-	claimGracePeriod time.Duration
-	telemetry.SharedGauges
+	d       CleanupWorkerDeps
+	log     *slog.Logger
+	settler *cleanup.Settler
 }
 
 // CleanupWorkerDeps groups the cleanup worker's constructor parameters.
@@ -47,6 +45,7 @@ type CleanupWorker struct {
 // reclaimable by another worker tick (typically 5m).
 type CleanupWorkerDeps struct {
 	Ops              Ops
+	Metrics          Metrics
 	Store            core.CleanupStore
 	Concurrency      int
 	InstanceID       string
@@ -56,20 +55,21 @@ type CleanupWorkerDeps struct {
 // NewCleanupWorker creates a CleanupWorker with the given dependencies. Each
 // backend's delete runs under an admission slot, so a tick competes for
 // backend capacity like every other worker.
-func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Store", deps.Store)
+//
+//nolint:gocritic // hugeParam: the Deps are copied once, at construction.
+func NewCleanupWorker(d CleanupWorkerDeps) *CleanupWorker {
+	must.NotNil("d.Ops", d.Ops)
+	must.NotNil("d.Metrics", d.Metrics)
+	must.NotNil("d.Store", d.Store)
 	return &CleanupWorker{
-		store: deps.Store,
+		d: d,
 		settler: cleanup.New(cleanup.Deps{
-			Deleter:     deps.Ops,
-			Store:       deps.Store,
-			Concurrency: deps.Concurrency,
-			Admission:   deps.Ops,
+			Deleter:     d.Ops,
+			Store:       d.Store,
+			Concurrency: d.Concurrency,
+			Admission:   d.Ops,
 		}),
-		instanceID:       deps.InstanceID,
-		claimGracePeriod: deps.ClaimGracePeriod,
-		log:              workerLogger(audit.WorkloadCleanup),
+		log: logfmt.Logger(string(audit.WorkloadCleanup)),
 	}
 }
 
@@ -109,8 +109,8 @@ func (w *CleanupWorker) processCleanupQueue(ctx context.Context) (batch.Summary,
 	pager := batch.Pager[core.CleanupItem, struct{}]{
 		PageSize: batch.FixedPage(cleanupClaimBatch),
 		List: func(ctx context.Context, limit int, _ struct{}) ([]core.CleanupItem, error) {
-			graceCutoff := time.Now().Add(-w.claimGracePeriod)
-			return w.store.ClaimPendingCleanups(ctx, limit, w.instanceID, graceCutoff)
+			graceCutoff := time.Now().Add(-w.d.ClaimGracePeriod)
+			return w.d.Store.ClaimPendingCleanups(ctx, limit, w.d.InstanceID, graceCutoff)
 		},
 	}
 	var total batch.Summary
@@ -147,7 +147,7 @@ func (w *CleanupWorker) reportReclaimed(ctx context.Context, items []core.Cleanu
 			slog.Int64("cleanup_id", item.ID),
 			slog.String("backend", item.BackendName),
 			slog.String("key", item.ObjectKey),
-			slog.String("reclaimed_by", w.instanceID),
+			slog.String("reclaimed_by", w.d.InstanceID),
 		)
 	}
 }
@@ -157,11 +157,11 @@ func (w *CleanupWorker) reportReclaimed(ctx context.Context, items []core.Cleanu
 // are purely informational.
 func (w *CleanupWorker) recordCleanupDepths(ctx context.Context) {
 	var g telemetry.WorkerGauges
-	if depth, err := w.store.CleanupQueueDepth(ctx); err == nil {
+	if depth, err := w.d.Store.CleanupQueueDepth(ctx); err == nil {
 		g.CleanupQueueDepth = &depth
 	}
-	if dlqDepth, err := w.store.CleanupDLQDepth(ctx); err == nil {
+	if dlqDepth, err := w.d.Store.CleanupDLQDepth(ctx); err == nil {
 		g.CleanupDLQDepth = &dlqDepth
 	}
-	w.PublishGauges(ctx, telemetry.GaugeSourceCleanup, g)
+	w.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourceCleanup, g)
 }

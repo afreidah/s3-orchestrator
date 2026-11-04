@@ -67,7 +67,7 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockOps, *MockPlacement, *backendt
 	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	expectUsage(ops, counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil))
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: pl, Store: ms, Config: syncutil.Fixed(&config.IntegrityConfig{
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: syncutil.Fixed(&config.IntegrityConfig{
 		Enabled:           true,
 		ScrubberBatchSize: 100,
 	})})
@@ -320,7 +320,7 @@ func TestScrub_FloorIsSharedByBothQueries(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, limitedUsage(t))
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberMinAge: 6 * time.Hour})
 
 	passOf(t)(s.Scrub(context.Background(), 10, "", nil))
@@ -742,7 +742,7 @@ func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, limitedUsage(t))
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := passOf(t)(s.Scrub(context.Background(), 10, "", nil))
@@ -772,7 +772,7 @@ func reserveScrubber(t *testing.T, spent int64, reserve *float64) (*Scrubber, *c
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, tracker)
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve})
 	return s, tracker, ms
 }
@@ -873,7 +873,7 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, limitedUsage(t))
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := passOf(t)(s.Scrub(context.Background(), 10, "", nil))
@@ -907,7 +907,7 @@ func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, limitedUsage(t))
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := passOf(t)(s.Scrub(context.Background(), 10, "", nil))
@@ -1046,7 +1046,7 @@ func TestScrubKey_AdmitsLikeAClientRead(t *testing.T) {
 					return &backend.GetObjectResult{Body: io.NopCloser(strings.NewReader("hello world")), Size: 11},
 						context.CancelFunc(func() {}), nil
 				}).AnyTimes()
-			s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+			s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
 
 			results, err := s.ScrubKey(context.Background(), "bucket/k")
 			if err != nil {
@@ -1129,7 +1129,7 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 		{ObjectKey: "bucket/big", BackendName: "b1", SizeBytes: 4096, ContentHash: hashString("x")},
 	}
 
-	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultIntegrity})
+	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultIntegrity})
 	// No reserve, so the backend passes the batch split and only the copy's own
 	// size is refused.
 	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)})

@@ -68,7 +68,6 @@ func newTestServerWithQuota(
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
 			QuotaBaselines:  baselines,
-			Metrics:         mockStore,
 		}),
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
@@ -404,7 +403,6 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 			Order:           []string{"b1"},
 			Profiles:        map[string]core.BackendProfile{"b1": {MaxObjectSize: 1}},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mockStore,
 		}),
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)

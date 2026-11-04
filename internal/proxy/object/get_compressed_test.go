@@ -321,7 +321,7 @@ func TestCompressedGet_CarriesBackendMetadata(t *testing.T) {
 func TestCompressedGet_WithoutCodecFailsOver(t *testing.T) {
 	t.Parallel()
 	fx := seedCompressed(t, compressibleBody(4096), nil)
-	fx.fleet.codec = nil
+	fx.fleet.d.Codec = nil
 
 	if _, err := fx.fleet.GetObject(context.Background(), fx.loc.ObjectKey, ""); err == nil {
 		t.Fatal("GetObject succeeded with no codec for a compressed object")

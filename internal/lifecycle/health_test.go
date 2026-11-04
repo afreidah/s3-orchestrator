@@ -20,10 +20,12 @@ import (
 // reporterRunner is a Runner that also implements HealthReporter,
 // used to exercise the snapshot path in Manager.Health().
 type reporterRunner struct {
+	name   string
 	health WorkerHealth
 }
 
 func (r *reporterRunner) Run(context.Context) error { return nil }
+func (r *reporterRunner) Name() string              { return r.name }
 func (r *reporterRunner) Health() WorkerHealth      { return r.health }
 
 // plainRunner is a Runner that does not implement HealthReporter.
@@ -31,14 +33,16 @@ func (r *reporterRunner) Health() WorkerHealth      { return r.health }
 type plainRunner struct{}
 
 func (plainRunner) Run(context.Context) error { return nil }
+func (plainRunner) Name() string              { return "plain" }
 
-// TestManager_Health_FillsNameFromRegistration covers the contract
-// that a HealthReporter returning a zero Name field inherits the
-// registration name. Lets services skip setting Name themselves.
-func TestManager_Health_FillsNameFromRegistration(t *testing.T) {
+// TestManager_Health_NamedForTheRunner covers the contract that a
+// HealthReporter's snapshot carries the runner's own name, so services skip
+// setting Name in their health themselves.
+func TestManager_Health_NamedForTheRunner(t *testing.T) {
 	t.Parallel()
 	m := NewManager()
-	m.Register("cleanup-queue", &reporterRunner{
+	m.Register(&reporterRunner{
+		name: "cleanup-queue",
 		health: WorkerHealth{
 			LastSuccess:         time.Unix(1, 0),
 			ConsecutiveFailures: 3,
@@ -63,8 +67,8 @@ func TestManager_Health_FillsNameFromRegistration(t *testing.T) {
 func TestManager_Health_OmitsNonReporters(t *testing.T) {
 	t.Parallel()
 	m := NewManager()
-	m.Register("reporter", &reporterRunner{health: WorkerHealth{Name: "reporter"}})
-	m.Register("plain", plainRunner{})
+	m.Register(&reporterRunner{name: "reporter"})
+	m.Register(plainRunner{})
 	snaps := m.Health()
 	if len(snaps) != 1 {
 		t.Fatalf("Health len = %d, want 1 (plain runner must be skipped)", len(snaps))
@@ -82,7 +86,7 @@ func TestManager_Health_PreservesRegistrationOrder(t *testing.T) {
 	t.Parallel()
 	m := NewManager()
 	for _, name := range []string{"a", "b", "c", "d"} {
-		m.Register(name, &reporterRunner{health: WorkerHealth{Name: name}})
+		m.Register(&reporterRunner{name: name})
 	}
 	snaps := m.Health()
 	for i, want := range []string{"a", "b", "c", "d"} {

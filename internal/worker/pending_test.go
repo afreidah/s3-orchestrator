@@ -44,7 +44,7 @@ func setupReaper(t *testing.T) (*PendingReaper, *MockOps, *MockPlacement, *backe
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
+	r := NewPendingReaper(PendingReaperDeps{Fleet: fleetOf(ops, pl), Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	return r, ops, pl, be, ms
 }
 
@@ -72,11 +72,11 @@ func TestNewPendingReaper_DefaultsConcurrency(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	r := NewPendingReaper(PendingReaperDeps{
-		Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{},
+		Fleet: fleetOf(newMockOps(ctrl), NewMockPlacement(ctrl)), Store: &mockMetadataStore{},
 		MinAge: 5 * time.Minute, BatchSize: 50,
 	})
-	if r.concurrency != 4 || r.minAge != 5*time.Minute || r.batchSize != 50 {
-		t.Errorf("concurrency, minAge, batchSize = %d, %v, %d; want 4, 5m, 50", r.concurrency, r.minAge, r.batchSize)
+	if r.d.Concurrency != 4 || r.d.MinAge != 5*time.Minute || r.d.BatchSize != 50 {
+		t.Errorf("concurrency, minAge, batchSize = %d, %v, %d; want 4, 5m, 50", r.d.Concurrency, r.d.MinAge, r.d.BatchSize)
 	}
 }
 
@@ -533,7 +533,7 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 		mockMetadataStore: &mockMetadataStore{},
 		deleteErr:         errors.New("db down"),
 	}
-	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
+	r := NewPendingReaper(PendingReaperDeps{Fleet: fleetOf(ops, pl), Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	if got := r.dropIntent(context.Background(), &p, "head_404"); got != batch.ItemFailed {

@@ -54,10 +54,8 @@ type ObjectsDeps struct {
 // Objects serves the object read and write operations shared by the admin API
 // and the web UI.
 type Objects struct {
-	log     *slog.Logger
-	objects ObjectAPI
-	store   ObjectStore
-	buckets BucketMatcher
+	d   ObjectsDeps
+	log *slog.Logger
 }
 
 // NewObjects is the explicit-deps constructor.
@@ -65,12 +63,7 @@ func NewObjects(d ObjectsDeps) *Objects {
 	must.NotNil("d.Objects", d.Objects)
 	must.NotNil("d.Store", d.Store)
 	must.NotNil("d.Buckets", d.Buckets)
-	return &Objects{
-		log:     slog.Default().With(logfmt.Component("ops")),
-		objects: d.Objects,
-		store:   d.Store,
-		buckets: d.Buckets,
-	}
+	return &Objects{d: d, log: logfmt.Logger(logComponent)}
 }
 
 // -------------------------------------------------------------------------
@@ -82,7 +75,7 @@ func NewObjects(d ObjectsDeps) *Objects {
 // which is what a caller counting or sweeping a subtree wants. A non-empty
 // continuation resumes a previously truncated page.
 func (o *Objects) List(ctx context.Context, prefix, delimiter, continuation string) (*core.ListObjectsResult, error) {
-	return o.store.ListObjects(ctx, prefix, delimiter, continuation, listPageSize)
+	return o.d.Store.ListObjects(ctx, prefix, delimiter, continuation, listPageSize)
 }
 
 // Locations reports every backend holding a copy of one key, for callers
@@ -91,7 +84,7 @@ func (o *Objects) Locations(ctx context.Context, key string) ([]core.ObjectLocat
 	if key == "" {
 		return nil, ErrKeyRequired
 	}
-	return o.store.GetAllObjectLocations(ctx, key)
+	return o.d.Store.GetAllObjectLocations(ctx, key)
 }
 
 // Tags reports one object's tag set, ordered by key. An object carrying none
@@ -100,7 +93,7 @@ func (o *Objects) Tags(ctx context.Context, key string) ([]core.Tag, error) {
 	if err := o.validateKey(key); err != nil {
 		return nil, err
 	}
-	tags, err := o.objects.GetObjectTags(ctx, key)
+	tags, err := o.d.Objects.GetObjectTags(ctx, key)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -114,7 +107,7 @@ func (o *Objects) SetTags(ctx context.Context, key string, tags []core.Tag) erro
 	if err := o.validateKey(key); err != nil {
 		return err
 	}
-	err := o.objects.PutObjectTags(ctx, key, tags)
+	err := o.d.Objects.PutObjectTags(ctx, key, tags)
 	if core.IsTagValidationError(err) {
 		return &Rejection{Kind: RejectInvalid, err: err}
 	}
@@ -126,7 +119,7 @@ func (o *Objects) DeleteTags(ctx context.Context, key string) error {
 	if err := o.validateKey(key); err != nil {
 		return err
 	}
-	return notFound(o.objects.DeleteObjectTags(ctx, key))
+	return notFound(o.d.Objects.DeleteObjectTags(ctx, key))
 }
 
 // notFound reports a key holding no copies as ErrNotFound and passes any other
@@ -145,7 +138,7 @@ func (o *Objects) Get(ctx context.Context, key string) (*s3be.GetObjectResult, e
 		return nil, err
 	}
 
-	result, err := o.objects.GetObject(ctx, key, "")
+	result, err := o.d.Objects.GetObject(ctx, key, "")
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -161,7 +154,7 @@ func (o *Objects) Put(ctx context.Context, req *object.PutObjectRequest) (string
 		return "", err
 	}
 
-	etag, err := o.objects.PutObject(ctx, req)
+	etag, err := o.d.Objects.PutObject(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -176,7 +169,7 @@ func (o *Objects) Delete(ctx context.Context, key string) error {
 		return err
 	}
 
-	if err := o.objects.DeleteObject(ctx, key); err != nil {
+	if err := o.d.Objects.DeleteObject(ctx, key); err != nil {
 		return err
 	}
 
@@ -197,7 +190,7 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summar
 	pager := batch.Pager[string, string]{
 		PageSize: batch.FixedPage(deletePrefixPageSize),
 		List: func(ctx context.Context, limit int, after string) ([]string, error) {
-			page, err := o.objects.ListObjects(ctx, prefix, "", after, limit)
+			page, err := o.d.Objects.ListObjects(ctx, prefix, "", after, limit)
 			if err != nil {
 				return nil, err
 			}
@@ -224,7 +217,7 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summar
 func (o *Objects) deletePage(ctx context.Context, keys []string, res *batch.Summary) {
 	res.Planned += len(keys)
 	res.Attempted += len(keys)
-	for _, item := range o.objects.DeleteObjects(ctx, keys) {
+	for _, item := range o.d.Objects.DeleteObjects(ctx, keys) {
 		if item.Err != nil {
 			res.Failed++
 		} else {
@@ -240,7 +233,7 @@ func (o *Objects) validateKey(key string) error {
 	if key == "" {
 		return ErrKeyRequired
 	}
-	if !o.buckets.HasPrefix(key) {
+	if !o.d.Buckets.HasPrefix(key) {
 		return ErrInvalidKey
 	}
 	return nil

@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -160,7 +161,6 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 			Backends:        backends,
 			Order:           order,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)
@@ -194,7 +194,7 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 // the integrity operations get past their disabled guard.
 func enableIntegrity(t *testing.T, svc *Services) {
 	t.Helper()
-	svc.Integrity.cfg.Update(func(c *config.Config) {
+	svc.Integrity.d.Config.Update(func(c *config.Config) {
 		c.Integrity = config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}
 	})
 }
@@ -260,7 +260,7 @@ func TestReplicate_SkippedAtFactorOne(t *testing.T) {
 func TestReplicate_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
-	svc.Replication.cfg.Update(func(c *config.Config) {
+	svc.Replication.d.Config.Update(func(c *config.Config) {
 		c.Replication = config.ReplicationConfig{Factor: 2, BatchSize: 10}
 	})
 
@@ -356,11 +356,7 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
-	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, nil)
-
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{Busy: true}, Config: integrityEnabled()})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if !errors.Is(err, ErrScrubInProgress) {
@@ -381,11 +377,7 @@ func TestScrub_LockErrorSurfaces(t *testing.T) {
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	wantErr := errors.New("lock unavailable")
-	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
-	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, wantErr)
-
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{Err: wantErr}, Config: integrityEnabled()})
 
 	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
 		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
@@ -407,14 +399,12 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 			return batch.Summary{Attempted: 3}, nil
 		})
 
-	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
-	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
-			locked = true
-			err := fn(ctx)
-			locked = false
-			return true, err
-		})
+	locker := lockFunc(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+		locked = true
+		err := fn(ctx)
+		locked = false
+		return true, err
+	})
 
 	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
 
@@ -898,7 +888,7 @@ func TestObjectsGet_NotFound(t *testing.T) {
 // verification enabled.
 func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	t.Helper()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: grantingLocker(t), Config: integrityEnabled()})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{}, Config: integrityEnabled()})
 }
 
 // integrityEnabled is a running config with verification on, so the integrity
@@ -907,16 +897,13 @@ func integrityEnabled() *config.Live {
 	return config.NewLive(&config.Config{Integrity: config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
 }
 
-// grantingLocker is an advisory locker that always takes the lock and runs the
-// work, which is what every test that is not about lock contention wants.
-func grantingLocker(t *testing.T) *opstest.MockAdvisoryLocker {
-	t.Helper()
-	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
-	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
-			return true, fn(ctx)
-		}).AnyTimes()
-	return locker
+// lockFunc is an advisory locker that runs a function the test supplies, for a
+// test that observes what happens inside the lock.
+type lockFunc func(ctx context.Context, lockID int64, fn func(context.Context) error) (bool, error)
+
+// WithAdvisoryLock calls the function.
+func (f lockFunc) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(context.Context) error) (bool, error) {
+	return f(ctx, lockID, fn)
 }
 
 // TestVerifyKey_ReportsEveryCopy asserts a per-key verification answers with a
@@ -1358,7 +1345,7 @@ func TestDeclaredBuckets_UpdateReachesOperations(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidKey before the bucket exists", err)
 	}
 
-	declared.Set([]provisioning.Bucket{{Name: "later", Source: provisioning.SourceStore}})
+	declared.Store(&[]provisioning.Bucket{{Name: "later", Source: provisioning.SourceStore}})
 
 	if err := objects.Delete(context.Background(), "later/file.txt"); errors.Is(err, ErrInvalidKey) {
 		t.Error("key still rejected after the bucket was declared")

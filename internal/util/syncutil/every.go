@@ -3,9 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// The one loop that calls a function on an interval until its context ends.
-// The wait starts when a call returns, so a call that runs longer than the
-// interval is never followed straight away by another.
+// The one loop that calls a function on an interval until its context ends,
+// and the one wait that gives up when its context does. The wait starts when
+// a call returns, so a call that runs longer than the interval is never
+// followed straight away by another.
 // -------------------------------------------------------------------------------
 
 package syncutil
@@ -43,16 +44,22 @@ func (s Schedule) Run(ctx context.Context, fn func(context.Context)) {
 	if half := wait / 2; s.Jitter && half > 0 {
 		wait += rand.N(half) //nolint:gosec // G404: spreading start times does not need crypto-strength randomness
 	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-		}
+	for Sleep(ctx, wait) {
 		fn(ctx)
-		timer.Reset(s.wait())
+		wait = s.wait()
+	}
+}
+
+// Sleep waits for d or until ctx is done, and reports whether the wait ran its
+// full length, so a caller stops as soon as its context ends.
+func Sleep(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

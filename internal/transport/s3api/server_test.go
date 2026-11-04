@@ -33,7 +33,7 @@ func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	t.Parallel()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
-		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{Metrics: mockStore}),
+		Runtime: proxytest.NewRuntime(nil),
 	})
 	srv := NewServer(st.Objects, st.Multipart, auth.NewLiveRegistry(nil), 1024)
 	if srv.log == nil {

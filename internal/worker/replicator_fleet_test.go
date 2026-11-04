@@ -555,9 +555,9 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	fleet, coord := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
+	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
-	w := newTestReplicator(fleet, coord, store)
+	w := newTestReplicator(f, store)
 
 	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
@@ -603,9 +603,9 @@ func TestReplicate_ChargesTheBytesTheCopyMoved(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	fleet, coord := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
+	fleet, f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
-	w := newTestReplicator(fleet, coord, store)
+	w := newTestReplicator(f, store)
 
 	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,

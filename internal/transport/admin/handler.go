@@ -61,7 +61,7 @@ type Deps struct {
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
 	LogBuffer    LogReader                      // nil when the log buffer is not wired
-	ReplMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
+	ReplMetrics  replicationSnapshotter
 	Cleanup      core.CleanupStore
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
 	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
@@ -90,6 +90,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Ops.Compression", d.Ops.Compression)
 	must.NotNil("d.Ops.Provision", d.Ops.Provision)
 	must.NotNil("d.States", d.States)
+	must.NotNil("d.ReplMetrics", d.ReplMetrics)
 	must.NotNil("d.StateStore", d.StateStore)
 	must.NotNil("d.Cleanup", d.Cleanup)
 	must.NotNil("d.LogLevel", d.LogLevel)
@@ -97,7 +98,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Config", d.Config)
 	h := &Handler{
 		d:          *d,
-		log:        slog.Default().With(logfmt.Component("admin")),
+		log:        logfmt.Logger("admin"),
 		cacheTopic: cache.InvalidationTopic(d.Shared),
 		confirmKey: mustConfirmKey(),
 	}

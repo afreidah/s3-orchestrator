@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -50,37 +51,27 @@ type RebalancerStore interface {
 // configuration.
 type Rebalancer struct {
 	syncutil.Section[config.RebalanceConfig]
-	log       *slog.Logger
-	ops       Ops
-	placement Placement
-	store     RebalancerStore
-	telemetry.SharedGauges
+	d   RebalancerDeps
+	log *slog.Logger
 }
 
-// RebalancerDeps groups the rebalancer's constructor dependencies: fleet
-// operations, write-path placement, the metadata store, and the rebalance
-// section of the running configuration.
+// RebalancerDeps groups the rebalancer's constructor dependencies: the fleet,
+// the metadata store, and the rebalance section of the running configuration.
 type RebalancerDeps struct {
-	Ops       Ops
-	Placement Placement
-	Store     RebalancerStore
-	Config    syncutil.Section[config.RebalanceConfig]
+	Fleet
+	Store  RebalancerStore
+	Config syncutil.Section[config.RebalanceConfig]
 }
 
 // NewRebalancer creates a Rebalancer from its dependencies, all of which are
 // required.
-func NewRebalancer(deps RebalancerDeps) *Rebalancer {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Placement", deps.Placement)
-	must.NotNil("Store", deps.Store)
-	must.NotNil("Config", deps.Config)
-	return &Rebalancer{
-		Section:   deps.Config,
-		ops:       deps.Ops,
-		placement: deps.Placement,
-		store:     deps.Store,
-		log:       workerLogger(audit.WorkloadRebalance),
-	}
+//
+//nolint:gocritic // hugeParam: the Deps are copied once, at construction.
+func NewRebalancer(d RebalancerDeps) *Rebalancer {
+	d.mustBeWired()
+	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Config", d.Config)
+	return &Rebalancer{Section: d.Config, d: d, log: logfmt.Logger(string(audit.WorkloadRebalance))}
 }
 
 // rebalanceMove describes a single object move from one backend to another.
@@ -123,7 +114,7 @@ type RebalanceSummary struct {
 // caller can report progress as the cycle runs. A cycle that attempted a move
 // publishes RebalanceCompleted, whether a tick or an operator ran it.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadRebalance, Refresh: r.ops}
+	pass := cycle.Pass{Workload: audit.WorkloadRebalance, Refresh: r.d.Metrics}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (RebalanceSummary, error) {
 		audit.Log(ctx, "rebalance.start",
 			slog.String("strategy", string(cfg.Strategy)),
@@ -131,12 +122,12 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			slog.Float64("threshold", cfg.Threshold),
 		)
 
-		stats, err := r.store.GetQuotaStats(ctx)
+		stats, err := r.d.Store.GetQuotaStats(ctx)
 		if err != nil {
 			return RebalanceSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
 		}
 
-		if !exceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
+		if !exceedsThreshold(stats, r.d.Ops.BackendOrder(), cfg.Threshold) {
 			r.log.InfoContext(ctx, "rebalance skipping, within threshold",
 				"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 			telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
@@ -176,7 +167,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 // publishPending shares how many moves the current pass has planned: the plan
 // size when it starts, zero when it ends.
 func (r *Rebalancer) publishPending(ctx context.Context, n int64) {
-	r.PublishGauges(ctx, telemetry.GaugeSourceRebalancer, telemetry.WorkerGauges{RebalancePending: &n})
+	r.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourceRebalancer, telemetry.WorkerGauges{RebalancePending: &n})
 }
 
 // -------------------------------------------------------------------------
@@ -235,7 +226,7 @@ type backendUtil struct {
 // Skips moves that would not increase the destination's packing ratio.
 func (r *Rebalancer) planPackTight(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]rebalanceMove, error) {
 	simUsed := make(map[string]int64)
-	backends := sortedBackendsByUtilDesc(r.ops.BackendOrder(), stats, simUsed)
+	backends := sortedBackendsByUtilDesc(r.d.Ops.BackendOrder(), stats, simUsed)
 	state := r.newPlanState(simUsed, batchSize)
 
 	var plan []rebalanceMove
@@ -361,7 +352,7 @@ func srcLessUtilized(src, dest backendUtil, simUsed map[string]int64) bool {
 // callers fail planning rather than continue with empty placement data, which
 // plans transfers to destinations that already hold a copy.
 func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) (map[string][]string, error) {
-	copyMap, err := r.store.GetObjectBackendsForKeys(ctx, core.KeysOf(objects))
+	copyMap, err := r.d.Store.GetObjectBackendsForKeys(ctx, core.KeysOf(objects))
 	if err != nil {
 		return nil, fmt.Errorf("fetch copy map for rebalance planning: %w", err)
 	}
@@ -382,7 +373,7 @@ type backendBalance struct {
 // objects from over-utilized backends to under-utilized ones. Returns nil
 // when no backend has a usable byte limit.
 func (r *Rebalancer) planSpreadEven(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]rebalanceMove, error) {
-	sources, destinations, simUsed, ok := computeSpreadBalances(r.ops.BackendOrder(), stats)
+	sources, destinations, simUsed, ok := computeSpreadBalances(r.d.Ops.BackendOrder(), stats)
 	if !ok {
 		return nil, nil
 	}
@@ -463,7 +454,7 @@ func (r *Rebalancer) spreadMovesFromSource(
 	stats map[string]core.QuotaStat,
 	state *planState,
 ) ([]rebalanceMove, error) {
-	objects, err := r.store.ListObjectsByBackend(ctx, src.Name, state.remaining, core.SizeCursor{})
+	objects, err := r.d.Store.ListObjectsByBackend(ctx, src.Name, state.remaining, core.SizeCursor{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 	}
@@ -536,7 +527,7 @@ func findSpreadDestination(
 func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, strategy config.RoutingStrategy, concurrency int, observer progress.Observer) batch.Summary {
 	runner := batch.Runner[rebalanceMove]{
 		Concurrency: concurrency,
-		Admission:   r.ops,
+		Admission:   r.d.Ops,
 		Observer:    observer,
 		Key:         rebalanceMove.progressLabel,
 	}
@@ -554,7 +545,7 @@ func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, str
 func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, strategy config.RoutingStrategy) bool {
 	label := string(strategy)
 	key, from := move.Source.ObjectKey, move.Source.BackendName
-	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
+	movedSize, err := r.d.Placement.MoveObject(ctx, &writepath.MoveRequest{
 		Source:   move.Source,
 		DestName: move.ToBackend,
 		Profile:  writepath.RebalanceMove,
@@ -602,10 +593,10 @@ type planState struct {
 // targets once so every move in the plan is judged against the same set.
 func (r *Rebalancer) newPlanState(simUsed map[string]int64, batchSize int) *planState {
 	targets := make(map[string]bool)
-	for _, name := range r.ops.WriteTargets() {
+	for _, name := range r.d.Ops.WriteTargets() {
 		targets[name] = true
 	}
-	return &planState{simUsed: simUsed, budget: newUsageBudget(r.ops.Usage()), targets: targets, remaining: batchSize}
+	return &planState{simUsed: simUsed, budget: newUsageBudget(r.d.Ops.Usage()), targets: targets, remaining: batchSize}
 }
 
 // takes reports whether dest may receive moves, which is whether it is a

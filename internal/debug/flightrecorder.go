@@ -36,9 +36,15 @@ func NewFlightRecorderService(minAge time.Duration) *FlightRecorderService {
 	return &FlightRecorderService{
 		fr:     trace.NewFlightRecorder(trace.FlightRecorderConfig{MinAge: minAge}),
 		minAge: minAge,
-		log:    slog.Default().With(logfmt.Component("flight_recorder")),
+		log:    logfmt.Logger(flightRecorderName),
 	}
 }
+
+// flightRecorderName names the service and its log component.
+const flightRecorderName = "flight_recorder"
+
+// Name returns the name the lifecycle manager registers the recorder under.
+func (s *FlightRecorderService) Name() string { return flightRecorderName }
 
 // Recorder returns the underlying *trace.FlightRecorder for the admin
 // snapshot handler to call WriteTo on. Nil-safe so the admin handler can

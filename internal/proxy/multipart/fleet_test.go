@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -113,14 +112,13 @@ func newFleet(
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil)
 	timeout := cmp.Or(opts.BackendTimeout, fleetTimeout)
 	rt := infra.New(&infra.Config{
-		Backends:         backends,
-		Order:            names,
-		BackendTimeout:   timeout,
-		Usage:            usage,
-		Quota:            newFleetQuota(names, opts.QuotaBaselines),
-		RoutingStrategy:  config.RoutingPack,
-		AdmissionSem:     opts.AdmissionSem,
-		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
+		Backends:        backends,
+		Order:           names,
+		BackendTimeout:  timeout,
+		Usage:           usage,
+		Quota:           newFleetQuota(names, opts.QuotaBaselines),
+		RoutingStrategy: config.RoutingPack,
+		AdmissionSem:    opts.AdmissionSem,
 	})
 
 	live := config.NewLive(&config.Config{})

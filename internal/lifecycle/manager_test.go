@@ -29,6 +29,9 @@ type counterService struct {
 	count atomic.Int64
 }
 
+// Name names the service for the manager.
+func (*counterService) Name() string { return "counter" }
+
 // Run ticks until ctx is done.
 func (s *counterService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -51,6 +54,9 @@ type failingService struct {
 	panics   bool
 }
 
+// Name names the service for the manager.
+func (*failingService) Name() string { return "failing" }
+
 // Run fails while calls are within failures, then blocks until ctx is done.
 func (s *failingService) Run(ctx context.Context) error {
 	if s.calls.Add(1) <= s.failures {
@@ -71,6 +77,9 @@ type stoppableService struct {
 	slow    bool
 	err     error
 }
+
+// Name names the service for the manager.
+func (s *stoppableService) Name() string { return s.name }
 
 // Run blocks until ctx is done.
 func (s *stoppableService) Run(ctx context.Context) error {
@@ -112,7 +121,7 @@ func TestManager_RunAndStop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mgr := NewManager()
 		svc := &counterService{}
-		mgr.Register("counter", svc)
+		mgr.Register(svc)
 
 		stop := runManager(mgr)
 		synctest.Sleep(35 * time.Millisecond)
@@ -132,11 +141,11 @@ func TestManager_RestartsAfterFailure(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				mgr := NewManager()
 				svc := &failingService{failures: 1, panics: panics}
-				mgr.Register("failing", svc)
+				mgr.Register(svc)
 				stop := runManager(mgr)
 				defer stop()
 
-				synctest.Sleep(initialBackoff - time.Millisecond)
+				synctest.Sleep(restartBackoff.Base - time.Millisecond)
 				if got := svc.calls.Load(); got != 1 {
 					t.Errorf("calls before the backoff = %d, want 1", got)
 				}
@@ -155,7 +164,7 @@ func TestManager_BackoffDoublesBetweenRestarts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mgr := NewManager()
 		svc := &failingService{failures: 100, panics: true}
-		mgr.Register("always-panic", svc)
+		mgr.Register(svc)
 		stop := runManager(mgr)
 		defer stop()
 
@@ -177,10 +186,10 @@ func TestManager_StopReverseOrder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mgr := NewManager()
 		stopped := make(chan string, 3)
-		mgr.Register("first", &stoppableService{stopped: stopped, name: "first"})
-		mgr.Register("counter", &counterService{})
-		mgr.Register("second", &stoppableService{stopped: stopped, name: "second", err: context.DeadlineExceeded})
-		mgr.Register("third", &stoppableService{stopped: stopped, name: "third"})
+		mgr.Register(&stoppableService{stopped: stopped, name: "first"})
+		mgr.Register(&counterService{})
+		mgr.Register(&stoppableService{stopped: stopped, name: "second", err: context.DeadlineExceeded})
+		mgr.Register(&stoppableService{stopped: stopped, name: "third"})
 		runManager(mgr)()
 
 		mgr.Stop(5 * time.Second)
@@ -197,8 +206,8 @@ func TestManager_StopPerServiceTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mgr := NewManager()
 		stopped := make(chan string, 2)
-		mgr.Register("slow", &stoppableService{stopped: stopped, name: "slow", slow: true})
-		mgr.Register("fast", &stoppableService{stopped: stopped, name: "fast"})
+		mgr.Register(&stoppableService{stopped: stopped, name: "slow", slow: true})
+		mgr.Register(&stoppableService{stopped: stopped, name: "fast"})
 		runManager(mgr)()
 
 		const budget = 2 * time.Second

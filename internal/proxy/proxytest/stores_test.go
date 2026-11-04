@@ -33,7 +33,6 @@ func newStack(t *testing.T, mock *storetest.MockMetadataStore) *proxytest.Stack 
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
 		}),
 	})
 }

@@ -49,7 +49,7 @@ func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beNam
 	if err != nil {
 		return nil, err
 	}
-	discovered, err := reconcile.DiscoverBytes(ctx, chargedReader{rt: o.core, name: beName, be: be}, o.codec, newest, size)
+	discovered, err := reconcile.DiscoverBytes(ctx, chargedReader{rt: o.d.Core, name: beName, be: be}, o.d.Codec, newest, size)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName,
 		}
 		return nil
 	})
-	o.core.Acct().APICall(ctx, s3op.ListObjectsV2, beName)
+	o.d.Core.Acct().APICall(ctx, s3op.ListObjectsV2, beName)
 	return newest, size, err
 }
 
@@ -117,10 +117,10 @@ func resolveLastModified(backendValue time.Time, loc *core.ObjectLocation) time.
 func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
-	if !o.core.Acct().Allow(beName, s3op.GetObject, 0, 0) {
+	if !o.d.Core.Acct().Allow(beName, s3op.GetObject, 0, 0) {
 		return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
-	if o.codec == nil {
+	if o.d.Codec == nil {
 		return fail, fmt.Errorf("backend %s: %w: object is compressed but no codec is configured",
 			beName, core.ErrServiceUnavailable)
 	}
@@ -129,8 +129,8 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, core.StoragePath(key, loc.StorageKey), beName)
-	reader, err := o.codec.DecompressRanged(ctx, fetcher, fetcher.compressedSize())
+	fetcher := newStoredRangeFetcher(o.d.Core, backend, o.d.Encryptor, loc, core.StoragePath(key, loc.StorageKey), beName)
+	reader, err := o.d.Codec.DecompressRanged(ctx, fetcher, fetcher.compressedSize())
 	if err != nil {
 		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()
 		return fail, fmt.Errorf("backend %s: %w", beName, err)

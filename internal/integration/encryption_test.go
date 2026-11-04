@@ -20,8 +20,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"log/slog"
-	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -35,7 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -78,8 +75,6 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 // test restarts the orchestrator with rotated keys.
 func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionTestEnv {
 	t.Helper()
-	ctx := context.Background()
-
 	enc, err := encryption.NewEncryptor(providerFromConfig(t, cfg), encryptionChunkSize)
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
@@ -93,7 +88,6 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         newMetricsAdapter(testStore),
 		}),
 		Encryptor:      enc,
 		CacheTTL:       60 * time.Second,
@@ -102,21 +96,8 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 	registerStack(t, st)
 	workers := proxytest.BuildWorkers(st, stores)
 
-	// Start proxy server
 	registry := auth.NewLiveRegistry(mustBucketRegistry(t, []config.BucketConfig{virtualBucketFor("test", "test")}))
-	srv := s3api.NewServer(st.Objects, st.Multipart, registry, 0)
-
-	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen proxy: %v", err)
-	}
-	proxyServer := &http.Server{Handler: srv}
-	go proxyServer.Serve(proxyListener)
-	t.Cleanup(func() { proxyServer.Shutdown(ctx) })
-
-	// Start admin server
-	var lv slog.LevelVar
-	lv.Set(slog.LevelInfo)
+	proxyAddr := serveHTTP(t, s3api.NewServer(st.Objects, st.Multipart, registry, 0))
 	opsSvc := ops.New(&ops.Deps{
 		Objects:      st.Objects,
 		Store:        testStore,
@@ -133,30 +114,10 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
 		Config:       config.NewLive(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),
 	})
-	adminHandler := admin.New(&admin.Deps{
-		BackendOps: st.Usage,
-		Ops:        opsSvc,
-		States:     st.States,
-		StateStore: testStore,
-		DBHealthy:  testDatabaseCB.IsHealthy,
-		Cleanup:    testStore,
-		Registry:   registry.Load,
-		Config:     st.Config,
-		LogLevel:   &lv,
-	})
-	adminMux := http.NewServeMux()
-	adminHandler.Register(adminMux)
-
-	adminListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen admin: %v", err)
-	}
-	adminServer := &http.Server{Handler: adminMux}
-	go adminServer.Serve(adminListener)
-	t.Cleanup(func() { adminServer.Shutdown(ctx) })
+	adminAddr := serveHTTP(t, newAdminMux(t, opsSvc, st, registry))
 
 	client := s3.New(s3.Options{
-		BaseEndpoint: aws.String("http://" + proxyListener.Addr().String()),
+		BaseEndpoint: aws.String("http://" + proxyAddr),
 		Region:       "us-east-1",
 		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
 		UsePathStyle: true,
@@ -164,7 +125,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 
 	return &encryptionTestEnv{
 		proxyClient: client,
-		adminAddr:   adminListener.Addr().String(),
+		adminAddr:   adminAddr,
 		encryptor:   enc,
 		rawStore:    testStore,
 		stack:       st,

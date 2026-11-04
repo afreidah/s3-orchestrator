@@ -5,7 +5,8 @@
 //
 // Pins when the loop calls its function: after each interval, once straight
 // away when asked, later by the jitter on the first wait, at the period Next
-// returns, and never once its context ends.
+// returns, and never once its context ends. Also pins that Sleep reports
+// whether its wait ran.
 // -------------------------------------------------------------------------------
 
 package syncutil
@@ -98,6 +99,23 @@ func TestEvery_StopsWhenContextEnds(t *testing.T) {
 		Every(ctx, time.Second, func(context.Context) { calls.Add(1) })
 		if calls.Load() != 0 {
 			t.Errorf("calls = %d, want 0", calls.Load())
+		}
+	})
+}
+
+// TestSleep_ReportsWhetherTheWaitRan verifies Sleep reports a full wait as
+// true and gives up with false once its context ends.
+func TestSleep_ReportsWhetherTheWaitRan(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		if !Sleep(t.Context(), time.Second) || time.Since(start) != time.Second {
+			t.Errorf("full wait: want true after 1s, slept %v", time.Since(start))
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		start = time.Now()
+		if Sleep(ctx, time.Hour) || time.Since(start) != time.Second {
+			t.Errorf("cancelled wait: want false after 1s, slept %v", time.Since(start))
 		}
 	})
 }

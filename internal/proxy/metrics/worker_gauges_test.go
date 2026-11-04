@@ -15,7 +15,6 @@ package metrics
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
@@ -27,8 +26,8 @@ import (
 // depth from one collector and loads it into another whose own value is stale.
 func TestWorkerGauges_LoaderServesWhatTheHolderPublished(t *testing.T) {
 	shared, _ := newShared()
-	holder := &Collector{shared: shared, log: slog.Default()}
-	other := &Collector{shared: shared, log: slog.Default()}
+	holder := testCollector(CollectorDeps{Shared: shared})
+	other := testCollector(CollectorDeps{Shared: shared})
 
 	depth, dlq := int64(7), int64(2)
 	holder.PublishWorkerGauges(context.Background(), telemetry.GaugeSourceCleanup,
@@ -54,7 +53,7 @@ func TestWorkerGauges_LoaderServesWhatTheHolderPublished(t *testing.T) {
 // when the published value does not carry it.
 func TestWorkerGauges_UnownedGaugesUntouched(t *testing.T) {
 	shared, _ := newShared()
-	mc := &Collector{shared: shared, log: slog.Default()}
+	mc := testCollector(CollectorDeps{Shared: shared})
 	pending := int64(3)
 	mc.PublishWorkerGauges(context.Background(), telemetry.GaugeSourcePendingReaper,
 		telemetry.WorkerGauges{PendingIntentsDepth: &pending})
@@ -73,7 +72,7 @@ func TestWorkerGauges_UnownedGaugesUntouched(t *testing.T) {
 
 // TestWorkerGauges_WithoutSharedState applies locally and loads nothing.
 func TestWorkerGauges_WithoutSharedState(t *testing.T) {
-	mc := &Collector{log: slog.Default()}
+	mc := testCollector(CollectorDeps{})
 	n := int64(5)
 	mc.PublishWorkerGauges(context.Background(), telemetry.GaugeSourceNotifier,
 		telemetry.WorkerGauges{NotificationQueueDepth: &n})
@@ -93,7 +92,7 @@ func TestWorkerGauges_Errors(t *testing.T) {
 	if err := mem.PutShared(context.Background(), "worker_gauges:"+telemetry.GaugeSourceScrubber, []byte("not json"), 0); err != nil {
 		t.Fatal(err)
 	}
-	mc := &Collector{shared: shared, log: slog.Default()}
+	mc := testCollector(CollectorDeps{Shared: shared})
 	if err := mc.LoadWorkerGauges(context.Background()); err == nil {
 		t.Error("LoadWorkerGauges accepted an undecodable value")
 	}

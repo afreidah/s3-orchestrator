@@ -51,7 +51,7 @@ func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Servi
 	t.Helper()
 	f := newServicesFixture(t)
 	declared := provisioning.NewDeclared()
-	declared.Set([]provisioning.Bucket{{Name: "photos", Source: provisioning.SourceConfig}})
+	declared.Store(&[]provisioning.Bucket{{Name: "photos", Source: provisioning.SourceConfig}})
 
 	runners := []lifecycle.Runner{
 		multipart.NewCleanupService(f.stack.Multipart, locker, 0),
@@ -62,7 +62,7 @@ func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Servi
 		worker.NewReplicatorService(f.replicator, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
-			Buckets: declared,
+			Buckets: declared, Metrics: f.stack.Metrics,
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 		worker.NewDrainerService(f.stack.Drainer, locker),

@@ -89,7 +89,7 @@ func New(infra Runtime, objects core.ObjectStore, store core.BackendStateStore) 
 		infra:   infra,
 		objects: objects,
 		store:   store,
-		log:     slog.Default().With(logfmt.Component("backendstate")),
+		log:     logfmt.Logger("backendstate"),
 	}
 }
 

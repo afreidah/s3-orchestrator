@@ -51,17 +51,15 @@ type UnreadableList struct {
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
 	Scrubber ScrubberOps
-	Locker   AdvisoryLocker
+	Locker   core.AdvisoryLocker
 	Config   *config.Live
 }
 
 // Integrity serves the verification operations shared by the admin API and
 // the web UI.
 type Integrity struct {
-	log      *slog.Logger
-	scrubber ScrubberOps
-	locker   AdvisoryLocker
-	cfg      *config.Live
+	d   IntegrityDeps
+	log *slog.Logger
 }
 
 // NewIntegrity is the explicit-deps constructor.
@@ -69,12 +67,7 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
 	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
-	return &Integrity{
-		log:      slog.Default().With(logfmt.Component("ops")),
-		scrubber: d.Scrubber,
-		locker:   d.Locker,
-		cfg:      d.Config,
-	}
+	return &Integrity{d: d, log: logfmt.Logger(logComponent)}
 }
 
 // -------------------------------------------------------------------------
@@ -92,7 +85,7 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // a tick cannot overlap. If the lock is held it returns ErrScrubInProgress
 // instead of waiting.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
-	icfg := &i.cfg.Load().Integrity
+	icfg := &i.d.Config.Load().Integrity
 	if !icfg.IsEnabled() {
 		return batch.Summary{}, ErrIntegrityDisabled
 	}
@@ -101,9 +94,9 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 	}
 
 	var sum batch.Summary
-	acquired, err := i.locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
+	acquired, err := i.d.Locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
 		var err error
-		sum, err = i.scrubber.Scrub(lockCtx, batchSize, backend, observer)
+		sum, err = i.d.Scrubber.Scrub(lockCtx, batchSize, backend, observer)
 		return err
 	})
 	if err != nil {
@@ -122,11 +115,11 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 	if key == "" {
 		return nil, ErrKeyRequired
 	}
-	if !i.cfg.Load().Integrity.IsEnabled() {
+	if !i.d.Config.Load().Integrity.IsEnabled() {
 		return nil, ErrIntegrityDisabled
 	}
 
-	copies, err := i.scrubber.ScrubKey(ctx, key)
+	copies, err := i.d.Scrubber.ScrubKey(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +136,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // every backend. observer, when non-nil, receives a start and end step per
 // object hashed.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (worker.BackfillResult, error) {
-	if !i.cfg.Load().Integrity.IsEnabled() {
+	if !i.d.Config.Load().Integrity.IsEnabled() {
 		return worker.BackfillResult{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {
@@ -153,7 +146,7 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 	i.log.InfoContext(ctx, "backfill-checksums started",
 		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 
-	return i.scrubber.Backfill(ctx, worker.BackfillRequest{
+	return i.d.Scrubber.Backfill(ctx, worker.BackfillRequest{
 		BatchSize: batchSize, MaxObjects: maxObjects, Pause: pause, Backend: backend,
 	}, observer)
 }
@@ -164,7 +157,7 @@ func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableLi
 	if limit <= 0 {
 		limit = defaultUnreadableBatchSize
 	}
-	copies, total, err := i.scrubber.ListUnreadable(ctx, limit)
+	copies, total, err := i.d.Scrubber.ListUnreadable(ctx, limit)
 	if err != nil {
 		return UnreadableList{}, err
 	}
@@ -178,5 +171,5 @@ func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer
 	if batchSize <= 0 {
 		batchSize = defaultUnreadableBatchSize
 	}
-	return i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
+	return i.d.Scrubber.PurgeUnreadable(ctx, batchSize, observer)
 }

@@ -5,16 +5,15 @@
 //
 // *BackendRuntime is the infrastructure every proxy subpackage and worker
 // shares: the backend map and its drain and health filters, usage limits,
-// admission, per-call backend timeouts, write-error classification, and the
-// metrics collector. Consumers reach it through their own consumer-declared
-// interfaces. Its methods are split across files by concern: registry.go,
-// usage.go, admission.go, timeout.go and classify.go.
+// admission, per-call backend timeouts and write-error classification.
+// Consumers reach it through their own consumer-declared interfaces. Its
+// methods are split across files by concern: registry.go, usage.go,
+// admission.go, timeout.go and classify.go.
 // -------------------------------------------------------------------------------
 
 package infra
 
 import (
-	"context"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -22,7 +21,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -34,56 +32,34 @@ type StateChecker interface {
 }
 
 // Config bundles every input *BackendRuntime needs at construction. Exposed so
-// callers (root proxy package, tests) can build a *BackendRuntime directly.
+// callers (root proxy package, tests) can build a *BackendRuntime directly. A
+// nil AdmissionSem means unbounded admission, and a zero BackendTimeout
+// disables the per-call timeout.
 type Config struct {
-	Backends         map[string]backend.ObjectBackend
-	Order            []string
-	BackendTimeout   time.Duration
-	Usage            *counter.UsageTracker
-	Quota            *counter.QuotaTracker
-	RoutingStrategy  config.RoutingStrategy
-	Profiles         map[string]core.BackendProfile
-	MetricsCollector *metrics.Collector
-	AdmissionSem     chan struct{}
+	Backends        map[string]backend.ObjectBackend
+	Order           []string
+	BackendTimeout  time.Duration
+	Usage           *counter.UsageTracker
+	Quota           *counter.QuotaTracker
+	RoutingStrategy config.RoutingStrategy
+	Profiles        map[string]core.BackendProfile
+	AdmissionSem    chan struct{}
 }
 
 // BackendRuntime holds the shared backend infrastructure. It holds no store:
 // each collaborator takes the store roles it needs directly. For which methods
-// belong here, see docs/style-guide.md "Where new methods live".
-//
-// states is wired after construction by SetStateChecker. A nil admissionSem
-// means unbounded admission, and a zero backendTimeout disables the per-call
-// timeout.
+// belong here, see docs/style-guide.md "Where new methods live". states is
+// wired after construction by SetStateChecker.
 type BackendRuntime struct {
-	backends         map[string]backend.ObjectBackend
-	order            []string
-	states           StateChecker
-	usage            *counter.UsageTracker
-	profiles         map[string]core.BackendProfile
-	quota            *counter.QuotaTracker
-	backendTimeout   time.Duration
-	admissionSem     chan struct{}
-	routingStrategy  config.RoutingStrategy
-	metricsCollector *metrics.Collector
-	recorder         *accounting.Recorder
+	cfg      Config
+	states   StateChecker
+	recorder *accounting.Recorder
 }
 
 // New constructs a *BackendRuntime from cfg. The accounting Recorder is built
 // here so every consumer shares one instance over the same usage tracker.
 func New(cfg *Config) *BackendRuntime {
-	c := &BackendRuntime{
-		backends:         cfg.Backends,
-		order:            cfg.Order,
-		usage:            cfg.Usage,
-		profiles:         cfg.Profiles,
-		quota:            cfg.Quota,
-		backendTimeout:   cfg.BackendTimeout,
-		admissionSem:     cfg.AdmissionSem,
-		routingStrategy:  cfg.RoutingStrategy,
-		metricsCollector: cfg.MetricsCollector,
-	}
-	c.recorder = accounting.New(cfg.Usage, telemetry.ManagerOps.Record)
-	return c
+	return &BackendRuntime{cfg: *cfg, recorder: accounting.New(cfg.Usage, telemetry.ManagerOps.Record)}
 }
 
 // -------------------------------------------------------------------------
@@ -96,59 +72,14 @@ func (c *BackendRuntime) Acct() *accounting.Recorder {
 	return c.recorder
 }
 
-// MetricsCollector returns the wired metrics collector (nil if unset).
-func (c *BackendRuntime) MetricsCollector() *metrics.Collector {
-	return c.metricsCollector
-}
-
 // RoutingStrategy returns the configured routing strategy.
 func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
-	return c.routingStrategy
+	return c.cfg.RoutingStrategy
 }
 
 // Quota returns the occupancy snapshot write placement ranks backends by. It
 // only orders candidates: whether a write fits is settled by the conditional
 // insert that claims the space.
 func (c *BackendRuntime) Quota() *counter.QuotaTracker {
-	return c.quota
-}
-
-// UpdateQuotaMetrics refreshes Prometheus gauges from the metadata store.
-func (c *BackendRuntime) UpdateQuotaMetrics(ctx context.Context) error {
-	return c.metricsCollector.UpdateQuotaMetrics(ctx)
-}
-
-// FleetSnapshot delegates to the metrics collector.
-func (c *BackendRuntime) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error) {
-	return c.metricsCollector.FleetSnapshot(ctx)
-}
-
-// RefreshFleetIfStale delegates to the metrics collector.
-func (c *BackendRuntime) RefreshFleetIfStale(ctx context.Context) error {
-	return c.metricsCollector.RefreshFleetIfStale(ctx)
-}
-
-// LoadFleetMetrics delegates to the metrics collector.
-func (c *BackendRuntime) LoadFleetMetrics(ctx context.Context) error {
-	return c.metricsCollector.LoadFleetMetrics(ctx)
-}
-
-// LoadWorkerGauges delegates to the metrics collector.
-func (c *BackendRuntime) LoadWorkerGauges(ctx context.Context) error {
-	return c.metricsCollector.LoadWorkerGauges(ctx)
-}
-
-// PublishWorkerGauges delegates to the metrics collector, or applies the
-// gauges locally when none is installed.
-func (c *BackendRuntime) PublishWorkerGauges(ctx context.Context, source string, g telemetry.WorkerGauges) {
-	if c.metricsCollector == nil {
-		g.Apply()
-		return
-	}
-	c.metricsCollector.PublishWorkerGauges(ctx, source, g)
-}
-
-// RefreshUsageBaselines delegates to the metrics collector.
-func (c *BackendRuntime) RefreshUsageBaselines(ctx context.Context) error {
-	return c.metricsCollector.RefreshUsageBaselines(ctx)
+	return c.cfg.Quota
 }

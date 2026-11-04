@@ -114,7 +114,7 @@ func NewServer(objects ObjectOps, multipartMgr MultipartOps, registry *auth.Live
 		MaxObjectSize: maxObjectSize,
 		registry:      registry,
 		startedAt:     time.Now(),
-		log:           slog.Default().With(logfmt.Component("s3_server")),
+		log:           logfmt.Logger("s3_server"),
 	}
 }
 

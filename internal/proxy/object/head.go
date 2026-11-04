@@ -32,7 +32,7 @@ import (
 // reported so the next HEAD can skip the backend. The reported size is the size
 // the client wrote, even when the stored bytes are encrypted or compressed.
 func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, error) {
-	locs, lookupErr := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
+	locs, lookupErr := core.ClientLocations(o.d.Stores.GetAllObjectLocations(ctx, key))
 	if res, ok := o.headFromMetadata(ctx, key, locs); ok {
 		return res, nil
 	}
@@ -40,7 +40,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	result, backendName, err := o.failover.Read(ctx, s3op.HeadObject, key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
-			if !o.core.Acct().Allow(beName, s3op.HeadObject, 0, 0) {
+			if !o.d.Core.Acct().Allow(beName, s3op.HeadObject, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
@@ -56,7 +56,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 				return fail, fmt.Errorf("backend %s: %w", beName, err)
 			}
 
-			r, err := o.core.Head(ctx, beName, backend, core.StoragePath(key, loc.StorageKey))
+			r, err := o.d.Core.Head(ctx, beName, backend, core.StoragePath(key, loc.StorageKey))
 			if err != nil {
 				return fail, err
 			}
@@ -153,7 +153,7 @@ func (o *Manager) recordHeadIdentity(ctx context.Context, r *s3be.HeadObjectResu
 	if !fillsMissingColumn(id, locs) {
 		return
 	}
-	if err := o.stores.RecordObjectIdentity(ctx, answered, id); err != nil {
+	if err := o.d.Stores.RecordObjectIdentity(ctx, answered, id); err != nil {
 		o.log.WarnContext(ctx, "failed to record object identity", "key", answered.ObjectKey, "error", err)
 	}
 }

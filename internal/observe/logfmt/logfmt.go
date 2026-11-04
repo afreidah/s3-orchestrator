@@ -9,8 +9,9 @@
 // type whose underlying struct lacks JSON tags, which downstream JS log
 // viewers render as "[object Object]" and operators cannot grep. Using
 // err.Error() guarantees a printable string in every handler. Component pins
-// the canonical key documented in docs/contributing/logging.md, and Request
-// names an inbound HTTP request the same way on every surface.
+// the canonical key documented in docs/contributing/logging.md, Logger scopes
+// a component's logger with it, and Request names an inbound HTTP request the
+// same way on every surface.
 // -------------------------------------------------------------------------------
 
 package logfmt
@@ -35,6 +36,12 @@ func Err(err error) slog.Attr {
 // the same component label, not in the message string.
 func Component(name string) slog.Attr {
 	return slog.String("component", name)
+}
+
+// Logger returns the default logger scoped to a component. Call it when the
+// component is built, after main has installed the default handler.
+func Logger(component string) *slog.Logger {
+	return slog.Default().With(Component(component))
 }
 
 // Request returns the method, path and client address that name an inbound

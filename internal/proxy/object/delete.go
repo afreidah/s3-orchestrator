@@ -38,14 +38,14 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	)
 	defer span.End()
 
-	copies, err := o.stores.DeleteObject(ctx, key)
+	copies, err := o.d.Stores.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return o.core.ClassifyWriteError(span, operation, err)
+		return o.d.Core.ClassifyWriteError(span, operation, err)
 	}
 	// Credited by the same transaction that removed the rows, so a write racing
 	// this delete sees the room the moment the ledger stops claiming the bytes.
@@ -55,8 +55,8 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 
 	// Drop the location cache entry first so concurrent readers are not sent
 	// to a backend mid-delete during the fan-out.
-	o.cache.Delete(key)
-	o.coord.Settle(ctx, copies)
+	o.d.LocationCache.Delete(key)
+	o.d.Coord.Settle(ctx, copies)
 
 	o.finalizeDelete(ctx, span, key, copies, start)
 	return nil
@@ -93,11 +93,11 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		results[i].Key = key
 	}
 
-	cleanup, err := o.stores.DeleteObjectsBatch(ctx, keys)
+	cleanup, err := o.d.Stores.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.core.ClassifyWriteError(span, operation, err)
+		classified := o.d.Core.ClassifyWriteError(span, operation, err)
 		for i := range results {
 			results[i].Err = classified
 		}
@@ -106,9 +106,9 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	// A key that held no copies was already gone (not-found is silent
 	// success), so its location hint is also stale and worth dropping.
 	for _, key := range keys {
-		o.cache.Delete(key)
+		o.d.LocationCache.Delete(key)
 	}
-	o.coord.Settle(ctx, cleanup)
+	o.d.Coord.Settle(ctx, cleanup)
 
 	o.finalizeBatchDelete(ctx, span, len(keys), start)
 	return results

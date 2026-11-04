@@ -59,20 +59,12 @@ type ProvisioningDeps struct {
 // Provisioning serves the bucket and credential administration shared by the
 // admin API and the web UI.
 type Provisioning struct {
-	store    ProvisioningStore
-	objects  NamespaceCounter
-	registry RegistryPublisher
-	config   *config.Live
+	d ProvisioningDeps
 }
 
 // NewProvisioning is the explicit-deps constructor.
 func NewProvisioning(d ProvisioningDeps) *Provisioning {
-	return &Provisioning{
-		store:    d.Store,
-		objects:  d.Objects,
-		registry: d.Registry,
-		config:   d.Config,
-	}
+	return &Provisioning{d: d}
 }
 
 // NewCredential is a keypair as it exists exactly once: at the moment it is
@@ -92,8 +84,8 @@ type NewCredential struct {
 // View returns everything a deployment declares, from both sources, each entry
 // carrying where it came from.
 func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
-	cfg := p.config.Load()
-	return provisioning.LoadMerged(ctx, p.store, cfg.Buckets, cfg.Auth)
+	cfg := p.d.Config.Load()
+	return provisioning.LoadMerged(ctx, p.d.Store, cfg.Buckets, cfg.Auth)
 }
 
 // -------------------------------------------------------------------------
@@ -117,7 +109,7 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if hasStoredBucket(&view, b.Name) {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
 	}
-	if err := p.store.CreateBucket(ctx, b); err != nil {
+	if err := p.d.Store.CreateBucket(ctx, b); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.BucketCreated", slog.String("bucket", b.Name))
@@ -138,7 +130,7 @@ func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
 	if err := requireStoredBucket(&view, b.Name); err != nil {
 		return err
 	}
-	if err := p.store.UpdateBucket(ctx, b); err != nil {
+	if err := p.d.Store.UpdateBucket(ctx, b); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.BucketUpdated", slog.String("bucket", b.Name))
@@ -165,7 +157,7 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	if err := p.store.DeleteBucket(ctx, name); err != nil {
+	if err := p.d.Store.DeleteBucket(ctx, name); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.BucketDeleted", slog.String("bucket", name))
@@ -175,7 +167,7 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 // refuseIfBucketInUse reports the objects or grants that make a bucket
 // undeletable.
 func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string) error {
-	n, err := p.objects.CountObjectsByPrefix(ctx, name+"/")
+	n, err := p.d.Objects.CountObjectsByPrefix(ctx, name+"/")
 	if err != nil {
 		return err
 	}
@@ -185,7 +177,7 @@ func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string) err
 	// Check grant rows, not the merged reach: a wildcard grant reaches every
 	// bucket but does not dangle, so the merged view would make every bucket
 	// undeletable.
-	grants, err := p.store.ListGrants(ctx)
+	grants, err := p.d.Store.ListGrants(ctx)
 	if err != nil {
 		return err
 	}
@@ -210,7 +202,7 @@ func (p *Provisioning) CreateUser(ctx context.Context, name string) (core.User, 
 		return core.User{}, ErrNameRequired
 	}
 	u := core.User{ID: mintID("user"), Name: name}
-	if err := p.store.CreateUser(ctx, &u); err != nil {
+	if err := p.d.Store.CreateUser(ctx, &u); err != nil {
 		return core.User{}, err
 	}
 	audit.Log(ctx, "provisioning.UserCreated", slog.String("user", u.ID), slog.String("name", name))
@@ -234,7 +226,7 @@ func (p *Provisioning) RenameUser(ctx context.Context, id, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := p.store.RenameUser(ctx, id, name); err != nil {
+	if err := p.d.Store.RenameUser(ctx, id, name); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.UserRenamed",
@@ -262,7 +254,7 @@ func (p *Provisioning) DeleteUser(ctx context.Context, id string) error {
 	if n := countCredentials(view.Credentials, id); n > 0 {
 		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(n), "credential"))
 	}
-	if err := p.store.DeleteUser(ctx, id); err != nil {
+	if err := p.d.Store.DeleteUser(ctx, id); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.UserDeleted", slog.String("user", id))
@@ -325,7 +317,7 @@ func (p *Provisioning) CreateCredential(
 	}
 
 	row := core.Credential{AccessKeyID: accessKey, UserID: userID, Secret: secret, Label: label}
-	if err := p.store.CreateCredential(ctx, &row); err != nil {
+	if err := p.d.Store.CreateCredential(ctx, &row); err != nil {
 		return NewCredential{}, err
 	}
 	audit.Log(ctx, "provisioning.CredentialCreated",
@@ -350,7 +342,7 @@ func (p *Provisioning) DeleteCredential(ctx context.Context, accessKeyID string)
 	if c.Source == provisioning.SourceConfig {
 		return fmt.Errorf("%w: credential %q", ErrConfigDeclared, accessKeyID)
 	}
-	if err := p.store.DeleteCredential(ctx, accessKeyID); err != nil {
+	if err := p.d.Store.DeleteCredential(ctx, accessKeyID); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.CredentialDeleted", slog.String("access_key_id", accessKeyID))
@@ -369,7 +361,7 @@ func (p *Provisioning) CreateGrant(ctx context.Context, userID string, resource 
 		perms = core.ValidOn(resource.Kind)
 	}
 	return p.writeGrant(ctx, &core.Grant{UserID: userID, Resource: resource, Permissions: perms},
-		p.store.CreateGrant, "provisioning.GrantCreated")
+		p.d.Store.CreateGrant, "provisioning.GrantCreated")
 }
 
 // SetGrant declares exactly what a user reaches on one resource, writing the
@@ -380,7 +372,7 @@ func (p *Provisioning) SetGrant(
 	ctx context.Context, userID string, resource core.Resource, perms core.PermissionSet,
 ) error {
 	return p.writeGrant(ctx, &core.Grant{UserID: userID, Resource: resource, Permissions: perms},
-		p.store.SetGrant, "provisioning.GrantSet")
+		p.d.Store.SetGrant, "provisioning.GrantSet")
 }
 
 // writeGrant checks a grant against every rule one has to satisfy, writes it
@@ -437,7 +429,7 @@ func (p *Provisioning) DeleteGrant(ctx context.Context, userID string, resource 
 	if _, err := storedUser(&view, userID); err != nil {
 		return err
 	}
-	if err := p.store.DeleteGrant(ctx, userID, resource); err != nil {
+	if err := p.d.Store.DeleteGrant(ctx, userID, resource); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.GrantDeleted",
@@ -469,7 +461,7 @@ func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) e
 		if r.IsWildcard() {
 			return nil
 		}
-		if p.config.Load().HasBackend(r.Name) {
+		if p.d.Config.Load().HasBackend(r.Name) {
 			return nil
 		}
 		return fmt.Errorf("%w: %q", ErrBackendNotFound, r.Name)
@@ -488,10 +480,10 @@ func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) e
 // running registry is not, and a caller told the write succeeded would go on to
 // use a credential that authenticates nothing.
 func (p *Provisioning) republish(ctx context.Context) error {
-	if p.registry == nil {
+	if p.d.Registry == nil {
 		return nil
 	}
-	if err := p.registry.Republish(ctx); err != nil {
+	if err := p.d.Registry.Republish(ctx); err != nil {
 		return fmt.Errorf("provisioning change was stored but the registry was not rebuilt: %w", err)
 	}
 	return nil

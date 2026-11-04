@@ -40,7 +40,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	// newTestHandler builds a Handler wired to mock data for testing.
@@ -68,10 +67,6 @@ func testSync(st *proxytest.Stack, store reconcile.Stores) *reconcile.Manager {
 	return reconcile.NewManager(&reconcile.Deps{
 		Backends: st.Runtime, Stores: store, Usage: st.Runtime.Acct(),
 	})
-}
-
-func testDashboard(st *proxytest.Stack, store core.DashboardStore) *dashboard.Aggregator {
-	return dashboard.New(store, st.Runtime.Usage(), nil, st.Runtime, st.States)
 }
 
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
@@ -113,7 +108,6 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mockStore,
 		}),
 	})
 	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
@@ -136,7 +130,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -490,7 +484,6 @@ func TestCrossInstanceSession(t *testing.T) {
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-			Metrics:  mockStore,
 		}),
 	})
 	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
@@ -502,8 +495,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
-	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h1 := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -587,8 +580,8 @@ func TestDashboard_ListsStoreBuckets(t *testing.T) {
 	if !ok {
 		t.Fatalf("buckets = %T, want *provisioning.Declared", h.d.Buckets)
 	}
-	declared.Set(append(slices.Clone(declared.Buckets()),
-		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore}))
+	declared.Store(new(append(slices.Clone(declared.Buckets()),
+		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore})))
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
 	w := httptest.NewRecorder()
@@ -1553,7 +1546,6 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 			Backends:        map[string]backend.ObjectBackend{},
 			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         mockStore,
 		}),
 	})
 	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
@@ -1569,7 +1561,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -1850,7 +1842,7 @@ func TestAPICleanExcessStatus_RequiresAuth(t *testing.T) {
 // assembly applies before publishing it.
 func declaredFrom(cfg *config.Config) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Set(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
+	d.Store(new(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets))
 	return d
 }
 

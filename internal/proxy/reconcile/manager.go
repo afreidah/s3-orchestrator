@@ -111,11 +111,8 @@ func (m *Manager) reportBudgetStop(ctx context.Context, op, backendName string) 
 
 // Manager orchestrates sync and reconcile passes for one fleet.
 type Manager struct {
-	backends BackendResolver
-	stores   Stores
-	usage    UsageRecorder
-	codec    StoredInspector
-	log      *slog.Logger
+	d   Deps
+	log *slog.Logger
 }
 
 // Deps groups the reconcile manager's constructor parameters. Codec is
@@ -134,13 +131,7 @@ func NewManager(d *Deps) *Manager {
 	must.NotNil("d.Backends", d.Backends)
 	must.NotNil("d.Stores", d.Stores)
 	must.NotNil("d.Usage", d.Usage)
-	return &Manager{
-		backends: d.Backends,
-		stores:   d.Stores,
-		usage:    d.Usage,
-		codec:    d.Codec,
-		log:      slog.Default().With(logfmt.Component("reconcile")),
-	}
+	return &Manager{d: *d, log: logfmt.Logger("reconcile")}
 }
 
 // -------------------------------------------------------------------------
@@ -157,7 +148,7 @@ func NewManager(d *Deps) *Manager {
 // acting on it. Returns counts of imported vs skipped objects.
 func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, knownBuckets []string) (imported, skipped int, err error) {
 	ctx = audit.WithWorkload(ctx, audit.WorkloadReconcile)
-	s3b, err := m.backends.GetBackend(backendName)
+	s3b, err := m.d.Backends.GetBackend(backendName)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -168,12 +159,12 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, k
 	m.log.InfoContext(ctx, "starting backend sync", "backend", backendName, "prefix", prefix)
 
 	pages := PageImporter{
-		Store:       m.stores,
+		Store:       m.d.Stores,
 		Classify:    m.classifyDeps(backendName, s3b),
 		BackendName: backendName,
 		Prefixes:    BucketPrefixes(knownBuckets),
 	}
-	total, err := pages.ImportListing(ctx, s3b, prefix, m.usage, nil)
+	total, err := pages.ImportListing(ctx, s3b, prefix, m.d.Usage, nil)
 	if errors.Is(err, errBudgetExhausted) {
 		m.reportBudgetStop(ctx, "sync", backendName)
 		return total.Imported, total.Skipped, nil
@@ -192,7 +183,7 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, k
 // backend that is already spent; the per-page charge holds it to the limit
 // from there.
 func (m *Manager) admitWalk(backendName string) error {
-	if !m.usage.Allow(backendName, s3op.ListObjects, 0, 0) {
+	if !m.d.Usage.Allow(backendName, s3op.ListObjects, 0, 0) {
 		return fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
 	return nil
@@ -202,11 +193,11 @@ func (m *Manager) admitWalk(backendName string) error {
 // Satisfies ImporterFn, and goes through the same classify-and-import step as
 // the page import, so both passes classify identically.
 func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error) {
-	be, err := m.backends.GetBackend(req.Backend)
+	be, err := m.d.Backends.GetBackend(req.Backend)
 	if err != nil {
 		return core.ImportSkippedExisting, err
 	}
-	return importListed(ctx, m.classifyDeps(req.Backend, be), m.stores, req)
+	return importListed(ctx, m.classifyDeps(req.Backend, be), m.d.Stores, req)
 }
 
 // classifyDeps is how this manager's passes reach a backend's bytes and the
@@ -214,9 +205,9 @@ func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRe
 // backend's usage like the listing that found the key.
 func (m *Manager) classifyDeps(name string, be backend.ObjectBackend) ClassifyDeps {
 	return ClassifyDeps{
-		Reader: meteredReader{be: be, name: name, usage: m.usage},
-		Stores: m.stores,
-		Codec:  m.codec,
+		Reader: meteredReader{be: be, name: name, usage: m.d.Usage},
+		Stores: m.d.Stores,
+		Codec:  m.d.Codec,
 		Source: "reconcile",
 		Log:    m.log,
 	}
@@ -230,7 +221,7 @@ func (m *Manager) classifyDeps(name string, be backend.ObjectBackend) ClassifyDe
 // byte order.
 func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*Result, error) {
 	ctx = audit.WithWorkload(ctx, audit.WorkloadReconcile)
-	s3b, err := m.backends.GetBackend(backendName)
+	s3b, err := m.d.Backends.GetBackend(backendName)
 	if err != nil {
 		return nil, err
 	}
@@ -240,10 +231,10 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 	}
 
 	listedAt := time.Now()
-	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), m.usage, backendName)
+	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), m.d.Usage, backendName)
 	defer s3.Stop()
 
-	dbIter := NewDBCursorStream(DBCursorStreamDeps{Store: m.stores, BackendName: backendName})
+	dbIter := NewDBCursorStream(DBCursorStreamDeps{Store: m.d.Stores, BackendName: backendName})
 	defer dbIter.Stop()
 
 	res := &Result{}
@@ -272,14 +263,14 @@ func (m *Manager) deleter() DeleterFn {
 		// The delete credits the backend's stripes in its own transaction, so
 		// there is nothing to tell the routing snapshot; it reloads on its tick.
 		// It queues no cleanup, since the bytes are already gone.
-		if _, err := m.stores.DeleteObjectLocation(ctx, loc, 0, ""); err != nil {
+		if _, err := m.d.Stores.DeleteObjectLocation(ctx, loc, 0, ""); err != nil {
 			return err
 		}
 		// Swept by path: what this pass established is that these particular
 		// bytes are absent, so only the deletions queued against them are moot.
 		// Any queued against the key's other writes name bytes still on the
 		// backend.
-		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, loc.StorageKey, loc.BackendName); err != nil {
+		if _, err := m.d.Stores.SweepStaleCleanupQueueRows(ctx, loc.StorageKey, loc.BackendName); err != nil {
 			m.log.WarnContext(ctx, "failed to sweep cleanup_queue rows for stale copy",
 				slog.String("key", loc.ObjectKey), slog.String("storage_key", loc.StorageKey),
 				slog.String("backend", loc.BackendName), "error", err)

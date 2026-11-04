@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -62,12 +63,9 @@ type ScrubberStore interface {
 // integrity config from the running configuration.
 type Scrubber struct {
 	syncutil.Section[config.IntegrityConfig]
-	log       *slog.Logger
-	deps      Ops
-	placement Placement
-	store     ScrubberStore
-	hasher    *storedHasher
-	telemetry.SharedGauges
+	d      ScrubberDeps
+	log    *slog.Logger
+	hasher *storedHasher
 }
 
 // ScrubberDeps groups the scrubber's constructor dependencies. Encryptor and
@@ -75,8 +73,7 @@ type Scrubber struct {
 // before hashing; a copy recorded as encrypted or compressed cannot be verified
 // without the matching one.
 type ScrubberDeps struct {
-	Ops       Ops
-	Placement Placement
+	Fleet
 	Store     ScrubberStore
 	Config    syncutil.Section[config.IntegrityConfig]
 	Encryptor *encryption.Encryptor
@@ -84,18 +81,16 @@ type ScrubberDeps struct {
 }
 
 // NewScrubber creates a Scrubber with the given dependencies.
-func NewScrubber(deps *ScrubberDeps) *Scrubber {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Placement", deps.Placement)
-	must.NotNil("Store", deps.Store)
-	must.NotNil("Config", deps.Config)
+func NewScrubber(d *ScrubberDeps) *Scrubber {
+	must.NotNil("d", d)
+	d.mustBeWired()
+	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Config", d.Config)
 	return &Scrubber{
-		Section:   deps.Config,
-		deps:      deps.Ops,
-		placement: deps.Placement,
-		store:     deps.Store,
-		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec),
-		log:       workerLogger(audit.WorkloadScrub),
+		Section: d.Config,
+		d:       *d,
+		hasher:  newStoredHasher(d.Ops, d.Encryptor, d.Codec),
+		log:     logfmt.Logger(string(audit.WorkloadScrub)),
 	}
 }
 
@@ -122,7 +117,7 @@ func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification
 	ctx, span := telemetry.StartSpan(ctx, "scrub_key", telemetry.AttrOperation.String("scrub_key"))
 	defer span.End()
 
-	locations, err := s.store.GetAllObjectLocations(ctx, key)
+	locations, err := s.d.Store.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
 	}
@@ -155,7 +150,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	// the same population even if the cycle straddles a second boundary.
 	scrubbedBefore := s.scrubbedBefore()
 
-	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable, scrubbedBefore)
+	locs, err := s.d.Store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable, scrubbedBefore)
 	if err != nil {
 		return batch.Summary{}, fmt.Errorf("fetch copies to scrub: %w", err)
 	}
@@ -219,7 +214,7 @@ func (s *Scrubber) ReachableBackends() []string {
 // read from and the ones it has to leave alone. It checks only for headroom,
 // since no object is known yet; verifyOne re-checks against the real size.
 func (s *Scrubber) affordableBackends() (affordable, declined []string) {
-	for _, name := range s.deps.BackendOrder() {
+	for _, name := range s.d.Ops.BackendOrder() {
 		if s.admits(name, 0) {
 			affordable = append(affordable, name)
 		} else {
@@ -234,8 +229,8 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 // while that share of the monthly egress limit is still free for client reads,
 // which are checked against the whole limit.
 func (s *Scrubber) admits(backend string, egress int64) bool {
-	reserve := s.Config().ScrubReserve(s.deps.Usage().GetLimits()[backend].EgressByteLimit)
-	return s.deps.Acct().Allow(backend, s3op.GetObject, egress+reserve, 0)
+	reserve := s.Config().ScrubReserve(s.d.Ops.Usage().GetLimits()[backend].EgressByteLimit)
+	return s.d.Ops.Acct().Allow(backend, s3op.GetObject, egress+reserve, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -258,7 +253,7 @@ func (s *Scrubber) countDeferred(ctx context.Context, declined []string, scrubbe
 	if len(declined) == 0 {
 		return 0
 	}
-	n, err := s.store.CountScrubCandidatesOnBackends(ctx, declined, scrubbedBefore)
+	n, err := s.d.Store.CountScrubCandidatesOnBackends(ctx, declined, scrubbedBefore)
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to count deferred scrub candidates", "error", err)
 		return 0
@@ -274,13 +269,13 @@ func (s *Scrubber) countDeferred(ctx context.Context, declined []string, scrubbe
 // reachable scopes the age and the never-verified count to the copies this
 // cycle could have read; the rest are published as deferred.
 func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
-	ledger, err := s.store.LedgerStats(ctx)
+	ledger, err := s.d.Store.LedgerStats(ctx)
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to read scrub coverage", "error", err)
 		return
 	}
 	stat := ledger.Coverage(reachable, time.Now())
-	s.PublishGauges(ctx, telemetry.GaugeSourceScrubber, telemetry.WorkerGauges{
+	s.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourceScrubber, telemetry.WorkerGauges{
 		OldestUnverifiedSeconds: new(stat.OldestUnverifiedAge.Seconds()),
 		NeverVerifiedCopies:     &stat.NeverVerified,
 		DeferredCopies:          &stat.Deferred,
@@ -300,7 +295,7 @@ func (s *Scrubber) checkCopy(ctx context.Context, loc *core.ObjectLocation, admi
 	// Stamped even when the read failed: a copy that always fails would
 	// otherwise sit at the head of the queue and starve the rest of the sweep.
 	// A copy a newer write replaced is not stamped, since what was read is gone.
-	err := s.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Scrubbed: true})
+	err := s.d.Store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Scrubbed: true})
 	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		s.log.WarnContext(ctx, "failed to record scrub timestamp",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
@@ -321,7 +316,7 @@ func (s *Scrubber) checkCopy(ctx context.Context, loc *core.ObjectLocation, admi
 // client overwrite or delete replaced since it was read is left alone: that
 // write already queued the discarded bytes.
 func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, reason string) error {
-	err := s.placement.DropCopy(ctx, loc, 0, reason)
+	err := s.d.Placement.DropCopy(ctx, loc, 0, reason)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return nil
@@ -347,11 +342,11 @@ var unreadableCopies = core.FormFilter{With: core.StoredEncrypted, Without: core
 // ListUnreadable returns up to limit copies that are encrypted with no key,
 // and how many there are in total.
 func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error) {
-	locs, err := s.store.ListCopiesByForm(ctx, &unreadableCopies, limit, core.Cursor{})
+	locs, err := s.d.Store.ListCopiesByForm(ctx, &unreadableCopies, limit, core.Cursor{})
 	if err != nil {
 		return nil, 0, err
 	}
-	count, err := s.store.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without)
+	count, err := s.d.Store.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -365,7 +360,7 @@ func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.Object
 func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error) {
 	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadPurge}, func(ctx context.Context) (batch.Summary, error) {
 		pager := copyPager(batchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return s.store.ListCopiesByForm(ctx, &unreadableCopies, limit, after)
+			return s.d.Store.ListCopiesByForm(ctx, &unreadableCopies, limit, after)
 		})
 		runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
 		total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
@@ -436,7 +431,7 @@ func (s *Scrubber) Backfill(ctx context.Context, req BackfillRequest, observer p
 func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
 	unhashed := core.FormFilter{Without: core.StoredHashed, Backend: req.Backend, ManagedOnly: true}
 	pager := copyPager(req.BatchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-		return s.store.ListCopiesByForm(ctx, &unhashed, limit, after)
+		return s.d.Store.ListCopiesByForm(ctx, &unhashed, limit, after)
 	})
 	var res BackfillResult
 	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
@@ -447,7 +442,7 @@ func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer p
 		if len(locs) < req.BatchSize {
 			return batch.Step{}, nil // the last page, so there is nothing to pause before
 		}
-		return batch.Step{Stop: req.Pause > 0 && !sleepOrCancel(ctx, req.Pause)}, nil
+		return batch.Step{Stop: req.Pause > 0 && !syncutil.Sleep(ctx, req.Pause)}, nil
 	})
 	res.Done = stop == batch.Exhausted
 	if stop == batch.Errored {
@@ -463,19 +458,6 @@ func (s *Scrubber) hashPage(ctx context.Context, locs []core.ObjectLocation, obs
 	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 		return s.hashOne(ctx, &loc)
 	})
-}
-
-// sleepOrCancel waits for d or for ctx to be cancelled, returning false when
-// cancellation wins so the caller stops early.
-func sleepOrCancel(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
 }
 
 // hashOne computes and stores the hash for one object, returning the outcome
@@ -495,7 +477,7 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 	}
 	// The pass read the whole body to produce the digest, so the copy is
 	// verified by construction and stamped as scrubbed in the same write.
-	err := s.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{ContentHash: digests.SHA256, Scrubbed: true})
+	err := s.d.Store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{ContentHash: digests.SHA256, Scrubbed: true})
 	if errors.Is(err, core.ErrCopyChanged) {
 		// A newer write replaced the copy mid-hash; its own write recorded a hash.
 		return batch.Skipped(progress.StatusSkipped)
@@ -525,7 +507,7 @@ func (s *Scrubber) recordETag(ctx context.Context, loc *core.ObjectLocation, dig
 		return
 	}
 	id := &core.ObjectIdentity{ETag: etag.Single(digest)}
-	if err := s.store.RecordObjectIdentity(ctx, loc, id); err != nil {
+	if err := s.d.Store.RecordObjectIdentity(ctx, loc, id); err != nil {
 		s.log.WarnContext(ctx, "failed to record object etag",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	}

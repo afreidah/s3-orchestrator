@@ -35,7 +35,7 @@ import (
 // notification for a successful PutObject. Records failover spans when
 // retries occurred. The PUT itself was charged when it was sent.
 func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, operation s3op.Operation, key, backendName string, size int64, start time.Time, failedBackends []string) {
-	o.core.Acct().Operation(operation, backendName, start, nil)
+	o.d.Core.Acct().Operation(operation, backendName, start, nil)
 	if len(failedBackends) > 0 {
 		for _, fb := range failedBackends {
 			telemetry.WriteFailoverTotal.WithLabelValues(operation.String(), fb, backendName).Inc()
@@ -44,7 +44,7 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
 	}
 	pobserve.PutCompleted(ctx, span, key, backendName, size)
-	o.cache.Delete(key)
+	o.d.LocationCache.Delete(key)
 }
 
 // -------------------------------------------------------------------------
@@ -57,18 +57,18 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // its bytes are already on the destination.
 func (o *Manager) finalizeCopy(ctx context.Context, req *copyContext, etag string, native bool) (string, error) {
 	dst := req.intent
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, req.span, s3op.CopyObject, dst.RecordFor(req.form)); err != nil {
+	if err := o.d.Coord.RecordObjectAndPromoteIntent(ctx, req.span, s3op.CopyObject, dst.RecordFor(req.form)); err != nil {
 		return "", err
 	}
 	if dst.Identity.Complete() {
 		etag = dst.Identity.ETag
 	}
-	o.core.Acct().Operation(s3op.CopyObject, dst.BackendName, req.start, nil)
+	o.d.Core.Acct().Operation(s3op.CopyObject, dst.BackendName, req.start, nil)
 	if native {
 		req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
 	}
 	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, dst.ObjectKey, req.srcBackendName, dst.BackendName, dst.SizeBytes)
-	o.cache.Delete(dst.ObjectKey)
+	o.d.LocationCache.Delete(dst.ObjectKey)
 	return etag, nil
 }
 
@@ -84,7 +84,7 @@ func (o *Manager) finalizeCopy(ctx context.Context, req *copyContext, etag strin
 func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.CleanupItem, start time.Time) {
 	const operation = s3op.DeleteObject
 	if len(copies) > 0 {
-		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
+		o.d.Core.Acct().Operation(operation, copies[0].BackendName, start, nil)
 	}
 	pobserve.DeleteCompleted(ctx, span, key, len(copies))
 }
@@ -97,7 +97,7 @@ func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key strin
 // the cleanup settler.
 func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, start time.Time) {
 	const operation = s3op.DeleteObjects
-	o.core.Acct().Operation(operation, "", start, nil)
+	o.d.Core.Acct().Operation(operation, "", start, nil)
 	span.SetAttributes(
 		attribute.Int("s3o.deleted_count", batchSize),
 		attribute.Int("s3o.error_count", 0),

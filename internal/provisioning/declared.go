@@ -18,27 +18,21 @@ package provisioning
 
 import (
 	"strings"
-	"sync/atomic"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// Declared is the merged bucket set, live. The zero value is usable and reports
-// nothing declared, which is what a process holds before its first assembly.
+// Declared is the merged bucket set, live. Registry assembly stores it at
+// startup, after each reload, and after each provisioning change. The zero
+// value is usable and reports nothing declared, which is what a process holds
+// before its first assembly.
 type Declared struct {
-	buckets atomic.Pointer[[]Bucket]
+	syncutil.AtomicConfig[[]Bucket]
 }
 
 // NewDeclared builds an empty holder.
 func NewDeclared() *Declared {
 	return &Declared{}
-}
-
-// Set replaces the declared set. Called by registry assembly, at startup, after
-// each reload, and after each provisioning change.
-func (d *Declared) Set(buckets []Bucket) {
-	if d == nil {
-		return
-	}
-	d.buckets.Store(&buckets)
 }
 
 // Buckets returns the declared set. The slice is the stored one and must not be
@@ -47,7 +41,7 @@ func (d *Declared) Buckets() []Bucket {
 	if d == nil {
 		return nil
 	}
-	if p := d.buckets.Load(); p != nil {
+	if p := d.Load(); p != nil {
 		return *p
 	}
 	return nil

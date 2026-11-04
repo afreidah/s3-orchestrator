@@ -32,11 +32,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -84,26 +86,28 @@ var retryBackoff = backoff.Exponential{Base: time.Second, Ceiling: 64 * time.Sec
 // that service's Run to release what the notifier holds on shutdown.
 type Notifier struct {
 	*tickrunner.Service
-	telemetry.SharedGauges
 
 	log       *slog.Logger
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
+	gauges    telemetry.GaugePublisher
 	client    *http.Client
 	dampener  *syncutil.TTLCache[string, struct{}]
 }
 
-// NewNotifier creates a notifier backed by the given outbox store. Registers
-// itself as the process-wide event emitter so every package can publish
-// notifications through the same mechanism. Endpoints carry the defaults
-// config validation fills in.
-func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
+// NewNotifier creates a notifier backed by the given outbox store, sharing its
+// queue depth through gauges. Registers itself as the process-wide event
+// emitter so every package can publish notifications through the same
+// mechanism. Endpoints carry the defaults config validation fills in.
+func NewNotifier(cfg *config.NotificationConfig, store OutboxStore, gauges telemetry.GaugePublisher) *Notifier {
+	must.NotNil("store", store)
+	must.NotNil("gauges", gauges)
 	slug := string(audit.WorkloadNotifier)
-	log := tickrunner.ComponentLogger(slug)
 	n := &Notifier{
-		log:       log,
+		log:       logfmt.Logger(slug),
 		endpoints: cfg.Endpoints,
 		store:     store,
+		gauges:    gauges,
 		// The timeout is each endpoint's own, set per delivery; deliveries
 		// run one at a time.
 		client:   &http.Client{},
@@ -114,7 +118,6 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		Interval: drainInterval,
 		LockID:   core.LockNotifier,
 		Name:     slug,
-		Log:      log,
 		Work: func(ctx context.Context) error {
 			_, err := n.drain(ctx)
 			return err
@@ -242,7 +245,7 @@ func (n *Notifier) drain(ctx context.Context) (batch.Summary, error) {
 		if depth, err := n.store.NotificationQueueDepth(ctx); err != nil {
 			n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
 		} else {
-			n.PublishGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
+			n.gauges.PublishWorkerGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
 		}
 		return sum, nil
 	})

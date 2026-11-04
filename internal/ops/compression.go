@@ -50,10 +50,8 @@ type CompressionDeps struct {
 //
 // Encryptor may be nil, in which case encrypted copies are refused.
 type Compression struct {
+	d      CompressionDeps
 	log    *slog.Logger
-	cfg    config.CompressionConfig
-	store  RewriteStore
-	mover  Mover
 	layers *storedform.Layers
 }
 
@@ -61,17 +59,22 @@ type Compression struct {
 func NewCompression(d *CompressionDeps) *Compression {
 	must.NotNil("d.Mover", d.Mover)
 	return &Compression{
-		log:    slog.Default().With(logfmt.Component("ops")),
-		cfg:    d.Config,
-		store:  d.Store,
-		mover:  d.Mover,
+		d:      *d,
+		log:    logfmt.Logger(logComponent),
 		layers: &storedform.Layers{Encryptor: d.Encryptor, Codec: d.Codec, Compression: d.Config},
 	}
 }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, store: c.store, mover: c.mover, layers: c.layers}
+	return bulkRewriteEnv{log: c.log, store: c.d.Store, mover: c.d.Mover, layers: c.layers}
+}
+
+// unavailable reports whether the orchestrator runs without a codec or a
+// store to rewrite through, which every operation here refuses with
+// ErrCompressionUnavailable.
+func (c *Compression) unavailable() bool {
+	return c.d.Codec == nil || c.d.Store == nil
 }
 
 // -------------------------------------------------------------------------
@@ -86,7 +89,7 @@ func (c *Compression) rewriteEnv() bulkRewriteEnv {
 // Rewritten and declined copies both leave the listing, so running a capped
 // pass again continues with the next batch.
 func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
-	if c.layers.Codec == nil || c.store == nil {
+	if c.unavailable() {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
 	// The size floor and the recorded declines are both applied by the listing
@@ -102,9 +105,9 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 		filter: core.FormFilter{
 			Backend: backend,
 			Candidates: &core.CompressionThresholds{
-				MinSize:  c.cfg.MinSize,
-				MinRatio: c.cfg.MinRatio,
-				Level:    c.cfg.Level,
+				MinSize:  c.d.Config.MinSize,
+				MinRatio: c.d.Config.MinRatio,
+				Level:    c.d.Config.Level,
 			},
 		},
 		onDeclined:  c.recordDecline,
@@ -117,7 +120,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 // verbatim. maxRewrites caps how many copies are rewritten, or zero for the
 // whole fleet; a capped run can be repeated to continue.
 func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
-	if c.layers.Codec == nil || c.store == nil {
+	if c.unavailable() {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
 	op := bulkRewriteOp{
@@ -139,9 +142,9 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 // this copy instead of re-encoding it. A copy a newer write replaced has
 // nothing to record against.
 func (c *Compression) recordDecline(ctx context.Context, loc *core.ObjectLocation, encodedSize int64) {
-	err := c.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Probe: &core.CompressionProbe{
+	err := c.d.Store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Probe: &core.CompressionProbe{
 		Size:  encodedSize,
-		Level: c.cfg.Level,
+		Level: c.d.Config.Level,
 	}})
 	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		c.log.WarnContext(ctx, "failed to record compression probe",

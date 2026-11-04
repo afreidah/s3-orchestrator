@@ -81,7 +81,7 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 		core:    core,
 		stores:  stores,
 		settler: cleanup.New(cleanup.Deps{Deleter: core, Store: stores, Concurrency: settleConcurrency}),
-		log:     slog.Default().With(logfmt.Component("writepath")),
+		log:     logfmt.Logger("writepath"),
 	}
 }
 

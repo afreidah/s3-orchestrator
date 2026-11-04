@@ -44,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -176,7 +177,7 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 		local:    NewLocalCounterBackend(backendNames),
 		cb:       cb,
 		backends: backendNames,
-		log:      slog.Default().With(logfmt.Component("redis_counters")),
+		log:      logfmt.Logger("redis_counters"),
 	}
 	cb.AddOnStateChange(r.onStateChange)
 
@@ -593,12 +594,7 @@ func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel stri
 		r.log.WarnContext(ctx, "shared state subscription lost, resubscribing",
 			"channel", channel, "error", err)
 	}
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(watchRetryDelay):
-		return true
-	}
+	return syncutil.Sleep(ctx, watchRetryDelay)
 }
 
 // -------------------------------------------------------------------------

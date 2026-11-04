@@ -61,7 +61,6 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         newMetricsAdapter(testStore),
 		}),
 		ObjectCache:    mc,
 		CacheTTL:       60 * time.Second,

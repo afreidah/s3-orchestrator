@@ -66,24 +66,16 @@ type Deps struct {
 
 // Settler deletes queued bytes and settles their cleanup rows.
 type Settler struct {
-	deleter     Deleter
-	store       Store
-	concurrency int
-	admission   batch.Admission
-	log         *slog.Logger
+	d   Deps
+	log *slog.Logger
 }
 
 // New builds a Settler from its dependencies.
 func New(d Deps) *Settler {
-	must.NotNil("Deleter", d.Deleter)
-	must.NotNil("Store", d.Store)
-	return &Settler{
-		deleter:     d.Deleter,
-		store:       d.Store,
-		concurrency: max(d.Concurrency, 1),
-		admission:   d.Admission,
-		log:         slog.Default().With(logfmt.Component("cleanup")),
-	}
+	must.NotNil("d.Deleter", d.Deleter)
+	must.NotNil("d.Store", d.Store)
+	d.Concurrency = max(d.Concurrency, 1)
+	return &Settler{d: d, log: logfmt.Logger("cleanup")}
 }
 
 // -------------------------------------------------------------------------
@@ -193,9 +185,9 @@ func (s *Settler) deleteAll(ctx context.Context, items []core.CleanupItem) map[i
 		mu.Unlock()
 	}
 	groups := slices.Collect(maps.Values(byBackend))
-	workerpool.Run(ctx, s.concurrency, groups, func(ctx context.Context, group []core.CleanupItem) {
+	workerpool.Run(ctx, s.d.Concurrency, groups, func(ctx context.Context, group []core.CleanupItem) {
 		name := group[0].BackendName
-		be, err := s.deleter.GetBackend(name)
+		be, err := s.d.Deleter.GetBackend(name)
 		if err != nil {
 			for i := range group {
 				record(group[i].ID, deletion{unknownBackend: true})
@@ -207,16 +199,16 @@ func (s *Settler) deleteAll(ctx context.Context, items []core.CleanupItem) map[i
 			paths[i] = core.StoragePath(group[i].ObjectKey, group[i].StorageKey)
 		}
 		run := func() {
-			failed := s.deleter.DeleteMany(ctx, name, be, paths)
+			failed := s.d.Deleter.DeleteMany(ctx, name, be, paths)
 			for i := range group {
 				record(group[i].ID, deletion{err: failed[paths[i]]})
 			}
 		}
-		if s.admission == nil {
+		if s.d.Admission == nil {
 			run()
 			return
 		}
-		batch.Admit(ctx, s.admission, run)
+		batch.Admit(ctx, s.d.Admission, run)
 	})
 	return deleted
 }
@@ -233,7 +225,7 @@ func (s *Settler) retire(ctx context.Context, items []core.CleanupItem, gone []i
 	for j, i := range gone {
 		retiring[j] = items[i]
 	}
-	retired, err := s.store.CompleteCleanupItems(ctx, retiring)
+	retired, err := s.d.Store.CompleteCleanupItems(ctx, retiring)
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to complete cleanup items", slog.Int("rows", len(retiring)), "error", err)
 		return
@@ -297,7 +289,7 @@ func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts 
 		slog.Int("attempts", int(attempts)),
 		slog.Int64("size_bytes", item.SizeBytes),
 		"error", delErr)
-	moved, err := s.store.MoveCleanupToDLQ(ctx, item, delErr.Error())
+	moved, err := s.d.Store.MoveCleanupToDLQ(ctx, item, delErr.Error())
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to move cleanup item to DLQ",
 			slog.Int64("cleanup_id", item.ID), "error", err)
@@ -330,7 +322,7 @@ func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts 
 // retry stamps the next retry deadline on a row still within its budget and
 // releases its claim.
 func (s *Settler) retry(ctx context.Context, item *core.CleanupItem, delErr error) batch.ItemResult {
-	retried, err := s.store.RetryCleanupItem(ctx, item, RetryBackoff.For(item.Attempts), delErr.Error())
+	retried, err := s.d.Store.RetryCleanupItem(ctx, item, RetryBackoff.For(item.Attempts), delErr.Error())
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
 		return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusRetry}

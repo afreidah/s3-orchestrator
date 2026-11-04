@@ -76,7 +76,6 @@ func setupProvEnv(t *testing.T) *provEnv {
 			Backends:        testBackends,
 			Order:           testBackendOrder,
 			RoutingStrategy: config.RoutingPack,
-			Metrics:         newMetricsAdapter(testStore),
 		}),
 	})
 	registerStack(t, st)
@@ -128,26 +127,27 @@ func setupProvEnv(t *testing.T) *provEnv {
 
 	env := &provEnv{declared: declared, cfg: cfg}
 	env.proxyAddr = serveHTTP(t, srv)
-	env.adminAddr = serveHTTP(t, provAdminMux(t, opsSvc, st, registry))
+	env.adminAddr = serveHTTP(t, newAdminMux(t, opsSvc, st, registry))
 	return env
 }
 
-// provAdminMux builds the admin handler's mux with the provisioning service
-// wired, which is the dependency the hand-built harness has to supply.
-func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, registry *auth.LiveRegistry) http.Handler {
+// newAdminMux builds the admin handler's mux over the stack, with the ops
+// services and registry the hand-built harness has to supply.
+func newAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, registry *auth.LiveRegistry) http.Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := admin.New(&admin.Deps{
-		BackendOps: st.Usage,
-		Ops:        opsSvc,
-		States:     st.States,
-		StateStore: testStore,
-		DBHealthy:  testDatabaseCB.IsHealthy,
-		Cleanup:    testStore,
-		Registry:   registry.Load,
-		Config:     st.Config,
-		LogLevel:   &lv,
+		BackendOps:  st.Usage,
+		Ops:         opsSvc,
+		States:      st.States,
+		ReplMetrics: st.Metrics,
+		StateStore:  testStore,
+		DBHealthy:   testDatabaseCB.IsHealthy,
+		Cleanup:     testStore,
+		Registry:    registry.Load,
+		Config:      st.Config,
+		LogLevel:    &lv,
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)

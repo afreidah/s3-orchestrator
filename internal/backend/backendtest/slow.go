@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // Slow delays the operations selected by its Delay* fields. Construct with
@@ -44,15 +45,10 @@ func NewSlow(inner backend.ObjectBackend, d time.Duration) *Slow {
 // wait sleeps for the configured delay unless ctx expires first, in which case
 // it reports the context error so the caller's timeout is what surfaces.
 func (s *Slow) wait(ctx context.Context, enabled bool) error {
-	if !enabled {
+	if !enabled || syncutil.Sleep(ctx, s.delay) {
 		return nil
 	}
-	select {
-	case <-time.After(s.delay):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return ctx.Err()
 }
 
 // PutObject delays when DelayPuts is set, then forwards.

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -55,12 +56,9 @@ type ReplicatorStore interface {
 // configuration.
 type Replicator struct {
 	syncutil.Section[config.ReplicationConfig]
-	log       *slog.Logger
-	ops       Ops
-	placement Placement
-	store     ReplicatorStore
-	hasher    *storedHasher
-	integrity syncutil.Section[config.IntegrityConfig]
+	d      ReplicatorDeps
+	log    *slog.Logger
+	hasher *storedHasher
 }
 
 // ReplicatorDeps groups the replicator's constructor dependencies. Integrity
@@ -70,8 +68,7 @@ type Replicator struct {
 // stored form before hashing, so a deployment that stores encrypted or
 // compressed objects needs the matching one.
 type ReplicatorDeps struct {
-	Ops       Ops
-	Placement Placement
+	Fleet
 	Store     ReplicatorStore
 	Config    syncutil.Section[config.ReplicationConfig]
 	Integrity syncutil.Section[config.IntegrityConfig]
@@ -80,20 +77,17 @@ type ReplicatorDeps struct {
 }
 
 // NewReplicator creates a Replicator with the given dependencies.
-func NewReplicator(deps *ReplicatorDeps) *Replicator {
-	must.NotNil("Ops", deps.Ops)
-	must.NotNil("Placement", deps.Placement)
-	must.NotNil("Store", deps.Store)
-	must.NotNil("Config", deps.Config)
-	must.NotNil("Integrity", deps.Integrity)
+func NewReplicator(d *ReplicatorDeps) *Replicator {
+	must.NotNil("d", d)
+	d.mustBeWired()
+	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Config", d.Config)
+	must.NotNil("d.Integrity", d.Integrity)
 	return &Replicator{
-		Section:   deps.Config,
-		ops:       deps.Ops,
-		placement: deps.Placement,
-		store:     deps.Store,
-		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec),
-		integrity: deps.Integrity,
-		log:       workerLogger(audit.WorkloadReplication),
+		Section: d.Config,
+		d:       *d,
+		hasher:  newStoredHasher(d.Ops, d.Encryptor, d.Codec),
+		log:     logfmt.Logger(string(audit.WorkloadReplication)),
 	}
 }
 
@@ -115,7 +109,7 @@ type ReplicationSummary struct {
 // start and end step per object replicated. A cycle that attempted anything
 // publishes ReplicationCompleted, whether a tick or an operator ran it.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadReplication, Refresh: r.ops}
+	pass := cycle.Pass{Workload: audit.WorkloadReplication, Refresh: r.d.Metrics}
 	sum, err := cycle.Run(ctx, pass, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
@@ -151,7 +145,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	)
 
 	excluded := r.unhealthyBackends(cfg.UnhealthyThreshold)
-	locations, err := r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
+	locations, err := r.d.Store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	if err != nil {
 		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
@@ -163,7 +157,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	// The pending gauge comes from the fleet snapshot's ledger count, not this
 	// batch, so every instance serves the same figure.
 	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
-	sum, created := pass.run(ctx, r.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+	sum, created := pass.run(ctx, r.d.Ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
 		outcome := r.replicateObject(ctx, set.key, set.copies, set.off)
 		r.reportObjectOutcome(ctx, &outcome)
 		return outcome.Created, replicaOutcomeResult(&outcome)
@@ -237,12 +231,12 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 	// Retry with different targets on failure without consuming a needed
 	// slot. Cap total attempts to avoid unbounded retries when every
 	// remaining backend rejects the object.
-	maxAttempts := needed + len(r.ops.Backends())
+	maxAttempts := needed + len(r.d.Ops.Backends())
 	for attempt := 0; out.Created < needed && attempt < maxAttempts; attempt++ {
 		remaining := needed - out.Created
 		// Capacity is settled by the conditional insert that records the copy,
 		// so the first-ranked target can still decline.
-		ranked := r.placement.RankReplicaTargets(sizeEstimate, exclusion)
+		ranked := r.d.Placement.RankReplicaTargets(sizeEstimate, exclusion)
 		if len(ranked) == 0 {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
@@ -272,7 +266,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 			// A copy can fail after its bytes reached the target, and no row
 			// will ever record them. The path is this attempt's own, so
 			// removing it cannot touch anything else.
-			r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
+			r.d.Placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 			telemetry.ReplicationErrorsTotal.Inc()
 			out.CopyErrors++
 			continue
@@ -287,7 +281,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 
 		// A placement that records nothing queues the replica's bytes in the
 		// same transaction, so each failure only has to be tallied here.
-		recordedSize, err := r.placement.Place(ctx, &core.Placement{
+		recordedSize, err := r.d.Placement.Place(ctx, &core.Placement{
 			Source:  sourceLoc,
 			Intent:  intent,
 			Reasons: writepath.ReplicationReasons,
@@ -337,7 +331,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 // anything else is tallied as a record error on out.
 func (r *Replicator) claimReplicaTarget(ctx context.Context, key, target string, size int64, out *replicationOutcome) (*core.PendingObject, bool) {
 	intent := writepath.NewCopyIntent(key, target, size, nil)
-	err := r.placement.ClaimCopyTarget(ctx, intent, core.AcceptForWrite)
+	err := r.d.Placement.ClaimCopyTarget(ctx, intent, core.AcceptForWrite)
 	if err == nil {
 		return intent, true
 	}
@@ -386,7 +380,7 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 // transferred, and its stored-form columns describe the target too, since
 // StreamCopy moves bytes verbatim. The caller's slice is not reordered.
 func (r *Replicator) copyToReplica(ctx context.Context, key, targetStorageKey string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
-	targetBackend, err := r.ops.GetBackend(target)
+	targetBackend, err := r.d.Ops.GetBackend(target)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +399,7 @@ func (r *Replicator) copyToReplica(ctx context.Context, key, targetStorageKey st
 	// StreamCopy tags a usage-limit refusal with the leg that had no headroom,
 	// so a source out of egress falls through to the next candidate and a
 	// full destination ends the walk, as with an I/O failure.
-	source, _, err := backend.CopyFromAny(ctx, r.ops, &backend.SourcedCopy{
+	source, _, err := backend.CopyFromAny(ctx, r.d.Ops, &backend.SourcedCopy{
 		Key:     key,
 		Sources: candidates,
 		Dst:     backend.Endpoint{Name: target, Backend: targetBackend},
@@ -430,7 +424,7 @@ func (r *Replicator) copyToReplica(ctx context.Context, key, targetStorageKey st
 // Logging-only on DB failure: a stuck stale row is preferable to aborting the
 // replication pass. No cleanup is queued, since the bytes are already gone.
 func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocation) {
-	_, delErr := r.store.DeleteObjectLocation(ctx, loc, 0, "")
+	_, delErr := r.d.Store.DeleteObjectLocation(ctx, loc, 0, "")
 	switch {
 	case errors.Is(delErr, core.ErrCopyChanged):
 		return
@@ -448,8 +442,8 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocat
 // nil when every backend is serving reads.
 func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
 	var names []string
-	for name := range r.ops.Backends() {
-		if d := r.ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {
+	for name := range r.d.Ops.Backends() {
+		if d := r.d.Ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {
 			names = append(names, name)
 			r.log.InfoContext(context.Background(), "backend refusing reads, excluding from replica count",
 				"backend", name,
@@ -461,5 +455,5 @@ func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
 
 // servesReads reports whether a copy on the backend can be read.
 func (r *Replicator) servesReads(name string) bool {
-	return r.ops.ServedCalls(name).Has(core.RequiredForRead)
+	return r.d.Ops.ServedCalls(name).Has(core.RequiredForRead)
 }

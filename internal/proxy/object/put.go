@@ -69,11 +69,11 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	// An uncompressed write is checked against quota before its body is
 	// buffered. A compressed write is checked after encoding, because judging
 	// it on the logical size would reject a write that fits.
-	compress := storedform.ShouldCompress(&o.compression, o.codec, size)
+	compress := storedform.ShouldCompress(&o.d.Compression, o.d.Codec, size)
 	var eligible []string
 	var err error
 	if !compress {
-		if eligible, err = o.coord.WriteTargets(span, operation, o.physicalSize(size)); err != nil {
+		if eligible, err = o.d.Coord.WriteTargets(span, operation, o.physicalSize(size)); err != nil {
 			return "", err
 		}
 	}
@@ -85,14 +85,14 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	defer plan.cleanup()
 
 	if compress {
-		if eligible, err = o.coord.WriteTargets(span, operation, plan.uploadSize); err != nil {
+		if eligible, err = o.d.Coord.WriteTargets(span, operation, plan.uploadSize); err != nil {
 			return "", err
 		}
 	}
 
 	// A fan-out that cannot be tracked falls through to the loop below, which
 	// places one copy and leaves the rest to the replicator.
-	if o.copiesPerWrite > 1 {
+	if o.d.CopiesPerWrite > 1 {
 		etag, err := o.putCopiesInParallel(ctx, span, req, plan, eligible, start)
 		if !errors.Is(err, errFanoutUnavailable) {
 			return etag, err
@@ -179,10 +179,10 @@ func (p *putPlan) cleanup() {
 // Compressed size is only known after encoding runs, so a compressed write is
 // admitted again after preparation, against the plan's upload size.
 func (o *Manager) physicalSize(size int64) int64 {
-	if o.encryptor == nil {
+	if o.d.Encryptor == nil {
 		return size
 	}
-	return o.encryptor.CiphertextSize(size)
+	return o.d.Encryptor.CiphertextSize(size)
 }
 
 // preparePutBody materializes the request body into the exact bytes an upload
@@ -224,7 +224,7 @@ func (o *Manager) compressPutPlan(plan *putPlan, compress bool) error {
 	if !compress {
 		return nil
 	}
-	enc, err := storedform.Compress(o.codec, plan.body.Reader(), plan.logicalSize, o.compression.MinRatio)
+	enc, err := storedform.Compress(o.d.Codec, plan.body.Reader(), plan.logicalSize, o.d.Compression.MinRatio)
 	if err != nil {
 		return err
 	}
@@ -243,10 +243,10 @@ func (o *Manager) compressPutPlan(plan *putPlan, compress bool) error {
 // bytes its row describes. Compression has already run, so the encoded stream
 // is what gets encrypted.
 func (o *Manager) encryptPutPlan(ctx context.Context, plan *putPlan) error {
-	if o.encryptor == nil {
+	if o.d.Encryptor == nil {
 		return nil
 	}
-	sealed, err := storedform.Seal(ctx, o.encryptor, plan.body.Reader(), plan.storedSize, nil)
+	sealed, err := storedform.Seal(ctx, o.d.Encryptor, plan.body.Reader(), plan.storedSize, nil)
 	if err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func (o *Manager) encryptPutPlan(ctx context.Context, plan *putPlan) error {
 // nothing to describe and keeps a nil form.
 func (o *Manager) describeStoredBytes(plan *putPlan) {
 	if plan.compressed {
-		plan.form = storedform.Describe(plan.form, o.compression.Level, plan.logicalSize)
+		plan.form = storedform.Describe(plan.form, o.d.Compression.Level, plan.logicalSize)
 	}
 	plan.form = storedform.WithContentHash(plan.form, plan.contentHash)
 }
@@ -286,7 +286,7 @@ type putAttemptResult struct {
 // computed because the client is told it; the SHA-256 is empty when integrity
 // verification is disabled.
 func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
-	hasher := o.integrityCfg.Config().Hasher()
+	hasher := o.d.IntegrityCfg.Config().Hasher()
 	etagHasher := etag.NewHasher()
 	mb, err := materialize.New(body, size, hasher, etagHasher)
 	if err != nil {
@@ -306,7 +306,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// decides whether the backend has room. Ranking only proposes an order.
 	identity := putIdentity(plan.etagDigest, req)
 	intent := writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity, req.Tags)
-	if err := o.coord.ClaimWriteTarget(ctx, span, operation, intent, eligible); err != nil {
+	if err := o.d.Coord.ClaimWriteTarget(ctx, span, operation, intent, eligible); err != nil {
 		return putAttemptResult{fatalErr: err}
 	}
 	backendName := intent.BackendName
@@ -316,7 +316,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(plan.form)); err != nil {
+	if err := o.d.Coord.RecordObjectAndPromoteIntent(ctx, span, operation, intent.RecordFor(plan.form)); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	// The ETag the client is told is the one recorded, not the one the backend
@@ -343,7 +343,7 @@ const reasonWriteTargetRefused = "write_target_refused"
 // cleanup of its bytes.
 func (o *Manager) refuseWriteTarget(ctx context.Context, p *core.PendingObject) {
 	telemetry.WriteTargetRefusedTotal.Inc()
-	o.coord.Discard(ctx, p, reasonWriteTargetRefused)
+	o.d.Coord.Discard(ctx, p, reasonWriteTargetRefused)
 }
 
 // errWriteTargetRefused is the sentinel putErr the post-PUT re-check returns

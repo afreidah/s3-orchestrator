@@ -14,8 +14,12 @@ package ops
 import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
+
+// logComponent names every operation service's log lines.
+const logComponent = "ops"
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -40,7 +44,7 @@ type Deps struct {
 	Rebalancer   Rebalancer
 	Expiry       RuleProcessor
 	Scrubber     ScrubberOps
-	Locker       AdvisoryLocker
+	Locker       core.AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
 	Declared     BucketMatcher

@@ -75,7 +75,7 @@ func (c *candidateCache) forBackend(ctx context.Context, src string) (sourceCand
 	if sc, ok := c.byBackend[src]; ok {
 		return sc, nil
 	}
-	objects, err := c.r.store.ListObjectsByBackend(ctx, src, c.limit, core.SizeCursor{})
+	objects, err := c.r.d.Store.ListObjectsByBackend(ctx, src, c.limit, core.SizeCursor{})
 	if err != nil {
 		return sourceCandidates{}, fmt.Errorf("failed to list objects on %s: %w", src, err)
 	}

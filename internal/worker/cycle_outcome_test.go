@@ -126,7 +126,7 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 
 // replicator builds the worker under test from the fleet.
 func (f *replicaFleet) replicator() *Replicator {
-	return newTestReplicator(f.ops, f.pl, f.store)
+	return newTestReplicator(fleetOf(f.ops, f.pl), f.store)
 }
 
 // copyFails makes the streaming copy of key fail, standing in for a source
@@ -245,7 +245,7 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false).AnyTimes()
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
-	r := newTestReplicator(ops, NewMockPlacement(ctrl), store)
+	r := newTestReplicator(fleetOf(ops, NewMockPlacement(ctrl)), store)
 	wantCycleLabel(t, audit.WorkloadReplication, batch.OutcomeEmpty, func() {
 		sum, err := r.Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {
@@ -355,7 +355,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 
 // cleaner builds the worker under test from the fleet.
 func (f *cleanerFleet) cleaner() *OverReplicationCleaner {
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: f.ops, Placement: f.pl, Store: f.store, Config: defaultReplication})
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(f.ops, f.pl), Store: f.store, Config: defaultReplication})
 }
 
 // overReplicatedOn returns one key's copies, one row per backend.
@@ -521,7 +521,7 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	ops.EXPECT().ReleaseAdmission().AnyTimes()
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), moveErr).AnyTimes()
-	return NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: store, Config: defaultRebalance})
+	return NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: store, Config: defaultRebalance})
 }
 
 // TestRebalance_ReportsCycleOutcome asserts a rebalance cycle labels its
@@ -562,10 +562,9 @@ func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 func TestRebalance_QuotaQueryFailureReportsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	r := NewRebalancer(RebalancerDeps{
-		Ops:       newMockOps(ctrl),
-		Placement: NewMockPlacement(ctrl),
-		Store:     &mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")},
-		Config:    defaultRebalance,
+		Fleet:  fleetOf(newMockOps(ctrl), NewMockPlacement(ctrl)),
+		Store:  &mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")},
+		Config: defaultRebalance,
 	})
 
 	wantCycleLabel(t, audit.WorkloadRebalance, batch.OutcomeError, func() {
