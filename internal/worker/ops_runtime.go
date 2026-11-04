@@ -22,9 +22,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -72,6 +74,20 @@ func (f *Fleet) mustBeWired() {
 	must.NotNil("d.Ops", f.Ops)
 	must.NotNil("d.Placement", f.Placement)
 	must.NotNil("d.Metrics", f.Metrics)
+}
+
+// moveResult classifies a finished move for the tally: a placement the source's
+// change or the target declined is a skip, anything else that went wrong a
+// failure.
+func moveResult(err error) batch.ItemResult {
+	switch {
+	case err == nil:
+		return batch.Succeeded()
+	case core.PlacementDeclined(err):
+		return batch.Skipped(progress.StatusSkipped)
+	default:
+		return batch.Failed()
+	}
 }
 
 // Placement is the store-coupled write-path facet (target selection, claim,

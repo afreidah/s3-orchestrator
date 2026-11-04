@@ -30,7 +30,7 @@ type ItemOutcome int
 // item whose per-item function never ran - admission blocked it, say - counts
 // as declined rather than as a success nobody performed.
 const (
-	ItemSkipped   ItemOutcome = iota // declined before any work
+	ItemSkipped   ItemOutcome = iota // declined, leaving nothing changed
 	ItemSucceeded                    // processed successfully
 	ItemFailed                       // attempted but not completed
 )
@@ -55,8 +55,8 @@ func Failed() ItemResult {
 	return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
 }
 
-// Skipped is the result of an item declined before any work, reported on the
-// progress stream as status, which says why.
+// Skipped is the result of an item declined with nothing changed, reported on
+// the progress stream as status, which says why.
 func Skipped(status string) ItemResult {
 	return ItemResult{Outcome: ItemSkipped, Status: status}
 }
@@ -71,7 +71,7 @@ type Summary struct {
 	Attempted int           // items the per-item function ran (succeeded + failed)
 	Succeeded int           // items that completed successfully
 	Failed    int           // items attempted but not completed
-	Skipped   int           // items declined before any work
+	Skipped   int           // items declined with nothing changed
 	Deferred  int           // work never selected, the backend being over budget
 	Duration  time.Duration // wall-clock time for the cycle
 	Usage     audit.Usage   // usage charged per backend while the items ran

@@ -214,12 +214,12 @@ func (dr *Drainer) movePage(ctx context.Context, srcName string, page []core.Obj
 		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
 	}
 	return runner.Run(ctx, page, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
-		if !dr.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey]) {
-			return batch.Failed()
+		res := dr.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey])
+		if res.Outcome == batch.ItemSucceeded {
+			telemetry.DrainObjectsMoved.Inc()
+			telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
 		}
-		telemetry.DrainObjectsMoved.Inc()
-		telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
-		return batch.Succeeded()
+		return res
 	}), nil
 }
 
@@ -278,8 +278,8 @@ func (dr *Drainer) fail(ctx context.Context, rec *core.BackendStateRecord, moved
 
 // drainOne moves a single object off the draining backend. backends are the
 // backends the page lookup found holding a copy. When another one does, the
-// draining copy is dropped and nothing is transferred. Returns true on success.
-func (dr *Drainer) drainOne(ctx context.Context, srcName string, obj *core.ObjectLocation, backends []string) bool {
+// draining copy is dropped and nothing is transferred.
+func (dr *Drainer) drainOne(ctx context.Context, srcName string, obj *core.ObjectLocation, backends []string) batch.ItemResult {
 	if other := otherCopyBackend(backends, srcName); other != "" {
 		return dr.dropDrainedCopy(ctx, srcName, obj, other)
 	}
@@ -305,57 +305,54 @@ func otherCopyBackend(backends []string, srcName string) string {
 // cannot cost the last copy. If the other copy is gone, the object is moved
 // off instead. A copy that holds the only usable encryption key is kept, and
 // one a client overwrote since the page was read is left for the next pass.
-func (dr *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
+func (dr *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core.ObjectLocation, otherBackend string) batch.ItemResult {
 	err := dr.d.Placement.DropCopy(ctx, obj, 1, writepath.DrainMove.Reasons.SourceDelete)
 	switch {
 	case errors.Is(err, core.ErrCopyNotExcess):
 		return dr.moveOff(ctx, srcName, obj)
-	case errors.Is(err, core.ErrCopyChanged):
-		return false
 	case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
 		dr.log.WarnContext(ctx, "not dropping drained copy: it holds the only usable encryption key",
 			"key", obj.ObjectKey, "backend", srcName)
-		return false
-	case err != nil:
+		return batch.Failed()
+	case err != nil && !core.PlacementDeclined(err):
 		dr.log.WarnContext(ctx, "failed to delete source location",
 			"key", obj.ObjectKey, "backend", srcName, "error", err)
-		return false
+	case err == nil:
+		audit.Log(ctx, "storage.DrainRemoveReplica",
+			slog.String("key", obj.ObjectKey),
+			slog.String("removed_from", srcName),
+			slog.String("exists_on", otherBackend),
+		)
 	}
-	audit.Log(ctx, "storage.DrainRemoveReplica",
-		slog.String("key", obj.ObjectKey),
-		slog.String("removed_from", srcName),
-		slog.String("exists_on", otherBackend),
-	)
-	return true
+	return moveResult(err)
 }
 
 // moveOff copies an object the draining backend holds the only copy of to
 // another backend, moves its row there, and deletes the source bytes, all
 // through the coordinator's MoveObject.
-func (dr *Drainer) moveOff(ctx context.Context, srcName string, obj *core.ObjectLocation) bool {
+func (dr *Drainer) moveOff(ctx context.Context, srcName string, obj *core.ObjectLocation) batch.ItemResult {
 	destName, ok := dr.pickDestination(ctx, srcName, obj)
 	if !ok {
-		return false
+		return batch.Failed()
 	}
 	movedSize, err := dr.d.Placement.MoveObject(ctx, &writepath.MoveRequest{
 		Source:   obj,
 		DestName: destName,
 		Profile:  writepath.DrainMove,
 	})
-	if err != nil {
-		if !core.PlacementDeclined(err) {
-			dr.log.WarnContext(ctx, "drain move failed",
-				"key", obj.ObjectKey, "src_backend", srcName, "dst_backend", destName, "error", err)
-		}
-		return false
+	switch {
+	case err == nil:
+		audit.Log(ctx, "storage.DrainMove",
+			slog.String("key", obj.ObjectKey),
+			slog.String("src_backend", srcName),
+			slog.String("dst_backend", destName),
+			slog.Int64("size", movedSize),
+		)
+	case !core.PlacementDeclined(err):
+		dr.log.WarnContext(ctx, "drain move failed",
+			"key", obj.ObjectKey, "src_backend", srcName, "dst_backend", destName, "error", err)
 	}
-	audit.Log(ctx, "storage.DrainMove",
-		slog.String("key", obj.ObjectKey),
-		slog.String("src_backend", srcName),
-		slog.String("dst_backend", destName),
-		slog.Int64("size", movedSize),
-	)
-	return true
+	return moveResult(err)
 }
 
 // pickDestination chooses the emptiest write target other than the source with
