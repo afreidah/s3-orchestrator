@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 
@@ -58,7 +59,7 @@ func TestRunWorkerOpsAction_StreamsInTheWorkersPane(t *testing.T) {
 	}
 
 	view := m.contentView()
-	for _, want := range []string{"workers", "verifying photos/a.jpg ... OK", "done: 1 checked"} {
+	for _, want := range []string{"workers", output.StepLabel("verifying photos/a.jpg") + "OK", "done: 1 checked"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("Workers pane missing %q:\n%s", want, view)
 		}

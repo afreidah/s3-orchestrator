@@ -51,5 +51,5 @@ func cmdCacheInvalidatePrefix(args []string, c *client) int {
 	if !c.parse(fs, args, "prefix") {
 		return 1
 	}
-	return c.delete(adminclient.WithQuery(adminapi.PathCachePrefix, url.Values{"prefix": {*prefix}}))
+	return c.delete(adminclient.WithQuery(adminapi.PathCachePrefix, url.Values{adminapi.ParamPrefix: {*prefix}}))
 }

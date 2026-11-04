@@ -43,11 +43,9 @@ func (c *apiClient) ListObjects(ctx context.Context, prefix, continuation string
 // including empty: omitting it asks for a hierarchical listing, so the flat
 // listing has to say so explicitly rather than leave it out.
 func (c *apiClient) listObjects(ctx context.Context, prefix, delimiter, continuation string) (*adminapi.ObjectListResponse, error) {
-	q := url.Values{}
-	q.Set("prefix", prefix)
-	q.Set("delimiter", delimiter)
+	q := url.Values{adminapi.ParamPrefix: {prefix}, adminapi.ParamDelimiter: {delimiter}}
 	if continuation != "" {
-		q.Set("continuation", continuation)
+		q.Set(adminapi.ParamContinuation, continuation)
 	}
 	return c.c.Get[adminapi.ObjectListResponse](ctx, adminapi.PathObjects, q)
 }
@@ -58,9 +56,7 @@ func (c *apiClient) listObjects(ctx context.Context, prefix, delimiter, continua
 
 // GetObjectLocations fetches every backend copy of a single object key.
 func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error) {
-	q := url.Values{}
-	q.Set("key", key)
-	return c.c.Get[adminapi.ObjectLocationsResponse](ctx, adminapi.PathObjectLocations, q)
+	return c.c.Get[adminapi.ObjectLocationsResponse](ctx, adminapi.PathObjectLocations, url.Values{adminapi.ParamKey: {key}})
 }
 
 // GetObjectTags fetches one object's tag set. The key rides in the path rather
@@ -84,9 +80,7 @@ func (c *apiClient) DeleteObjectTags(ctx context.Context, key string) (*adminapi
 // ScrubKey verifies every recorded copy of one key now and reports a verdict
 // per copy.
 func (c *apiClient) ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error) {
-	q := url.Values{}
-	q.Set("key", key)
-	return c.c.Post[adminapi.ScrubKeyResponse](ctx, adminapi.PathObjectScrub, q, nil)
+	return c.c.Post[adminapi.ScrubKeyResponse](ctx, adminapi.PathObjectScrub, url.Values{adminapi.ParamKey: {key}}, nil)
 }
 
 // GetStatus fetches instance and per-backend operational status.
@@ -99,7 +93,7 @@ func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, er
 func (c *apiClient) GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error) {
 	var q url.Values
 	if level != "" {
-		q = url.Values{"level": {level}}
+		q = url.Values{adminapi.ParamLevel: {level}}
 	}
 	return c.c.Get[adminapi.LogsResponse](ctx, adminapi.PathLogs, q)
 }
@@ -147,16 +141,6 @@ func (c *apiClient) GetProvisioning(ctx context.Context) (*adminapi.Provisioning
 	return c.c.Get[adminapi.ProvisioningResponse](ctx, adminapi.PathProvisioning, nil)
 }
 
-// RequeueCleanupDLQ moves dead-lettered rows back into the cleanup queue,
-// scoped to one backend when backend is non-empty.
-func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {
-	var q url.Values
-	if backend != "" {
-		q = url.Values{"backend": {backend}}
-	}
-	return c.c.Post[adminapi.CleanupDLQRequeueResponse](ctx, adminapi.PathCleanupDLQRequeue, q, nil)
-}
-
 // ListObjectsFlat fetches one page of every key under prefix, ungrouped.
 func (c *apiClient) ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
 	return c.listObjects(ctx, prefix, "", continuation)
@@ -170,10 +154,6 @@ func (c *apiClient) DownloadObject(ctx context.Context, key string) (io.ReadClos
 	if err != nil {
 		return nil, 0, err
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		defer resp.Body.Close()
-		return nil, 0, adminclient.ReadError(resp)
-	}
 	return resp.Body, resp.ContentLength, nil
 }
 
@@ -183,11 +163,7 @@ func (c *apiClient) UploadObject(ctx context.Context, key string, body io.Reader
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= http.StatusBadRequest {
-		return adminclient.ReadError(resp)
-	}
-	return nil
+	return resp.Body.Close()
 }
 
 // DeleteObject removes one object and every copy of it.
@@ -198,7 +174,7 @@ func (c *apiClient) DeleteObject(ctx context.Context, key string) (*adminapi.Obj
 // DeletePrefix removes every object under prefix and reports how many it
 // removed.
 func (c *apiClient) DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
-	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, adminapi.PathObjects, url.Values{"prefix": {prefix}})
+	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, adminapi.PathObjects, url.Values{adminapi.ParamPrefix: {prefix}})
 }
 
 // StartDrain begins migrating every copy off one backend and routes new writes
@@ -229,13 +205,6 @@ func (c *apiClient) SetCordon(ctx context.Context, backend string, cordoned bool
 	return c.c.Delete[adminapi.BackendOperationResponse](ctx, path, nil)
 }
 
-// ReconcileBackend reconciles metadata against one backend's storage rather
-// than the whole fleet.
-func (c *apiClient) ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error) {
-	return c.c.Post[adminapi.ReconcileResponse](ctx, adminapi.PathReconcile,
-		url.Values{"backend": {backend}}, nil)
-}
-
 // drainPath is the drain endpoint every drain verb shares.
 func drainPath(backend string) string {
 	return adminapi.Path(adminapi.PathBackends, backend) + adminapi.SubpathDrain
@@ -256,9 +225,6 @@ func (c *apiClient) RunOp(ctx context.Context, act *opsAction, req opsRequest) (
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, adminclient.ReadError(resp)
-	}
 
 	event, err := act.result(resp.Body)
 	if err != nil {

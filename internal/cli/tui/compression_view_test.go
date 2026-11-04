@@ -19,16 +19,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// TestRowsFromLocations_ShowsEncoding checks the inspector distinguishes an
+// TestLocationRow_ShowsEncoding checks the inspector distinguishes an
 // encoded copy from a verbatim one, and reports the size the client wrote next
 // to the size the backend holds. Without both, a compressed copy just looks
 // like an object that shrank.
-func TestRowsFromLocations_ShowsEncoding(t *testing.T) {
+func TestLocationRow_ShowsEncoding(t *testing.T) {
 	t.Parallel()
-	rows := rowsFromLocations([]adminapi.ObjectLocation{
+	rows := rowsOf([]adminapi.ObjectLocation{
 		{Backend: "b1", SizeBytes: 250, CompressionAlgorithm: "zstd", LogicalSize: 1000},
 		{Backend: "b2", SizeBytes: 1000},
-	})
+	}, locationRow)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}

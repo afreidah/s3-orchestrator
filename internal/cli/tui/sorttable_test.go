@@ -121,7 +121,7 @@ func TestSortTable_SkipsUnsortableColumns(t *testing.T) {
 	t.Parallel()
 	list := newSortTable(testColumns, map[string]func(a, b *adminapi.BackendStatus) int{
 		"B": by(func(b *adminapi.BackendStatus) string { return b.Name }),
-	}, rowsFromBackends, func(b *adminapi.BackendStatus) string { return b.Name })
+	}, backendRow, func(b *adminapi.BackendStatus) string { return b.Name })
 	list.update(key("s"))
 	if list.sort.column != "B" {
 		t.Errorf("first sortable column = %q, want B", list.sort.column)

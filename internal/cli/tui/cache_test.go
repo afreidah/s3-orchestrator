@@ -153,8 +153,8 @@ func TestHandleCacheKey_BackAndReload(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("reload returned no command")
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.CacheStatsResponse]); !ok {
-		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.CacheStatsResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -174,8 +174,9 @@ func TestHandleCacheKey_ReloadKeepsSnapshot(t *testing.T) {
 
 func TestLoadCache_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadCache()
-	if _, ok := cmd().(loadErrMsg[*adminapi.CacheStatsResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.CacheStatsResponse]", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadCache()())
+	if m.cache.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }

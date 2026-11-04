@@ -29,9 +29,9 @@ func cmdUnreadable(args []string, c *client) int {
 	}
 	q := url.Values{}
 	if *execute {
-		setPositive(q, queryBatch, *batchSize)
+		setPositive(q, adminapi.ParamBatchSize, *batchSize)
 		return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathUnreadable, q))
 	}
-	setPositive(q, "limit", *limit)
+	setPositive(q, adminapi.ParamLimit, *limit)
 	return c.get(adminclient.WithQuery(adminapi.PathUnreadable, q), nil)
 }

@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminctl"
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/cli/initcmd"
 	"github.com/afreidah/s3-orchestrator/internal/cli/serve"
 	"github.com/afreidah/s3-orchestrator/internal/cli/synccmd"
@@ -83,9 +83,12 @@ Run 's3-orchestrator <command> --help' for command-specific flags.
 // when no subcommand is supplied. The codecov:ignore is set because this
 // is an os.Exit-bearing wrapper; the real logic lives in cli/serve.
 func runServe() { // codecov:ignore -- flag parsing + os.Exit wrapper
-	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	modeFlag := flag.String("mode", "all", "Operating mode: api, worker, or all")
-	flag.Parse()
+	fs := flagset.New("s3-orchestrator", os.Stderr)
+	configPath := fs.String("config", "config.yaml", "Path to configuration file")
+	modeFlag := fs.String("mode", "all", "Operating mode: api, worker, or all")
+	if exit, ok := flagset.Parse(fs, os.Args[1:]); !ok {
+		os.Exit(exit)
+	}
 
 	mode, err := config.ParseMode(*modeFlag)
 	if err != nil {

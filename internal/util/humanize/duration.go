@@ -3,8 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Rendering helpers shared by the web dashboard and the TUI so both present
-// the same figure the same way.
+// Rendering helpers shared by the web dashboard, the admin CLI and the TUI so
+// each presents the same figure the same way: an age, an elapsed run time, a
+// share and a count with its noun.
 // -------------------------------------------------------------------------------
 
 package humanize
@@ -29,6 +30,39 @@ func Duration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
+}
+
+// Ago renders how long ago t was, as Duration words an age, and a dash for a
+// zero time, which is an event that has not happened.
+func Ago(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return Duration(max(time.Since(t), 0)) + " ago"
+}
+
+// Elapsed renders how long a run took, to the precision a run is read at:
+// milliseconds under a second ("340ms"), seconds with one decimal under a
+// minute ("1.2s"), and minutes with one decimal above ("2.5m").
+func Elapsed(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%.1fm", d.Minutes())
+	}
+}
+
+// Count renders n grouped with its noun, singular for exactly one, so a
+// message naming one thing does not read as though it named several.
+func Count(n int64, singular, plural string) string {
+	noun := plural
+	if n == 1 {
+		noun = singular
+	}
+	return Comma(n) + " " + noun
 }
 
 // Percent returns part as a whole-number percentage of whole, and 0 when

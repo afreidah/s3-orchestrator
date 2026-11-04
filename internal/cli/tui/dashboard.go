@@ -64,7 +64,7 @@ func (m *model) refreshDashboard() tea.Cmd {
 // dashboardHeaderView renders the title bar with the backend count.
 func (m *model) dashboardHeaderView() string {
 	title := fmt.Sprintf("dashboard   %d backends", len(m.backends.list.received))
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(title)
 }
 
 // dashboardBody renders the capacity block, the summary block, the session's
@@ -73,8 +73,9 @@ func (m *model) dashboardHeaderView() string {
 // is what gets cut off. It waits for the first status snapshot, since every
 // figure but replication comes from it; a status error is shown in its place.
 func (m *model) dashboardBody() []pane {
-	loading := m.dbHealthy == nil && m.backends.err == nil
-	return m.paneBody(m.backends.err, "", loading, func() []pane {
+	state := m.backends.loadState
+	state.loading = m.dbHealthy == nil && state.err == nil
+	return m.paneBody(&state, func() []pane {
 		capacity, usage := m.dashboardMeters()
 		body := []pane{textPane(capacity), textPane(""), textPane(m.dashboardSummary())}
 		if len(m.actionLog) > 0 {
@@ -371,7 +372,7 @@ func (m *model) dashboardUsage() string {
 // A dash means the snapshot has not arrived yet.
 func (m *model) dashboardCleanup() string {
 	c := m.cleanup
-	if !c.loaded {
+	if !c.fetched {
 		return pathStyle.Render("-")
 	}
 	dlq := statusOKStyle.Render("0")

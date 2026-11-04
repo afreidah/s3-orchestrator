@@ -17,10 +17,12 @@ a store method does not require touching a long checklist.
 | Package | Role |
 |---|---|
 | `internal/store/core` | Role interfaces (`ObjectStore`, `QuotaStore`, `ReplicationStore`, ...). Shared error sentinels and value types live here. There is deliberately no composite of them: see below. |
+| `internal/store/engine` | `engine.Store`, the one composite of every role. Only the sites that hold a whole engine import it. |
 | `internal/store/sqlite` | Concrete `*Store` for SQLite. |
 | `internal/store/postgres` | Concrete `*Store` for PostgreSQL. |
-| `internal/store/storetest` | Declares the test-only composite `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`, plus per-role mocks (`MockObjectStore`, `MockCleanupStore`, ...) in `role_mocks.go`. |
-| `internal/di` | Declares the unexported `metadataStore` composite, the only place production code holds an opened engine before splitting it into roles. `openStore` returns either engine as it, which is the compile-time check that both implement every role. |
+| `internal/store/storetest` | Names the mock target `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`, plus per-role mocks (`MockObjectStore`, `MockCleanupStore`, ...) in `role_mocks.go`. |
+| `internal/di` | Declares the unexported `metadataStore`, which holds an opened engine before splitting it into roles. |
+| `internal/store/open.go` | `Open` returns either engine as `engine.Store`, which is the compile-time check that both implement every role. `Prepare` runs the boot steps the server and the sync command share. |
 | `internal/store/circuitbreaker.go` | `NewDatabaseBreaker` and the error filter; the breaker is installed at the SQL driver chokepoint so every store call passes through it. |
 
 Worker / handler / proxy packages **never** import `internal/store/sqlite`
@@ -29,8 +31,8 @@ through DI and resolve to the concrete implementation only via
 `internal/di/store.go`. The `depguard` rule
 `store-boundary` in `.golangci.yml` enforces this mechanically: a file
 outside `internal/store`, `internal/di`, `internal/cli` and `cmd` that is
-not a test and imports a concrete store driver fails CI with a pointer back
-to this page.
+not a test and imports a concrete store driver or `internal/store/engine`
+fails CI with a pointer back to this page.
 
 ---
 
@@ -38,8 +40,8 @@ to this page.
 
 1. Add the method to the role interface in `internal/store/core/interfaces.go`.
 2. Implement it on both `internal/store/sqlite/*.go` and
-   `internal/store/postgres/*.go`. `openStore` in `internal/di/store.go`
-   returns both engines as `metadataStore`, so the build fails if either
+   `internal/store/postgres/*.go`. `Open` in `internal/store/open.go`
+   returns both engines as `engine.Store`, so the build fails if either
    implementation is missing, naming the method that is absent.
 3. From the repo root run `go generate ./internal/store/storetest/...`
    to regenerate the gomock mocks: `MockMetadataStore` for the composite
@@ -60,14 +62,13 @@ to this page.
 1. Declare the interface in `internal/store/core/interfaces.go`. Keep it
    to the operations one consumer actually performs; resist the urge
    to bundle unrelated methods.
-2. Embed the role in the unexported `metadataStore` composite in
-   `internal/di/store.go`, which both engines are returned as, so the
-   build fails until both implement it.
-3. Embed the same interface in `internal/store/storetest/interface.go`
-   so mockgen picks up the new methods.
-4. Hand the role interface to consumers as a constructor argument. There
-   is no wide type to pass by accident: the only composites are DI's
-   unexported one and the test-only mock target.
+2. Embed the role in `engine.Store` in `internal/store/engine/engine.go`,
+   which both engines are returned as, so the build fails until both
+   implement it. DI's `metadataStore` and the mock target embed that
+   union, so mockgen picks up the new methods.
+3. Hand the role interface to consumers as a constructor argument. There
+   is no wide type to pass by accident: depguard refuses `engine.Store`
+   outside the store, DI and CLI packages.
 
 ---
 
@@ -78,8 +79,8 @@ to this page.
   See `internal/store/circuitbreaker.go` for which errors count as the
   database being unavailable, and each driver's `RequestError` for the
   errors it answers about one request.
-- **Per-role compile-time assertions**: `openStore` returning each
-  engine as `metadataStore` covers every role. Adding
+- **Per-role compile-time assertions**: `Open` returning each
+  engine as `engine.Store` covers every role. Adding
   `var _ core.ObjectStore = (*Store)(nil)` would be redundant.
 - **Hand-written mocks**: the gomock-generated `MockMetadataStore` and
   per-role mocks are what the test suite uses. New methods appear there
@@ -91,7 +92,7 @@ to this page.
 
 | Check | Where | What it catches |
 |---|---|---|
-| `openStore` returning `metadataStore` | `internal/di/store.go` | Either store implementation missing a method the role set requires. |
+| `Open` returning `engine.Store` | `internal/store/open.go` | Either store implementation missing a method the role set requires. |
 | Compile-time `var _ core.TxAdapter = ...` | `sqlite/adapter.go`, `postgres/adapter.go` | Tx-scoped role implementations missing methods. |
 | `go generate ./internal/store/storetest/...` | `storetest/interface.go` | Out-of-date mock after an interface change. |
 | Driver-level circuit breaker | `internal/store/circuitbreaker.go` | New store methods automatically get CB semantics. |

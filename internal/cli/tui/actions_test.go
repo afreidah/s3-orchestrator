@@ -26,7 +26,7 @@ func TestStartAction_ConfirmVsImmediate(t *testing.T) {
 
 	// With a confirm string, the action is armed, not run.
 	m := initialModel(&fakeLister{})
-	if _, got := m.startAction(adminAction{confirm: "Sure?", run: cmd}); got != nil {
+	if _, got := m.startAction(adminAction{text: "Sure?", run: cmd}); got != nil {
 		t.Error("armed action should not return a command")
 	}
 	if m.confirm == nil || m.confirm.text != "Sure?" {
@@ -49,7 +49,7 @@ func TestHandleConfirmKey_AcceptCancel(t *testing.T) {
 	t.Parallel()
 	arm := func() *model {
 		m := initialModel(&fakeLister{})
-		m.confirm = &confirmPrompt{text: "?", run: func() tea.Msg { return nil }}
+		m.confirm = &adminAction{text: "?", run: func() tea.Msg { return nil }}
 		return m
 	}
 
@@ -87,7 +87,7 @@ func TestFooter_ConfirmStatusHints(t *testing.T) {
 		t.Errorf("err status footer = %q", got)
 	}
 	// confirm takes priority over everything.
-	m.confirm = &confirmPrompt{text: "Sure?"}
+	m.confirm = &adminAction{text: "Sure?"}
 	if got := m.footer("move"); !strings.Contains(got, "Sure?") || !strings.Contains(got, "y/N") {
 		t.Errorf("confirm footer = %q", got)
 	}

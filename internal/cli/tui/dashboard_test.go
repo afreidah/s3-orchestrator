@@ -53,7 +53,7 @@ func dashboardModel(t *testing.T) *model {
 		Integrity: adminapi.IntegrityStatus{OldestUnverifiedSeconds: 3600, DeferredCopies: 3, PlaintextCopies: 1500},
 	})
 	m.applyReplication(&adminapi.ReplicationStatusResponse{Factor: 2, UnderReplicated: 12, ComputedAt: time.Now()})
-	m.applyCleanup(cleanupLoadedMsg{
+	m.applyCleanup(cleanupListings{
 		queue: &adminapi.CleanupQueueResponse{Depth: 4},
 		dlq:   &adminapi.CleanupDLQResponse{Depth: 2},
 	})
@@ -258,7 +258,7 @@ func TestDashboard_QuietFleet(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.applyStatus(&adminapi.StatusResponse{DBHealthy: false})
 	m.applyReplication(&adminapi.ReplicationStatusResponse{Factor: 1})
-	m.applyCleanup(cleanupLoadedMsg{queue: &adminapi.CleanupQueueResponse{}, dlq: &adminapi.CleanupDLQResponse{}})
+	m.applyCleanup(cleanupListings{queue: &adminapi.CleanupQueueResponse{}, dlq: &adminapi.CleanupDLQResponse{}})
 
 	assertContains(t, m.dashboardSummary(),
 		"UNAVAILABLE", "disabled", "every copy encrypted", "nothing stored compressed",

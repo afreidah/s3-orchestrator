@@ -13,7 +13,6 @@
 package adminctl
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -25,38 +24,46 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
-// cmdCleanupDLQ implements `s3-orchestrator admin cleanup-dlq [list|requeue]`.
-// The first argument selects the subcommand (default: list); -backend scopes
-// either to one backend.
-func cmdCleanupDLQ(args []string, c *client) int {
-	sub := "list"
-	if len(args) > 0 && (args[0] == "list" || args[0] == "requeue") {
-		sub, args = args[0], args[1:]
-	}
+// cleanupDLQVerbs are the verbs under `admin cleanup-dlq`.
+var cleanupDLQVerbs = []verb{
+	{"list", "List the dead-lettered cleanups and why each failed", cleanupDLQList},
+	{"requeue", "Move dead-lettered cleanups back into the queue", cleanupDLQRequeue},
+}
 
-	fs := c.flags("cleanup-dlq")
-	backend := fs.String("backend", "", "Scope to a single backend (default: all)")
-	if !c.parse(fs, args) {
+// cleanupDLQList renders the dead-letter listing, scoped by -backend.
+func cleanupDLQList(args []string, c *client) int {
+	q, ok := cleanupDLQScope(args, c, "cleanup-dlq list")
+	if !ok {
 		return 1
-	}
-
-	q := url.Values{}
-	setIf(q, queryBackend, *backend)
-
-	if sub == "requeue" {
-		return c.post(adminclient.WithQuery(adminapi.PathCleanupDLQRequeue, q), renderCleanupDLQRequeue)
 	}
 	return c.get(adminclient.WithQuery(adminapi.PathCleanupDLQ, q), renderCleanupDLQList)
 }
 
-// renderCleanupDLQList renders the DLQ listing as a table led by the backend,
-// with the total depth beneath. Returning an error falls back to raw JSON.
-func renderCleanupDLQList(w io.Writer, body []byte) error {
-	var resp adminapi.CleanupDLQResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return err
+// cleanupDLQRequeue moves dead-lettered rows back into the queue, scoped by
+// -backend.
+func cleanupDLQRequeue(args []string, c *client) int {
+	q, ok := cleanupDLQScope(args, c, "cleanup-dlq requeue")
+	if !ok {
+		return 1
 	}
+	return c.post(adminclient.WithQuery(adminapi.PathCleanupDLQRequeue, q), renderCleanupDLQRequeue)
+}
 
+// cleanupDLQScope parses the -backend flag both verbs take into the query.
+func cleanupDLQScope(args []string, c *client, name string) (url.Values, bool) {
+	fs := c.flags(name)
+	backend := fs.String(flagBackend, "", "Scope to a single backend (default: all)")
+	if !c.parse(fs, args) {
+		return nil, false
+	}
+	q := url.Values{}
+	setIf(q, adminapi.ParamBackend, *backend)
+	return q, true
+}
+
+// renderCleanupDLQList renders the DLQ listing as a table led by the backend,
+// with the total depth beneath.
+var renderCleanupDLQList = typed(func(w io.Writer, resp *adminapi.CleanupDLQResponse) error {
 	headers := []string{"Backend", "Object key", "Reason", "Size", "Attempts", "Moved at", "Last error"}
 	rows := make([][]string, len(resp.Items))
 	for i := range resp.Items {
@@ -76,19 +83,15 @@ func renderCleanupDLQList(w io.Writer, body []byte) error {
 	}
 	_, err := fmt.Fprintf(w, "\nDLQ depth: %d\n", resp.Depth)
 	return err
-}
+})
 
 // renderCleanupDLQRequeue reports how many rows the requeue moved back into the
-// cleanup queue. Returning an error falls back to raw JSON.
-func renderCleanupDLQRequeue(w io.Writer, body []byte) error {
-	var resp adminapi.CleanupDLQRequeueResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return err
-	}
+// cleanup queue.
+var renderCleanupDLQRequeue = typed(func(w io.Writer, resp *adminapi.CleanupDLQRequeueResponse) error {
 	scope := "all backends"
 	if resp.Backend != "" {
 		scope = "backend " + resp.Backend
 	}
-	_, err := fmt.Fprintf(w, "Requeued %d cleanup row(s) for %s.\n", resp.Requeued, scope)
+	_, err := fmt.Fprintf(w, "Requeued %s for %s.\n", humanize.Count(int64(resp.Requeued), "cleanup row", "cleanup rows"), scope)
 	return err
-}
+})

@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -62,7 +63,7 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, Bucket: req.Name,
+		Status: adminstream.OutcomeOK, Bucket: req.Name,
 	})
 }
 
@@ -72,7 +73,7 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
-	name := r.PathValue(paramName)
+	name := r.PathValue(adminapi.ParamName)
 	b := core.Bucket{
 		Name:                name,
 		MaxMultipartUploads: req.MaxMultipartUploads,
@@ -83,19 +84,19 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, Bucket: name,
+		Status: adminstream.OutcomeOK, Bucket: name,
 	})
 }
 
 // handleDeleteBucket removes a virtual bucket that holds nothing.
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue(paramName)
+	name := r.PathValue(adminapi.ParamName)
 	if err := h.d.Ops.Provision.DeleteBucket(r.Context(), name); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "delete bucket failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, Bucket: name,
+		Status: adminstream.OutcomeOK, Bucket: name,
 	})
 }
 
@@ -115,7 +116,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: u.ID, UserName: u.Name,
+		Status: adminstream.OutcomeOK, UserID: u.ID, UserName: u.Name,
 	})
 }
 
@@ -126,25 +127,25 @@ func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
-	id := r.PathValue(paramID)
+	id := r.PathValue(adminapi.ParamID)
 	if err := h.d.Ops.Provision.RenameUser(r.Context(), id, req.Name); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "rename user failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: id, UserName: req.Name,
+		Status: adminstream.OutcomeOK, UserID: id, UserName: req.Name,
 	})
 }
 
 // handleDeleteUser removes an identity that holds nothing.
 func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue(paramID)
+	id := r.PathValue(adminapi.ParamID)
 	if err := h.d.Ops.Provision.DeleteUser(r.Context(), id); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "delete user failed")
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: id,
+		Status: adminstream.OutcomeOK, UserID: id,
 	})
 }
 
@@ -176,12 +177,12 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request)
 
 // handleDeleteCredential revokes one keypair, leaving its siblings alone.
 func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
-	accessKeyID := r.PathValue(paramID)
+	accessKeyID := r.PathValue(adminapi.ParamID)
 	if err := h.d.Ops.Provision.DeleteCredential(r.Context(), accessKeyID); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "delete credential failed")
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{Status: adminapi.StatusOK})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{Status: adminstream.OutcomeOK})
 }
 
 // -------------------------------------------------------------------------
@@ -205,7 +206,7 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: req.UserID, Resource: resource.String(),
+		Status: adminstream.OutcomeOK, UserID: req.UserID, Resource: resource.String(),
 	})
 }
 
@@ -228,7 +229,7 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: userID, Resource: resource.String(),
+		Status: adminstream.OutcomeOK, UserID: userID, Resource: resource.String(),
 	})
 }
 
@@ -244,7 +245,7 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: adminapi.StatusOK, UserID: userID, Resource: resource.String(),
+		Status: adminstream.OutcomeOK, UserID: userID, Resource: resource.String(),
 	})
 }
 
@@ -256,14 +257,14 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 // comes from the query string and defaults to bucket. For the orchestrator,
 // which has no name, the placeholder path segment is discarded.
 func grantTarget(r *http.Request) (string, core.Resource) {
-	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
-	if kind := r.URL.Query().Get(paramKind); kind != "" {
+	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(adminapi.ParamName)}
+	if kind := r.URL.Query().Get(adminapi.ParamKind); kind != "" {
 		resource.Kind = core.ParseResourceKind(kind)
 	}
 	if resource.Kind == core.ResourceOrchestrator {
 		resource.Name = ""
 	}
-	return r.PathValue(paramID), resource
+	return r.PathValue(adminapi.ParamID), resource
 }
 
 // provisioningResponse renders the merged view. Secrets are dropped here rather

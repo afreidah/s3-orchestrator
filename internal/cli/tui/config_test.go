@@ -74,8 +74,8 @@ func TestConfigKeys_ReloadAndBack(t *testing.T) {
 	if !m.config.loading || cmd == nil {
 		t.Error("r did not start a reload")
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.ConfigResponse]); !ok {
-		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.ConfigResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 
 	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -84,11 +84,12 @@ func TestConfigKeys_ReloadAndBack(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_Error asserts a failed fetch becomes loadErrMsg[*adminapi.ConfigResponse].
+// TestLoadConfig_Error asserts a failed fetch surfaces on the pane.
 func TestLoadConfig_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadConfig()
-	if _, ok := cmd().(loadErrMsg[*adminapi.ConfigResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ConfigResponse]", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadConfig()())
+	if m.config.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }

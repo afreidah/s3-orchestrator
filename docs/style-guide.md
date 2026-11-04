@@ -356,9 +356,10 @@ Until a mock is needed, the interface declaration alone documents the dependency
 
 If none apply - single impl, single consumer, no test fake, no cycle, no boundary - pass the concrete `*Type` directly. Examples cut: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, `object.Coordinator`. Splitting one dependency into role interfaces that nothing uses on its own fails the same test.
 
-**There is no exported union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union exists in exactly two places, neither of them reachable from a feature package:
+**No feature package can reach the union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union lives on its own in `internal/store/engine.Store`, and the `store-boundary` depguard rule refuses it outside the store, DI and CLI packages. Three sites hold it:
 
-- `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles. `openStore` returns either engine as it, which is also the compile-time check that each implements everything.
+- `store.Open`, which returns either engine as it, which is also the compile-time check that each implements everything.
+- `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles.
 - `storetest.MetadataStore`, the mockgen target, so one generated mock stands in wherever a test needs a fully-populated store.
 
 The union is not a fact about the domain: nothing in persistence requires one object to implement all nineteen roles, and a design that split persistence across several objects would satisfy every role interface and violate nothing. What it encodes is that there happens to be one store type per engine, which is wiring rather than domain.

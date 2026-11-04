@@ -18,6 +18,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -27,7 +28,7 @@ import (
 // copies leave the selection. The optional backend parameter limits the pass to
 // one backend.
 func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, kind Rewrite) {
-	maxObjects, ok := httputil.RequireQueryCount(w, r, paramMax, 0, httputil.NoCeiling)
+	maxObjects, ok := httputil.RequireQueryCount(w, r, adminapi.ParamMax, 0, httputil.NoCeiling)
 	if !ok {
 		return
 	}

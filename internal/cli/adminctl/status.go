@@ -13,13 +13,11 @@
 package adminctl
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
@@ -32,26 +30,15 @@ func cmdStatus(_ []string, c *client) int {
 
 // renderStatus renders the status payload as a backends table led by the
 // backend name, followed by the usage limits, the limit nearest full, DB
-// health and the answering instance. Returning an error (e.g. an unexpected shape) makes the client
-// fall back to raw JSON.
-func renderStatus(w io.Writer, body []byte) error {
-	var s adminapi.StatusResponse
-	if err := json.Unmarshal(body, &s); err != nil {
-		return err
-	}
-
+// health and the answering instance.
+var renderStatus = typed(func(w io.Writer, s *adminapi.StatusResponse) error {
 	headers := []string{"Backend", "Health", "Refused", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
 	rows := make([][]string, len(s.Backends))
 	for i := range s.Backends {
 		b := &s.Backends[i]
+		c := output.BackendCellsOf(b)
 		rows[i] = []string{
-			b.Name,
-			core.CallsNamed(b.RefusedCalls).Health(),
-			output.NameList(b.RefusedCalls),
-			output.NameList(b.Flags),
-			humanize.Bytes(b.BytesUsed),
-			humanize.Bytes(b.BytesLimit),
-			strconv.FormatInt(b.ObjectCount, 10),
+			b.Name, c.Health, c.Refused, c.Flags, c.Used, c.Limit, c.Objects,
 			strconv.FormatInt(b.APIRequests, 10),
 			humanize.Bytes(b.IngressBytes),
 			humanize.Bytes(b.EgressBytes),
@@ -66,7 +53,7 @@ func renderStatus(w io.Writer, body []byte) error {
 	_, err := fmt.Fprintf(w, "\nNearest limit: %s\nDB healthy:    %t\nInstance:      %s\n",
 		nearestLimitText(s.Backends), s.DBHealthy, output.Instance(s.Instance))
 	return err
-}
+})
 
 // renderUsageLimits renders every usage dimension of every backend, one row
 // each, with what the backend's own cycle has used of it against its limit,

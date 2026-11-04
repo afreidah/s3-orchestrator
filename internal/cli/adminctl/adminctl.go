@@ -22,16 +22,15 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )
 
 // The flag names, query formats and message literals the subcommands share.
 const (
 	flagBatchSize = "batch-size"
-	queryBatch    = "batch_size"
 	flagMax       = "max"
 	flagBackend   = "backend"
-	queryBackend  = "backend"
 	usageBackend  = "Restrict the pass to one backend (default: every backend)"
 	fmtError      = "error: %v\n"
 
@@ -44,13 +43,12 @@ const (
 // per-command handler.
 // Returns the process exit code so the caller in cmd/ can os.Exit cleanly.
 func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI entry point
-	fs := flag.NewFlagSet("admin", flag.ExitOnError)
+	fs := flagset.New("admin", stderr)
 	targetFlags := admintarget.RegisterFlags(fs)
 	jsonOut := fs.Bool("json", false, "Output raw JSON instead of human-readable text")
-	fs.SetOutput(stderr)
 	fs.Usage = func() { writeUsage(stderr, fs) }
-	if err := fs.Parse(args); err != nil {
-		return 1
+	if exit, ok := flagset.Parse(fs, args); !ok {
+		return exit
 	}
 
 	if fs.NArg() == 0 || fs.Arg(0) == "help" {
@@ -81,7 +79,7 @@ var adminCommands = []verb{
 	{"object-locations", "List all copies of an object (requires -key)", cmdObjectLocations},
 	{"object-tags", "Read, replace or clear an object's tags (requires -key)", cmdObjectTags},
 	{"cleanup-queue", "Show cleanup queue depth and pending items", cmdCleanupQueue},
-	{"cleanup-dlq", "List dead-lettered cleanups, or requeue them (list|requeue, -backend to scope)", cmdCleanupDLQ},
+	{"cleanup-dlq", verbList(cleanupDLQVerbs) + " dead-lettered cleanups", nounCommand("cleanup-dlq", cleanupDLQVerbs)},
 	{"usage-flush", "Force flush usage counters to database", cmdUsageFlush},
 	{"replicate", "Trigger one replication cycle", cmdReplicate},
 	{"rebalance", "Trigger one rebalance cycle to redistribute objects across backends", cmdRebalance},
@@ -157,11 +155,15 @@ func CommandWithFormat(
 		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
 		return 1
 	}
-	api := adminclient.NewSigned(target.Addr, target.AccessKeyID, target.SecretKey)
-	return h(args, &client{
-		api:    api,
+	c := &client{
+		api:    adminclient.NewSigned(target.Addr, target.AccessKeyID, target.SecretKey),
 		format: format,
 		stdout: stdout,
 		stderr: stderr,
-	})
+	}
+	exit := h(args, c)
+	if c.helped {
+		return 0
+	}
+	return exit
 }

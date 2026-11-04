@@ -27,7 +27,7 @@ func logsWithEntries(t *testing.T) *model {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionLogs
-	m.applyLogs(logsLoadedMsg{resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
+	m.applyLogs(logsPage{resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
 		{Level: "INFO", Component: "replicator", Message: "object replicated", Attrs: map[string]any{"key": "photos/a.jpg"}},
 		{Level: "WARN", Component: "scrubber", Message: "copy mismatch"},
 		{Level: "INFO", Component: "replicator", Message: "replication cycle complete"},

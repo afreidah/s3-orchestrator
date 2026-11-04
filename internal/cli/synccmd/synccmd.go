@@ -13,20 +13,19 @@ package synccmd
 import (
 	"cmp"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/cli/flagset"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
-	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
 // -------------------------------------------------------------------------
@@ -48,9 +47,9 @@ type Options struct {
 // Run is the CLI entry point. It parses the sync flags, opens the database,
 // and walks the backend, returning the process exit code.
 func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry point
-	opts, ok := parseFlags(args, stderr)
+	opts, exit, ok := parseFlags(args, stderr)
 	if !ok {
-		return 1
+		return exit
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -104,23 +103,18 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 }
 
 // parseFlags parses the CLI flags for the sync subcommand and enforces the
-// required ones. Returns ok=false when a required flag is missing.
-func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
-	fs := flag.NewFlagSet("sync", flag.ExitOnError)
+// required ones. Returns ok=false, with the code to exit with, when the run
+// should stop.
+func parseFlags(args []string, stderr io.Writer) (*Options, int, bool) {
+	fs := flagset.New("sync", stderr)
 	opts := &Options{}
 	fs.StringVar(&opts.ConfigPath, "config", "config.yaml", "Path to configuration file")
 	fs.StringVar(&opts.BackendName, "backend", "", "Backend name to sync (required)")
 	fs.StringVar(&opts.BucketName, "bucket", "", "Virtual bucket the import is being run for; recorded in the log, not used to build keys")
 	fs.StringVar(&opts.Prefix, "prefix", "", "Only sync objects with this key prefix")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "Preview what would be imported without writing")
-	_ = fs.Parse(args)
-
-	if opts.BackendName == "" {
-		fmt.Fprintln(stderr, "error: --backend is required")
-		fs.Usage()
-		return nil, false
-	}
-	return opts, true
+	exit, ok := flagset.Parse(fs, args, "backend")
+	return opts, exit, ok
 }
 
 // bucketNames lists the configured virtual bucket names.
@@ -163,12 +157,9 @@ type importer interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
-// adminStore is the boot-time slice of the store sync needs to apply
-// migrations, reconcile quota limits, check the target is not being drained,
-// and release pool resources at shutdown.
+// adminStore is the slice of the store sync needs to check the target is not
+// being drained and release pool resources at shutdown.
 type adminStore interface {
-	RunMigrations(ctx context.Context) error
-	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
 	ListBackendStates(ctx context.Context) ([]core.BackendStateRecord, error)
 	Close()
 }
@@ -177,46 +168,20 @@ type adminStore interface {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// initStore opens the metadata store, applies migrations, and syncs quota
-// limits. Returns non-zero exit on any failure.
+// initStore opens the metadata store and prepares it the way the server does.
+// An import removes no copies, so it queues no cleanup to claim and needs no
+// instance id. Returns non-zero exit on any failure.
 func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, int) {
-	var (
-		objects importer
-		adminDB adminStore
-		err     error
-	)
-	switch cfg.Database.Driver {
-	case "postgres":
-		// An import removes no copies, so it queues no cleanup to claim.
-		s, openErr := postgres.NewStore(ctx, &cfg.Database, nil, "")
-		if openErr != nil {
-			err = openErr
-		} else {
-			objects, adminDB = s, s
-		}
-	case "sqlite":
-		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database, nil, "")
-		if openErr != nil {
-			err = openErr
-		} else {
-			objects, adminDB = s, s
-		}
-	default:
-		err = fmt.Errorf("unsupported database driver: %q", cfg.Database.Driver)
-	}
+	s, err := store.Open(ctx, &cfg.Database, nil, "")
 	if err != nil {
 		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to connect to database", "error", err)
 		return nil, nil, 1
 	}
-	if err := adminDB.RunMigrations(ctx); err != nil {
-		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to run migrations", "error", err)
+	if err := store.Prepare(ctx, s, cfg.Backends); err != nil {
+		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to prepare database", "error", err)
 		return nil, nil, 1
 	}
-	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		logfmt.Logger(logComponent).ErrorContext(ctx, "failed to sync quota limits", "error", err)
-		return nil, nil, 1
-	}
-	return objects, adminDB, 0
+	return s, s, 0
 }
 
 // refuseDrained returns an error when the backend carries a flag reconcile does

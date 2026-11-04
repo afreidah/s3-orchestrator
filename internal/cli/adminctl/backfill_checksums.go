@@ -33,10 +33,10 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	}
 	q := url.Values{}
 	if *batchSize != 100 {
-		q.Set(queryBatch, strconv.Itoa(*batchSize))
+		q.Set(adminapi.ParamBatchSize, strconv.Itoa(*batchSize))
 	}
 	setPositive(q, flagMax, *maxObjects)
-	setPositive(q, "delay_ms", *delayMs)
-	setIf(q, queryBackend, *backend)
+	setPositive(q, adminapi.ParamDelayMS, *delayMs)
+	setIf(q, adminapi.ParamBackend, *backend)
 	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathBackfillChecksums, q))
 }

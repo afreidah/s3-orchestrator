@@ -31,11 +31,11 @@ func cmdScrub(args []string, c *client) int {
 	}
 
 	if *key != "" {
-		return c.post(adminclient.WithQuery(adminapi.PathObjectScrub, url.Values{"key": {*key}}), nil)
+		return c.post(adminclient.WithQuery(adminapi.PathObjectScrub, url.Values{adminapi.ParamKey: {*key}}), nil)
 	}
 
 	q := url.Values{}
-	setPositive(q, queryBatch, *batchSize)
-	setIf(q, queryBackend, *backend)
+	setPositive(q, adminapi.ParamBatchSize, *batchSize)
+	setIf(q, adminapi.ParamBackend, *backend)
 	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathScrub, q))
 }

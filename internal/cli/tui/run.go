@@ -15,13 +15,15 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -108,17 +110,20 @@ func (m *model) runBusy() bool {
 
 // runAction arms one action against the request it resolved to, so a prompted
 // action and a bare one reach the same confirm-and-run path. A run scoped to
-// one backend names it in its label, so it cannot be read as the fleet-wide
-// pass of the same name.
+// one backend names it in its label and its confirmation, so it cannot be
+// read as the fleet-wide pass of the same name or run against the wrong row.
 func (m *model) runAction(a *opsAction, req opsRequest) adminAction {
-	label := a.label
-	if backend := req.query.Get(queryBackend); backend != "" {
+	label, confirm := a.label, a.confirm
+	if backend := req.query.Get(adminapi.ParamBackend); backend != "" {
 		label += " on " + backend
+		if confirm != "" {
+			confirm = backend + ": " + confirm
+		}
 	}
 	return adminAction{
-		confirm: a.confirm,
-		before:  func(m *model) { m.beginRun(label) },
-		run:     openRun(m.client, a, req),
+		text:   confirm,
+		before: func(m *model) { m.beginRun(label) },
+		run:    openRun(m.client, a, req),
 	}
 }
 
@@ -164,7 +169,8 @@ func (m *model) applyRunEvent(e *adminstream.Event) (tea.Model, tea.Cmd) {
 	return m, readRun(m.run.stream)
 }
 
-// applyRunDone finalizes a completed action, closing the stream.
+// applyRunDone finalizes a completed action, closing the stream and reloading
+// the pane that started it, since what it shows may just have changed.
 func (m *model) applyRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 	if m.run.stream != nil {
 		_ = m.run.stream.Close()
@@ -175,7 +181,8 @@ func (m *model) applyRunDone(msg runDoneMsg) (tea.Model, tea.Cmd) {
 		m.appendRunLine(errStyle.Render("stream error: " + msg.err.Error()))
 		m.report(false, m.run.label+" failed")
 	}
-	return m, nil
+	cmd := m.reload(m.run.owner)
+	return m, cmd
 }
 
 // showingRun reports whether the current pane is showing the run's output in
@@ -222,36 +229,17 @@ func (m *model) runEventLine(e *adminstream.Event) string {
 		m.run.pending = e.Message
 		return ""
 	case adminstream.KindStepEnd:
-		label := e.Message
-		if label == "" {
-			label = m.run.pending
-		}
+		label := cmp.Or(e.Message, m.run.pending)
 		m.run.pending = ""
-		status := strings.ToUpper(e.Outcome)
-		if status == "" {
-			status = "OK"
-		}
-		return fmt.Sprintf("  %s ... %s", label, status)
+		return output.StepLabel(label) + output.StepStatus(e)
 	case adminstream.KindResult:
-		return runResultLine(e)
+		line, failed := output.Result(e)
+		if failed {
+			return errStyle.Render(line)
+		}
+		return line
 	}
 	return ""
-}
-
-// runResultLine renders the terminal result event.
-func runResultLine(e *adminstream.Event) string {
-	switch e.Outcome {
-	case adminstream.OutcomeFailed:
-		return errStyle.Render("error: " + e.Error)
-	case adminstream.OutcomeSkipped:
-		return "skipped: " + e.Message
-	default:
-		msg := e.Message
-		if msg == "" {
-			msg = fmt.Sprintf("processed %d", e.Processed)
-		}
-		return "done: " + msg
-	}
 }
 
 // runPaneView composes the output's full-screen layout in the pane that
@@ -261,8 +249,7 @@ func (m *model) runPaneView() string {
 	if !m.run.running {
 		state = "done"
 	}
-	header := m.contentTitleStyle().Width(m.contentWidth()).
-		Render(strings.ToLower(m.sectionLabel()) + "   " + m.run.label + "   " + state)
+	header := m.titleBar(strings.ToLower(m.spec().label) + "   " + m.run.label + "   " + state)
 	return m.frame(header, m.hintFooter(), m.runBody())
 }
 

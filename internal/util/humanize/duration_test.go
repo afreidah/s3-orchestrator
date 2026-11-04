@@ -71,6 +71,48 @@ func TestComma(t *testing.T) {
 	}
 }
 
+// TestElapsed pins the unit boundaries: milliseconds under a second, seconds
+// under a minute, minutes above.
+func TestElapsed(t *testing.T) {
+	t.Parallel()
+	cases := map[time.Duration]string{
+		0: "0ms", 340 * time.Millisecond: "340ms", 999 * time.Millisecond: "999ms",
+		time.Second: "1.0s", 1200 * time.Millisecond: "1.2s", 59 * time.Second: "59.0s",
+		time.Minute: "1.0m", 90 * time.Second: "1.5m",
+	}
+	for d, want := range cases {
+		if got := Elapsed(d); got != want {
+			t.Errorf("Elapsed(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// TestAgo pins the dash for a zero time and an age for a past one, clamped at
+// zero for a time a skewed clock puts in the future.
+func TestAgo(t *testing.T) {
+	t.Parallel()
+	if got := Ago(time.Time{}); got != "-" {
+		t.Errorf("Ago(zero) = %q, want -", got)
+	}
+	if got := Ago(time.Now().Add(-3 * time.Hour)); got != "3h ago" {
+		t.Errorf("Ago(3h) = %q, want 3h ago", got)
+	}
+	if got := Ago(time.Now().Add(time.Hour)); got != "0s ago" {
+		t.Errorf("Ago(future) = %q, want 0s ago", got)
+	}
+}
+
+// TestCount pins the singular for exactly one and grouped digits otherwise.
+func TestCount(t *testing.T) {
+	t.Parallel()
+	cases := map[int64]string{0: "0 rows", 1: "1 row", 2: "2 rows", 1500: "1,500 rows"}
+	for n, want := range cases {
+		if got := Count(n, "row", "rows"); got != want {
+			t.Errorf("Count(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
 // TestPercent pins whole-number percentages, past 100 for an overrun, and 0
 // for a whole that is not positive.
 func TestPercent(t *testing.T) {

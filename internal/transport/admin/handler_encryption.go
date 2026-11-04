@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -39,7 +40,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.RotateEncryptionKeyResponse{
-		Outcome: adminapi.Outcome{Status: adminapi.StatusOK},
+		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
 		Failed:  res.Failed,
 		Total:   res.Attempted + res.Skipped,
 		Rotated: res.Succeeded,

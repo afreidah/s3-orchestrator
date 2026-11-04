@@ -14,7 +14,6 @@ package di
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/samber/do/v2"
@@ -24,7 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/engine"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
@@ -33,29 +32,11 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// metadataStore is the union of every store role, and exists only so the
-// composition root can carry one opened engine from openStore to the
-// do.MustAs role aliases in injector.go. It stays unexported so consumers
+// metadataStore exists only so the composition root can carry one opened engine
+// to the do.MustAs role aliases in injector.go. It stays unexported so consumers
 // depend on individual roles, never on the union.
 type metadataStore interface {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendStateStore
-	core.UsageFlusher
-	core.UsageReader
-	core.AdvisoryLocker
-	core.DashboardStore
-	core.LifecycleAdmin
-	core.NotificationOutbox
-	core.TagStore
-	core.ProvisioningStore
-	core.Pinger
+	engine.Store
 }
 
 // -------------------------------------------------------------------------
@@ -76,24 +57,17 @@ func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	}
 	ctx := context.Background()
 
-	cs, err := openStore(ctx, &cfg.Database, cb, id.String())
+	cs, err := store.Open(ctx, &cfg.Database, cb, id.String())
 	if err != nil {
 		return nil, err
 	}
-	if err := cs.RunMigrations(ctx); err != nil {
-		return nil, err
-	}
-	if err := cs.VerifySchemaVersion(ctx); err != nil {
+	if err := store.Prepare(ctx, cs, cfg.Backends); err != nil {
 		return nil, err
 	}
 	slog.InfoContext(ctx, "database migrations applied",
 		logfmt.Component("di"),
 		"driver", cfg.Database.Driver,
 	)
-
-	if err := cs.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		return nil, err
-	}
 	return cs, nil
 }
 
@@ -110,22 +84,6 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 		requestError = sqlitestore.RequestError
 	}
 	return store.NewDatabaseBreaker(cfg.CircuitBreaker, requestError), nil
-}
-
-// openStore dispatches store construction to the configured driver. The
-// shared *breaker.CircuitBreaker is threaded through so every SQL
-// statement (pool-bound or tx-bound) gets PreCheck/PostCheck protection
-// at the driver chokepoint. instanceID claims the cleanup rows the engine's
-// transactions queue.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker, instanceID string) (metadataStore, error) {
-	switch dbCfg.Driver {
-	case "postgres":
-		return postgres.NewStore(ctx, dbCfg, cb, instanceID)
-	case "sqlite":
-		return sqlitestore.NewStore(ctx, dbCfg, cb, instanceID)
-	default:
-		return nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
-	}
 }
 
 // ProvideInstanceID resolves this process's identifier, generated once at

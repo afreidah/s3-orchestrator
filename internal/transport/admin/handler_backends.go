@@ -54,7 +54,7 @@ type backendChange struct {
 // A refused change, such as cordoning a backend that is already cordoned, is a
 // 400 with the generic failure message; the reason is logged.
 func (h *Handler) serveBackendChange(w http.ResponseWriter, r *http.Request, c *backendChange) {
-	name := r.PathValue(paramName)
+	name := r.PathValue(adminapi.ParamName)
 	if err := c.apply(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), c.failLog, slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusBadRequest, c.failMsg)
@@ -90,7 +90,7 @@ func (h *Handler) handleUncordon(w http.ResponseWriter, r *http.Request) {
 
 // handleDrainProgress returns the current state of a drain operation.
 func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue(paramName)
+	name := r.PathValue(adminapi.ParamName)
 	progress, err := h.d.States.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, errDrainOperationFailed, err, slog.String("backend", name))
@@ -114,9 +114,9 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 // token, second call with confirm=<token> executes the purge.
 // Without purge, executes immediately (DB records only, S3 objects preserved).
 func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue(paramName)
-	purge := r.URL.Query().Get("purge") == "true"
-	confirmToken := r.URL.Query().Get("confirm")
+	name := r.PathValue(adminapi.ParamName)
+	purge := r.URL.Query().Get(adminapi.ParamPurge) == "true"
+	confirmToken := r.URL.Query().Get(adminapi.ParamConfirm)
 
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {

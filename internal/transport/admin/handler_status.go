@@ -143,7 +143,7 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 // handleObjectLocations returns every recorded copy of the object named by
 // the key query parameter, answering 400 when the key is missing.
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get(paramKey)
+	key := r.URL.Query().Get(adminapi.ParamKey)
 
 	locations, err := h.d.Ops.Objects.Locations(r.Context(), key)
 	if err != nil {

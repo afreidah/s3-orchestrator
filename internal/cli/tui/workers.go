@@ -15,7 +15,6 @@ package tui
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
@@ -32,7 +31,7 @@ type workersView struct {
 
 // newWorkersView builds the pane's empty state.
 func newWorkersView() workersView {
-	return workersView{list: newSortTable(workerColumns, workerSorts, rowsFromWorkers,
+	return workersView{list: newSortTable(workerColumns, workerSorts, workerRow,
 		func(w *adminapi.WorkerHealth) string { return w.Name })}
 }
 
@@ -42,7 +41,8 @@ func newWorkersView() workersView {
 
 // loadWorkers returns a command that fetches worker health off the main loop.
 func (m *model) loadWorkers() tea.Cmd {
-	return fetchCmd(m.client.GetWorkers)
+	return fetchCmd(pollWorkers, m.client.GetWorkers, (*model).applyWorkers,
+		func(m *model, err error) { m.workers.failed(err) })
 }
 
 // -------------------------------------------------------------------------
@@ -88,11 +88,8 @@ func (m *model) runWorkerOpsAction() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	actions := maintenanceActions()
-	for i := range actions {
-		if actions[i].path == path {
-			return m.startRun(&actions[i], opsRequest{path: path})
-		}
+	if a, ok := actionAt(maintenanceActions(), path); ok {
+		return m.startRun(a, opsRequest{path: path})
 	}
 	return m, nil
 }
@@ -122,31 +119,16 @@ var workerSorts = map[string]func(a, b *adminapi.WorkerHealth) int{
 	"LAST ERROR": by(func(w *adminapi.WorkerHealth) string { return w.LastError }),
 }
 
-// rowsFromWorkers builds table rows from the health snapshot, in the same order
-// so the table cursor indexes straight into rows.
-func rowsFromWorkers(workers []adminapi.WorkerHealth) []table.Row {
-	rows := make([]table.Row, 0, len(workers))
-	for i := range workers {
-		w := workers[i]
-		rows = append(rows, table.Row{
-			w.Name,
-			tickAge(w.LastSuccess),
-			tickAge(w.LastFailure),
-			strconv.Itoa(w.ConsecutiveFailures),
-			w.LastError,
-		})
+// workerRow renders one worker's health. A zero time is an outcome the worker
+// has never recorded, which is normal for a service that has only succeeded.
+func workerRow(w *adminapi.WorkerHealth) table.Row {
+	return table.Row{
+		w.Name,
+		humanize.Ago(w.LastSuccess),
+		humanize.Ago(w.LastFailure),
+		strconv.Itoa(w.ConsecutiveFailures),
+		w.LastError,
 	}
-	return rows
-}
-
-// tickAge renders how long ago a tick outcome was recorded. A zero time means
-// the worker has never recorded that outcome, which is normal for a service
-// that has only ever succeeded.
-func tickAge(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	return humanize.Duration(max(time.Since(t), 0)) + " ago"
 }
 
 // workersHeaderView renders the title bar with the worker count and how many
@@ -156,7 +138,7 @@ func (m *model) workersHeaderView() string {
 	if failing := failingWorkers(m.workers.list.received); failing > 0 {
 		title += fmt.Sprintf("   %d failing", failing)
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	return m.titleBar(title)
 }
 
 // failingWorkers counts services whose most recent tick failed.
@@ -173,7 +155,7 @@ func failingWorkers(workers []adminapi.WorkerHealth) int {
 // workersBody renders the current content: an error, a not-wired notice, the
 // loading indicator, or the workers table.
 func (m *model) workersBody() []pane {
-	return m.paneBody(m.workers.err, m.workers.unavailable, m.workers.loading, func() []pane {
+	return m.paneBody(&m.workers.loadState, func() []pane {
 		if len(m.workers.list.received) == 0 {
 			return []pane{textPane(pathStyle.Render("(no workers registered)"))}
 		}

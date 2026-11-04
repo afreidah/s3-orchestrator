@@ -79,6 +79,20 @@ func TestDecodeOneShot(t *testing.T) {
 			outcome: adminstream.OutcomeOK,
 			message: "cache was already empty",
 		},
+		{
+			name:    "requeue names its backend",
+			decode:  decodeOneShot[requeueResult],
+			body:    `{"backend":"b2","requeued":4}`,
+			outcome: adminstream.OutcomeOK,
+			message: "requeued 4 rows from b2",
+		},
+		{
+			name:    "unscoped requeue covers every backend",
+			decode:  decodeOneShot[requeueResult],
+			body:    `{"requeued":1}`,
+			outcome: adminstream.OutcomeOK,
+			message: "requeued 1 row from all backends",
+		},
 	}
 
 	for _, tc := range cases {
@@ -214,9 +228,9 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 func TestNewOneShotResults_ReportSkips(t *testing.T) {
 	t.Parallel()
 	res := usageReconcileResult{adminapi.UsageReconcileResponse{
-		Status: adminapi.StatusSkipped,
+		Status: adminstream.OutcomeSkipped,
 	}}
-	if got := res.skipReason(); got != adminapi.StatusSkipped {
-		t.Errorf("skipReason = %q, want %q", got, adminapi.StatusSkipped)
+	if got := res.skipReason(); got != adminstream.OutcomeSkipped {
+		t.Errorf("skipReason = %q, want %q", got, adminstream.OutcomeSkipped)
 	}
 }

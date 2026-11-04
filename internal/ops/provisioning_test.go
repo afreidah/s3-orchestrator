@@ -840,29 +840,6 @@ func TestProvisioning_NoPublisherIsTolerated(t *testing.T) {
 // MESSAGES
 // -------------------------------------------------------------------------
 
-// TestPlural verifies a refusal naming one thing does not read as though it
-// named several. This is the text an operator sees at the moment they are told
-// no, so it is worth getting right.
-func TestPlural(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		n    int64
-		noun string
-		want string
-	}{
-		{0, "object", "0 objects"},
-		{1, "object", "1 object"},
-		{2, "object", "2 objects"},
-		{1, "grant", "1 grant"},
-		{3, "credential", "3 credentials"},
-	} {
-		if got := plural(tc.n, tc.noun); got != tc.want {
-			t.Errorf("plural(%d, %q) = %q, want %q", tc.n, tc.noun, got, tc.want)
-		}
-	}
-}
-
 // TestProvisioning_RefusalsReadNaturally drives the three refusals that carry a
 // count and checks the one-of-each case, which is the wording the old messages
 // got wrong.

@@ -15,17 +15,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
-
-// queryBackend restricts a pass to one backend's copies. The backends pane sets
-// it for every action it opens; the ops pane leaves it unset, which is what the
-// server reads as the whole fleet.
-const queryBackend = "backend"
 
 // opsAction is one selectable admin operation. result decodes the single JSON
 // summary a short action answers with; the long-running actions leave it nil
@@ -68,9 +64,9 @@ func opsActions() []opsAction {
 	return append(actions, compressionActions()...)
 }
 
-// backendActions lists what one backend can be asked to do on its own; each
-// entry streams its progress like the fleet-wide ops menu. Drain is not here:
-// it owns a polling watch above the backends table and stays a hotkey.
+// backendActions lists what one backend can be asked to do on its own. Drain
+// is not here: it owns a polling watch above the backends table and stays a
+// hotkey.
 func backendActions() []opsAction {
 	return []opsAction{
 		post("Scrub (verify integrity)", adminapi.PathScrub,
@@ -80,7 +76,7 @@ func backendActions() []opsAction {
 		post("Reconcile metadata", adminapi.PathReconcile,
 			"Reconcile metadata against this backend's storage?", nil),
 		post("Requeue dead-lettered cleanups", adminapi.PathCleanupDLQRequeue,
-			"Requeue this backend's dead-lettered cleanup rows?", nil),
+			"Requeue every dead-lettered cleanup row on this backend?", decodeOneShot[requeueResult]),
 		post("Encrypt existing objects", adminapi.PathEncryptExisting,
 			"Read and rewrite every plaintext copy on this backend as ciphertext?", nil),
 		post("Decrypt existing objects", adminapi.PathDecryptExisting,
@@ -178,7 +174,7 @@ func cacheActions() []opsAction {
 			"", decodeOneShot[cacheFlushResult],
 			deletes(),
 			asks("Invalidate which prefix?", "bucket/path/", func(value string) opsRequest {
-				return opsRequest{path: adminapi.PathCachePrefix, query: url.Values{"prefix": {value}}}
+				return opsRequest{path: adminapi.PathCachePrefix, query: url.Values{adminapi.ParamPrefix: {value}}}
 			})),
 	}
 }
@@ -233,7 +229,7 @@ func compressionActions() []opsAction {
 // Running it again converts the next batch, since rewritten copies drop out.
 func boundedRewrite(path string) func(string) opsRequest {
 	return func(value string) opsRequest {
-		return opsRequest{path: path, query: url.Values{"max": {value}}}
+		return opsRequest{path: path, query: url.Values{adminapi.ParamMax: {value}}}
 	}
 }
 
@@ -250,22 +246,22 @@ type opsView struct {
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
+// enterOps opens the fleet-wide menu. A backend-scoped one is opened by the
+// backends pane, which fills the view in itself.
+func (m *model) enterOps() tea.Cmd {
+	m.ops = opsView{actions: opsActions()}
+	return nil
+}
+
 // handleOpsKey drives the menu. A run started from it is shown and driven by
 // the shared run (run.go).
 func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if moveCursor(&m.ops.cursor, key.String(), len(m.ops.actions)) {
+		return m, nil
+	}
 	switch key.String() {
 	case "esc", "left", "h":
 		return m.opsBack()
-	case "up", "k":
-		if m.ops.cursor > 0 {
-			m.ops.cursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.ops.cursor < len(m.ops.actions)-1 {
-			m.ops.cursor++
-		}
-		return m, nil
 	case "enter", "right", "l":
 		if m.ops.cursor >= len(m.ops.actions) {
 			return m, nil
@@ -295,8 +291,28 @@ func scopeToBackend(req opsRequest, backend string) opsRequest {
 	if req.query == nil {
 		req.query = url.Values{}
 	}
-	req.query.Set(queryBackend, backend)
+	req.query.Set(adminapi.ParamBackend, backend)
 	return req
+}
+
+// actionAt finds the action in actions that posts to path.
+func actionAt(actions []opsAction, path string) (*opsAction, bool) {
+	i := slices.IndexFunc(actions, func(a opsAction) bool { return a.path == path })
+	if i < 0 {
+		return nil, false
+	}
+	return &actions[i], true
+}
+
+// runBackendAction streams the backend menu's action at path against one
+// backend in the current pane, so a hotkey runs exactly what the menu entry
+// does.
+func (m *model) runBackendAction(path, backend string) (tea.Model, tea.Cmd) {
+	a, ok := actionAt(backendActions(), path)
+	if !ok {
+		return m, nil
+	}
+	return m.startRun(a, scopeToBackend(opsRequest{path: path}, backend))
 }
 
 // opsBack leaves the menu for whichever section opened it: the backends pane
@@ -319,7 +335,7 @@ func (m *model) opsHeaderView() string {
 	if m.ops.backend != "" {
 		scope = "ops   " + m.ops.backend
 	}
-	return m.contentTitleStyle().Width(m.contentWidth()).Render(scope + "   select an action")
+	return m.titleBar(scope + "   select an action")
 }
 
 // opsMenuView renders the action list with the cursor marker.
@@ -327,17 +343,13 @@ func (m *model) opsMenuView() string {
 	var b strings.Builder
 	for i := range m.ops.actions {
 		a := &m.ops.actions[i]
-		marker, style := "  ", navItemStyle
-		if i == m.ops.cursor {
-			marker, style = "> ", navActiveStyle
-		}
 		// A trailing ellipsis is the usual signal that a menu entry asks for
 		// something before it acts, rather than acting on the spot.
 		label := a.label
 		if a.ask.question != "" {
 			label += "..."
 		}
-		b.WriteString(style.Render(marker + label))
+		b.WriteString(menuRow(label, i == m.ops.cursor))
 		b.WriteString("\n")
 	}
 	return b.String()

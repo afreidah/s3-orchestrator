@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
@@ -49,12 +50,12 @@ func TestDrainEndStatus(t *testing.T) {
 	}
 }
 
-func TestRowsFromBackends(t *testing.T) {
+func TestBackendRow(t *testing.T) {
 	t.Parallel()
-	rows := rowsFromBackends([]adminapi.BackendStatus{
+	rows := rowsOf([]adminapi.BackendStatus{
 		{Name: "b1", Healthy: true, BytesUsed: 2048, BytesLimit: 4096, ObjectCount: 3, APIRequests: 9, IngressBytes: 1024, EgressBytes: 512},
 		{Name: "b2", RefusedCalls: []string{"GetObject"}, Draining: true, Flags: []string{"draining"}, BytesUsed: 0, BytesLimit: 0},
-	})
+	}, backendRow)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
@@ -62,8 +63,8 @@ func TestRowsFromBackends(t *testing.T) {
 	if r := rows[0]; !slices.Equal(r, table.Row{"b1", "healthy", "-", "2.0 KiB", "4.0 KiB", "50%", "3"}) {
 		t.Errorf("b1 row = %v", r)
 	}
-	// b2: degraded, draining, and a zero limit renders limit and use% as a dash.
-	if r := rows[1]; !slices.Equal(r, table.Row{"b2", "degraded", "draining", "0 B", "-", "-", "0"}) {
+	// b2: degraded, draining, and a zero limit reads as no limit, use% a dash.
+	if r := rows[1]; !slices.Equal(r, table.Row{"b2", "degraded", "draining", "0 B", output.NoLimit, "-", "0"}) {
 		t.Errorf("b2 row = %v", r)
 	}
 }
@@ -279,16 +280,17 @@ func TestHandleBackendsKey_BackAndReload(t *testing.T) {
 	if !m.backends.loading || cmd == nil {
 		t.Errorf("reload: loading=%v cmd=%v", m.backends.loading, cmd)
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.StatusResponse]); !ok {
-		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.StatusResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 }
 
 func TestLoadStatus_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadStatus()
-	if _, ok := cmd().(loadErrMsg[*adminapi.StatusResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.StatusResponse]", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadStatus()())
+	if m.backends.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }
 
@@ -454,9 +456,9 @@ func TestBackendActions_ActOnTheSecondRow(t *testing.T) {
 	if !strings.Contains(m.confirm.text, "minio-b") {
 		t.Fatalf("confirm = %q, want it to name minio-b", m.confirm.text)
 	}
-	finish(t, m, accept(t, m))
-	if f.reconciled != "minio-b" {
-		t.Errorf("reconciled %q, want minio-b", f.reconciled)
+	accept(t, m)
+	if got := f.opRequest.query.Get(adminapi.ParamBackend); got != "minio-b" {
+		t.Errorf("ran against %q, want minio-b", got)
 	}
 }
 
@@ -613,26 +615,22 @@ func TestDrain_CancelOnlyWhileFollowing(t *testing.T) {
 	}
 }
 
-// TestBackendActions_ReportOutcomes pins what the reconcile and requeue
-// actions say when they succeed.
-func TestBackendActions_ReportOutcomes(t *testing.T) {
+// TestBackendHotkeys_RunTheMenuEntry asserts R and Q run what the backend menu
+// runs, scoped to the highlighted row.
+func TestBackendHotkeys_RunTheMenuEntry(t *testing.T) {
 	t.Parallel()
-	f := &fakeLister{
-		reconcileResp: &adminapi.ReconcileResponse{Imported: 3, Removed: 1},
-		requeued:      &adminapi.CleanupDLQRequeueResponse{Backend: "minio-a", Requeued: 7},
-	}
-	m := backendsModel(t, f)
+	for hotkey, path := range map[string]string{"R": adminapi.PathReconcile, "Q": adminapi.PathCleanupDLQRequeue} {
+		t.Run(hotkey, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeLister{}
+			m := backendsModel(t, f)
 
-	if status, _ := finish(t, m, m.reconcileBackend("minio-a")()); !strings.Contains(status.text, "imported 3") {
-		t.Errorf("status = %+v, want the reconcile counts", status)
-	}
-	if status, _ := finish(t, m, m.requeueDLQ("minio-a")()); status.text != "requeued 7 rows from minio-a" {
-		t.Errorf("status = %+v, want the requeued count", status)
-	}
-
-	f.reconcileResp = &adminapi.ReconcileResponse{Imported: 2, BackendsScanned: 1, BackendsFailed: 1}
-	if status, _ := finish(t, m, m.reconcileBackend("minio-a")()); !strings.Contains(status.text, "failed partway") {
-		t.Errorf("status = %+v, want a scan that failed partway said so", status)
+			m.handleBackendsKey(key(hotkey))
+			accept(t, m)
+			if f.opRequest.path != path || f.opRequest.query.Get(adminapi.ParamBackend) != "minio-a" {
+				t.Errorf("request = %+v, want %s scoped to minio-a", f.opRequest, path)
+			}
+		})
 	}
 }
 
@@ -730,32 +728,5 @@ func TestDrainProgress_PollErrorKeepsWatching(t *testing.T) {
 	}
 	if m.backends.drain.err == nil {
 		t.Error("a failed poll should be recorded for the header")
-	}
-}
-
-// TestBackendActions_ReportFailures asserts a failed pass says so rather than
-// reporting counts it never got.
-func TestBackendActions_ReportFailures(t *testing.T) {
-	t.Parallel()
-	m := backendsModel(t, &fakeLister{reconcileErr: errors.New("backend unreachable")})
-
-	status, cmd := finish(t, m, m.reconcileBackend("minio-a")())
-	if cmd != nil {
-		t.Error("a failed reconcile should not refresh the snapshot")
-	}
-	if status.ok || status.text != "reconcile minio-a: backend unreachable" {
-		t.Errorf("status = %+v, want the failure surfaced", status)
-	}
-}
-
-// TestRequeueBackendDLQ_ScopesToRow asserts the requeue command carries the
-// highlighted backend through to the client.
-func TestRequeueBackendDLQ_ScopesToRow(t *testing.T) {
-	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
-
-	m.handleBackendsKey(key("Q"))
-	if status, _ := finish(t, m, accept(t, m)); status.text != "requeued 0 rows from minio-a" {
-		t.Errorf("status = %+v, want the requeue scoped to minio-a", status)
 	}
 }

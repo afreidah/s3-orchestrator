@@ -16,13 +16,11 @@ package adminctl
 
 import (
 	"cmp"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -268,7 +266,7 @@ func resolveGrant(
 // path carries a placeholder segment the server ignores.
 func grantPath(user string, r core.Resource) string {
 	path := adminapi.Path(adminapi.PathProvGrants, user, cmp.Or(r.Name, string(core.ResourceOrchestrator)))
-	return adminclient.WithQuery(path, url.Values{flagKind: {string(r.Kind)}})
+	return adminclient.WithQuery(path, url.Values{adminapi.ParamKind: {string(r.Kind)}})
 }
 
 // grantAdd lets a user reach a resource, with the permissions that reach
@@ -318,16 +316,12 @@ func grantRemove(args []string, c *client) int {
 // provisioningTable renders one slice of the provisioning listing as a table
 // under headers, followed by the notices the merge of the two sources found.
 func provisioningTable(headers []string, rowsOf func(*adminapi.ProvisioningResponse) [][]string) renderFunc {
-	return func(w io.Writer, body []byte) error {
-		var p adminapi.ProvisioningResponse
-		if err := json.Unmarshal(body, &p); err != nil {
-			return err
-		}
-		if err := output.Table(w, headers, rowsOf(&p)); err != nil {
+	return typed(func(w io.Writer, p *adminapi.ProvisioningResponse) error {
+		if err := output.Table(w, headers, rowsOf(p)); err != nil {
 			return err
 		}
 		return writeConfigNote(w, p.Notices)
-	}
+	})
 }
 
 // renderBuckets renders the bucket slice of the provisioning response.
@@ -362,17 +356,13 @@ var renderCredentials = provisioningTable([]string{"Access key", "User ID", "Lab
 
 // renderNewCredential prints a minted keypair. Both halves go to stdout so the
 // output can be captured whole; this is the only time the secret is available.
-func renderNewCredential(w io.Writer, body []byte) error {
-	var c adminapi.CreateCredentialResponse
-	if err := json.Unmarshal(body, &c); err != nil {
-		return err
-	}
+var renderNewCredential = typed(func(w io.Writer, c *adminapi.CreateCredentialResponse) error {
 	_, err := fmt.Fprintf(w,
 		"access_key_id:     %s\nsecret_access_key: %s\nuser_id:           %s\n\n"+
 			"The secret is not stored anywhere it can be read back. Capture it now.\n",
 		c.AccessKeyID, c.SecretAccessKey, c.UserID)
 	return err
-}
+})
 
 // renderGrants renders what a user reaches and what each reach carries, as
 // "bucket:photos(read,write)". A user holding nothing renders empty. It falls
@@ -384,21 +374,9 @@ func renderGrants(u *adminapi.User) string {
 	out := make([]string, 0, len(u.Grants))
 	for _, g := range u.Grants {
 		resource := core.Resource{Kind: core.ParseResourceKind(g.Kind), Name: g.Name}
-		out = append(out, resource.String()+"("+shorthand(g.Permissions)+")")
+		out = append(out, resource.String()+output.Permissions(g.Permissions))
 	}
 	return strings.Join(out, " ")
-}
-
-// shorthand renders a permission list the way the stored form does, collapsing
-// a complete set to the one word that names it. Only the CLI listing
-// abbreviates; the API returns every name.
-func shorthand(perms []string) string {
-	for _, full := range []core.PermissionSet{core.PermAll, core.PermAdminAll} {
-		if slices.Equal(perms, full.Names()) {
-			return full.String()
-		}
-	}
-	return strings.Join(perms, ",")
 }
 
 // writeConfigNote appends what the server found worth reporting about the two

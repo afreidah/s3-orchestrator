@@ -28,7 +28,7 @@ import (
 
 // handleGetObjectTags returns one object's tag set.
 func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue(paramKey)
+	key := r.PathValue(adminapi.ParamKey)
 
 	tags, err := h.d.Ops.Objects.Tags(r.Context(), key)
 	if err != nil {
@@ -42,7 +42,7 @@ func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {
 // handlePutObjectTags replaces one object's whole tag set. An empty list
 // leaves the object untagged, which is the same outcome as a delete.
 func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue(paramKey)
+	key := r.PathValue(adminapi.ParamKey)
 
 	var req adminapi.ObjectTagsRequest
 	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
@@ -60,7 +60,7 @@ func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteObjectTags clears one object's tag set.
 func (h *Handler) handleDeleteObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue(paramKey)
+	key := r.PathValue(adminapi.ParamKey)
 
 	if err := h.d.Ops.Objects.DeleteTags(r.Context(), key); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, msgWriteTagsFailed, "key", key)

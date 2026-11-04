@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -97,16 +95,13 @@ func TestHelp_OpensAndClosesOnAnyKey(t *testing.T) {
 // nav destination.
 func TestGlobalKeys_NameEverySection(t *testing.T) {
 	t.Parallel()
-	if len(sectionKeys) != selectableSections {
-		t.Fatalf("%d section keys for %d sections", len(sectionKeys), selectableSections)
-	}
 	descs := map[string]bool{}
 	for _, k := range globalKeys() {
 		descs[k.desc] = true
 	}
-	for _, e := range navEntries() {
-		if !descs[e.label] {
-			t.Errorf("help has no jump to %s", e.label)
+	for _, spec := range sectionSpecs() {
+		if !descs[spec.label] {
+			t.Errorf("help has no jump to %s", spec.label)
 		}
 	}
 }
@@ -115,14 +110,14 @@ func TestGlobalKeys_NameEverySection(t *testing.T) {
 // after the next keypress clears it from the footer.
 func TestReport_KeepsEveryResult(t *testing.T) {
 	t.Parallel()
-	m := backendsModel(t, &fakeLister{reconcileResp: &adminapi.ReconcileResponse{Imported: 2}})
-	finish(t, m, m.reconcileBackend("minio-a")())
+	m := backendsModel(t, &fakeLister{})
+	finish(t, m, m.setCordon("minio-a", true)())
 	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	if m.status != nil {
 		t.Error("the footer result survived a keypress")
 	}
-	if len(m.actionLog) != 1 || !m.actionLog[0].ok || !strings.Contains(m.actionLog[0].text, "imported 2") {
-		t.Errorf("log = %+v, want the reconcile result", m.actionLog)
+	if len(m.actionLog) != 1 || !m.actionLog[0].ok || !strings.Contains(m.actionLog[0].text, "cordoned minio-a") {
+		t.Errorf("log = %+v, want the cordon result", m.actionLog)
 	}
 }
 

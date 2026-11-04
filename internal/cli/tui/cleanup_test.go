@@ -34,7 +34,7 @@ func cleanupModel(t *testing.T) *model {
 	m.width, m.height = 120, 20
 	m.section = sectionCleanup
 	m.cleanup = newCleanupView()
-	m.applyCleanup(cleanupLoadedMsg{
+	m.applyCleanup(cleanupListings{
 		queue: &adminapi.CleanupQueueResponse{
 			Depth: 7,
 			Items: []adminapi.CleanupQueueItem{
@@ -55,12 +55,12 @@ func cleanupModel(t *testing.T) *model {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func TestRowsFromCleanupQueue(t *testing.T) {
+func TestCleanupQueueRow(t *testing.T) {
 	t.Parallel()
-	rows := rowsFromCleanupQueue([]adminapi.CleanupQueueItem{
+	rows := rowsOf([]adminapi.CleanupQueueItem{
 		{Backend: "b1", ObjectKey: "a/1", SizeBytes: 1024, Attempts: 2, ClaimedBy: "inst-1"},
 		{Backend: "b2", ObjectKey: "a/2", SizeBytes: 0, Attempts: 0},
-	})
+	}, cleanupQueueRow)
 	if r := rows[0]; r[0] != "a/1" || r[1] != "b1" || r[2] != "1.0 KiB" || r[3] != "2" || r[4] != "inst-1" {
 		t.Errorf("claimed row = %v", r)
 	}
@@ -70,12 +70,12 @@ func TestRowsFromCleanupQueue(t *testing.T) {
 	}
 }
 
-func TestRowsFromCleanupDLQ(t *testing.T) {
+func TestCleanupDLQRow(t *testing.T) {
 	t.Parallel()
-	rows := rowsFromCleanupDLQ([]adminapi.CleanupDLQItem{
-		{Backend: "b2", ObjectKey: "b/2", SizeBytes: 2048, Attempts: 10, MovedAt: time.Now().Add(-2 * time.Hour)},
+	r := cleanupDLQRow(&adminapi.CleanupDLQItem{
+		Backend: "b2", ObjectKey: "b/2", SizeBytes: 2048, Attempts: 10, MovedAt: time.Now().Add(-2 * time.Hour),
 	})
-	if r := rows[0]; r[0] != "b/2" || r[1] != "b2" || r[2] != "2.0 KiB" || r[3] != "10" || r[4] != "2h ago" {
+	if r[0] != "b/2" || r[1] != "b2" || r[2] != "2.0 KiB" || r[3] != "10" || r[4] != "2h ago" {
 		t.Errorf("dlq row = %v", r)
 	}
 }
@@ -145,8 +145,8 @@ func TestHandleCleanupKey_BackAndReload(t *testing.T) {
 	if cmd == nil || !m.poll.inFlight[pollCleanup] {
 		t.Fatalf("reload: cmd=%v in-flight=%v, want a fetch", cmd, m.poll.inFlight[pollCleanup])
 	}
-	if _, ok := cmd().(cleanupLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want cleanupLoadedMsg", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -201,29 +201,24 @@ func TestArmRequeue_EmptyDLQ(t *testing.T) {
 	}
 }
 
-// TestRequeueDLQ_ReportsAndReloads verifies a requeue reports the rows it moved
-// and refetches the listings, since their depths just changed.
-func TestRequeueDLQ_ReportsAndReloads(t *testing.T) {
+// TestRequeueDLQ_RunsScopedAndReloads verifies a requeue runs against the
+// selected row's backend and refetches the listings once it finishes, since
+// their depths just changed.
+func TestRequeueDLQ_RunsScopedAndReloads(t *testing.T) {
 	t.Parallel()
+	f := &fakeLister{}
 	m := cleanupModel(t)
-	m.client = &fakeLister{requeued: &adminapi.CleanupDLQRequeueResponse{Backend: "b2", Requeued: 4}}
+	m.client = f
+	m.cleanup.tab = cleanupTabDLQ
 
-	status, cmd := finish(t, m, m.requeueDLQ("b2")())
-	if !status.ok || status.text != "requeued 4 rows from b2" {
-		t.Fatalf("status = %+v, want 4 rows from b2", status)
+	m.handleCleanupKey(key("R"))
+	accept(t, m)
+	if f.opRequest.path != adminapi.PathCleanupDLQRequeue || f.opRequest.query.Get(adminapi.ParamBackend) != "b2" {
+		t.Fatalf("request = %+v, want the requeue scoped to b2", f.opRequest)
 	}
-	if cmd == nil || !m.poll.inFlight[pollCleanup] {
+
+	if _, cmd := m.applyRunDone(runDoneMsg{}); cmd == nil || !m.poll.inFlight[pollCleanup] {
 		t.Errorf("requeue did not trigger a reload: cmd=%v in-flight=%v", cmd, m.poll.inFlight[pollCleanup])
-	}
-}
-
-// TestRequeueDLQ_AllBackends verifies an unscoped requeue says it covered every
-// backend.
-func TestRequeueDLQ_AllBackends(t *testing.T) {
-	t.Parallel()
-	m := cleanupModel(t)
-	if status, _ := finish(t, m, m.requeueDLQ("")()); !strings.Contains(status.text, "all backends") {
-		t.Errorf("status = %+v, want the unscoped wording", status)
 	}
 }
 
@@ -268,8 +263,9 @@ func TestCleanupFooter_OffersRequeueOnlyOnDLQ(t *testing.T) {
 
 func TestLoadCleanup_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadCleanup()
-	if _, ok := cmd().(cleanupErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want cleanupErrMsg", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadCleanup()())
+	if m.cleanup.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }

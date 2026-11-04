@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
 // -------------------------------------------------------------------------
@@ -172,7 +173,7 @@ func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string) err
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%w: bucket %q holds %s", ErrBucketNotEmpty, name, plural(n, "object"))
+		return fmt.Errorf("%w: bucket %q holds %s", ErrBucketNotEmpty, name, humanize.Count(n, "object", "objects"))
 	}
 	// Check grant rows, not the merged reach: a wildcard grant reaches every
 	// bucket but does not dangle, so the merged view would make every bucket
@@ -249,10 +250,10 @@ func (p *Provisioning) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	if len(u.Buckets) > 0 {
-		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(len(u.Buckets)), "grant"))
+		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, humanize.Count(int64(len(u.Buckets)), "grant", "grants"))
 	}
 	if n := countCredentials(view.Credentials, id); n > 0 {
-		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(n), "credential"))
+		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, humanize.Count(int64(n), "credential", "credentials"))
 	}
 	if err := p.d.Store.DeleteUser(ctx, id); err != nil {
 		return err
@@ -487,16 +488,6 @@ func (p *Provisioning) republish(ctx context.Context) error {
 		return fmt.Errorf("provisioning change was stored but the registry was not rebuilt: %w", err)
 	}
 	return nil
-}
-
-// plural renders a count and its noun, so a refusal naming one thing does not
-// read as though it named several. Every message it serves is the reason an
-// operator was just told no, which is a poor place to be sloppy.
-func plural(n int64, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // validateBucket refuses a bucket config would refuse before it is stored,

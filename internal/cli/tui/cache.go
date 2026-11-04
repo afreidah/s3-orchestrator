@@ -15,7 +15,6 @@ package tui
 import (
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -30,41 +29,14 @@ type cacheView struct {
 	snap *adminapi.CacheStatsResponse // last snapshot, nil until the first load
 }
 
-// loadState is what a pane knows about its last fetch: whether one is in
-// flight, the reason the deployment does not serve the pane, or the error the
-// fetch failed with.
-type loadState struct {
-	loading     bool
-	unavailable string
-	err         error
-}
-
-// loaded records a fetch that succeeded.
-func (s *loadState) loaded() {
-	s.loading, s.unavailable, s.err = false, "", nil
-}
-
-// fail records a failed fetch as an error, for a pane every deployment serves.
-func (s *loadState) fail(err error) {
-	s.loading, s.err = false, err
-}
-
-// failed records a failed fetch, separating an endpoint the deployment did not
-// wire from a real failure.
-func (s *loadState) failed(err error) {
-	s.loading, s.err = false, nil
-	if s.unavailable = adminclient.UnavailableReason(err); s.unavailable == "" {
-		s.err = err
-	}
-}
-
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
 // loadCache returns a command that fetches the cache snapshot off the main loop.
 func (m *model) loadCache() tea.Cmd {
-	return fetchCmd(m.client.GetCacheStats)
+	return fetchCmd(pollCache, m.client.GetCacheStats, (*model).applyCache,
+		func(m *model, err error) { m.cache.failed(err) })
 }
 
 // -------------------------------------------------------------------------
@@ -83,13 +55,13 @@ func (m *model) applyCache(resp *adminapi.CacheStatsResponse) {
 
 // cacheHeaderView renders the title bar.
 func (m *model) cacheHeaderView() string {
-	return m.contentTitleStyle().Width(m.contentWidth()).Render("object cache")
+	return m.titleBar("object cache")
 }
 
 // cacheBody renders the current content: an error, a disabled notice, the
 // loading indicator, or the summary.
 func (m *model) cacheBody() []pane {
-	return m.paneBody(m.cache.err, m.cache.unavailable, m.cache.loading, func() []pane {
+	return m.paneBody(&m.cache.loadState, func() []pane {
 		if m.cache.snap == nil {
 			return []pane{textPane(pathStyle.Render("(no cache data)"))}
 		}

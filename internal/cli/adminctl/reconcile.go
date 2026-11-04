@@ -25,6 +25,6 @@ func cmdReconcile(args []string, c *client) int {
 		return 1
 	}
 	q := url.Values{}
-	setIf(q, queryBackend, *backendName)
+	setIf(q, adminapi.ParamBackend, *backendName)
 	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathReconcile, q))
 }

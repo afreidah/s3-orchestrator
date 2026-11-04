@@ -27,19 +27,11 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// adminAction is a write operation the user can invoke. An empty confirm runs
-// immediately; otherwise confirm is shown as a y/N prompt before run fires.
+// adminAction is a write operation the user can invoke. An empty text runs
+// immediately; otherwise text is shown as a y/N prompt before run fires.
 // before, when set, updates the pane the moment the action is accepted, so the
 // user sees it start rather than waiting on the request that run dispatches.
 type adminAction struct {
-	confirm string
-	before  func(*model)
-	run     tea.Cmd
-}
-
-// confirmPrompt is the pending confirmation: the question, what to show on
-// acceptance, and the command to run.
-type confirmPrompt struct {
 	text   string
 	before func(*model)
 	run    tea.Cmd
@@ -139,8 +131,8 @@ func (m *model) handleInputKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // startAction runs an action immediately, or arms a confirmation when the
 // action requires one.
 func (m *model) startAction(a adminAction) (tea.Model, tea.Cmd) {
-	if a.confirm != "" {
-		m.confirm = &confirmPrompt{text: a.confirm, before: a.before, run: a.run}
+	if a.text != "" {
+		m.confirm = &a
 		return m, nil
 	}
 	m.begin(a.before)

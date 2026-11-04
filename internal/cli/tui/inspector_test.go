@@ -46,7 +46,7 @@ func TestOpen_ObjectInspectsDirDescends(t *testing.T) {
 	}
 	var sawLocations bool
 	for _, c := range batch {
-		if msg, isLoc := c().(loadedMsg[*adminapi.ObjectLocationsResponse]); isLoc && msg.resp.Key == "file" {
+		if _, isLoc := c().(loadDone); isLoc {
 			sawLocations = true
 		}
 	}
@@ -80,31 +80,15 @@ func TestApplyLocations(t *testing.T) {
 	}
 }
 
+// TestLoadLocations_Error verifies a fetch error surfaces on the inspector and
+// clears loading.
 func TestLoadLocations_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadLocations("k")
-	if _, ok := cmd().(loadErrMsg[*adminapi.ObjectLocationsResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ObjectLocationsResponse]", cmd())
-	}
-}
-
-func TestUpdate_LocationsMsgs(t *testing.T) {
-	t.Parallel()
-	// a loaded ledger folds into the inspector
-	m := initialModel(&fakeLister{})
-	next, _ := m.Update(loadedMsg[*adminapi.ObjectLocationsResponse]{resp: &adminapi.ObjectLocationsResponse{
-		Key: "k", Locations: []adminapi.ObjectLocation{{Backend: "b1"}},
-	}})
-	if nm := next.(*model); len(nm.insp.locations) != 1 {
-		t.Errorf("loaded: locations=%d, want 1", len(nm.insp.locations))
-	}
-
-	// a fetch error surfaces on the inspector, clearing loading
-	m = initialModel(&fakeLister{})
+	m := initialModel(errLister{})
 	m.insp.loading = true
-	next, _ = m.Update(loadErrMsg[*adminapi.ObjectLocationsResponse]{err: errors.New("boom")})
-	if nm := next.(*model); nm.insp.err == nil || nm.insp.loading {
-		t.Errorf("err: err=%v loading=%v", next.(*model).insp.err, next.(*model).insp.loading)
+	m.Update(m.loadLocations("k")())
+	if m.insp.err == nil || m.insp.loading {
+		t.Errorf("err=%v loading=%v", m.insp.err, m.insp.loading)
 	}
 }
 
@@ -159,26 +143,6 @@ func TestInspectBody(t *testing.T) {
 	}
 }
 
-func TestRelativeAge(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	cases := []struct {
-		in   time.Time
-		want string
-	}{
-		{time.Time{}, "-"},
-		{now.Add(-30 * time.Second), "just now"},
-		{now.Add(-5 * time.Minute), "5m ago"},
-		{now.Add(-3 * time.Hour), "3h ago"},
-		{now.Add(-48 * time.Hour), "2d ago"},
-	}
-	for _, c := range cases {
-		if got := relativeAge(c.in); got != c.want {
-			t.Errorf("relativeAge(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 func TestTruncateAndYesNo(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -215,16 +179,16 @@ func TestVerifiedAge_NeverIsItsOwnAnswer(t *testing.T) {
 	}
 }
 
-// TestRowsFromLocations_VerifiedIsPerCopy is the asymmetry the pane exists to
+// TestLocationRow_VerifiedIsPerCopy is the asymmetry the pane exists to
 // show: one copy checked last night and another never looked at is exactly the
 // state that matters when a backend has been misbehaving.
-func TestRowsFromLocations_VerifiedIsPerCopy(t *testing.T) {
+func TestLocationRow_VerifiedIsPerCopy(t *testing.T) {
 	t.Parallel()
 	checked := time.Now().Add(-2 * time.Hour)
-	rows := rowsFromLocations([]adminapi.ObjectLocation{
+	rows := rowsOf([]adminapi.ObjectLocation{
 		{Backend: "b1", LastScrubbedAt: &checked},
 		{Backend: "b2"},
-	})
+	}, locationRow)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want one per copy", len(rows))
 	}

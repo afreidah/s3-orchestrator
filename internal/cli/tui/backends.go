@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,7 +40,7 @@ type backendsView struct {
 
 // newBackendsView builds the pane's empty state.
 func newBackendsView() backendsView {
-	return backendsView{list: newSortTable(backendColumns, backendSorts, rowsFromBackends,
+	return backendsView{list: newSortTable(backendColumns, backendSorts, backendRow,
 		func(b *adminapi.BackendStatus) string { return b.Name })}
 }
 
@@ -60,13 +59,6 @@ type drainWatch struct {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// loadedMsg carries a snapshot fetched for one pane; the type of resp names the
-// pane. loadErrMsg carries a failed fetch of the same snapshot.
-type (
-	loadedMsg[T any]  struct{ resp T }
-	loadErrMsg[T any] struct{ err error }
-)
-
 // drainStartedMsg reports that a drain was accepted (or failed to start).
 type drainStartedMsg struct {
 	backend string
@@ -83,20 +75,8 @@ type drainProgressMsg struct {
 // loadStatus returns a command that fetches the status snapshot off the main
 // loop.
 func (m *model) loadStatus() tea.Cmd {
-	return fetchCmd(m.client.GetStatus)
-}
-
-// fetchCmd calls get off the main loop and delivers the response as a
-// loadedMsg, or the error as a loadErrMsg. Every pane that loads one snapshot
-// builds its command with it; the returned function must not touch the model.
-func fetchCmd[T any](get func(context.Context) (T, error)) tea.Cmd {
-	return func() tea.Msg {
-		resp, err := get(context.Background())
-		if err != nil {
-			return loadErrMsg[T]{err}
-		}
-		return loadedMsg[T]{resp}
-	}
+	return fetchCmd(pollStatus, m.client.GetStatus, (*model).applyStatus,
+		func(m *model, err error) { m.backends.failed(err) })
 }
 
 // backendCmd calls a per-backend endpoint off the main loop and hands the
@@ -116,8 +96,13 @@ func (m *model) startDrain(backend string) tea.Cmd {
 		})
 }
 
-// pollDrain returns a command that reads one backend's drain progress.
-func (m *model) pollDrain(backend string) tea.Cmd {
+// loadDrain returns a command that reads the followed drain's progress, or nil
+// when no drain is being followed.
+func (m *model) loadDrain() tea.Cmd {
+	backend := m.backends.drain.backend
+	if backend == "" {
+		return nil
+	}
 	return backendCmd(backend, m.client.DrainProgress,
 		func(resp *adminapi.DrainProgressResponse, err error) tea.Msg {
 			return drainProgressMsg{backend: backend, progress: resp, err: err}
@@ -152,25 +137,6 @@ func (m *model) setCordon(backend string, cordoned bool) tea.Cmd {
 		},
 		func(m *model, _ *adminapi.BackendOperationResponse) (string, tea.Cmd) {
 			return verb + "ed " + backend, m.fetch(pollStatus)
-		})
-}
-
-// reconcileBackend returns a command that reconciles metadata against one
-// backend's storage and reports what it changed, and whether the scan failed
-// partway.
-func (m *model) reconcileBackend(backend string) tea.Cmd {
-	client := m.client
-	return runAction("reconcile "+backend,
-		func(ctx context.Context) (*adminapi.ReconcileResponse, error) {
-			return client.ReconcileBackend(ctx, backend)
-		},
-		func(m *model, resp *adminapi.ReconcileResponse) (string, tea.Cmd) {
-			verb := "reconciled"
-			if resp.BackendsFailed > 0 {
-				verb = "reconcile failed partway on"
-			}
-			return fmt.Sprintf("%s %s: imported %d, removed %d", verb, backend, resp.Imported, resp.Removed),
-				m.fetch(pollStatus)
 		})
 }
 
@@ -228,38 +194,32 @@ func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "d":
 		return m.startAction(adminAction{
-			confirm: "Drain every copy off " + name + "?",
-			before:  func(m *model) { m.beginDrainWatch(name) },
-			run:     m.startDrain(name),
+			text:   "Drain every copy off " + name + "?",
+			before: func(m *model) { m.beginDrainWatch(name) },
+			run:    m.startDrain(name),
 		})
 	case "R":
-		return m.startAction(adminAction{
-			confirm: "Reconcile metadata against " + name + "?",
-			run:     m.reconcileBackend(name),
-		})
+		return m.runBackendAction(adminapi.PathReconcile, name)
 	case "Q":
-		return m.startAction(adminAction{
-			confirm: "Requeue dead-lettered cleanups for " + name + "?",
-			run:     m.requeueDLQ(name),
-		})
+		return m.runBackendAction(adminapi.PathCleanupDLQRequeue, name)
 	case "x":
 		if m.backends.drain.backend != name {
 			return m, nil
 		}
 		return m.startAction(adminAction{
-			confirm: "Cancel the drain on " + name + "? Copies already moved stay moved.",
-			run:     m.cancelDrain(name),
+			text: "Cancel the drain on " + name + "? Copies already moved stay moved.",
+			run:  m.cancelDrain(name),
 		})
 	case "C":
 		if m.selectedCordoned() {
 			return m.startAction(adminAction{
-				confirm: "Uncordon " + name + "? New copies can land on it again.",
-				run:     m.setCordon(name, false),
+				text: "Uncordon " + name + "? New copies can land on it again.",
+				run:  m.setCordon(name, false),
 			})
 		}
 		return m.startAction(adminAction{
-			confirm: "Cordon " + name + "? New copies stop landing on it; reads continue.",
-			run:     m.setCordon(name, true),
+			text: "Cordon " + name + "? New copies stop landing on it; reads continue.",
+			run:  m.setCordon(name, true),
 		})
 	}
 	return m, nil
@@ -324,6 +284,7 @@ func (m *model) applyDrainStarted(msg drainStartedMsg) (tea.Model, tea.Cmd) {
 // active has finished or was cancelled, so the watch ends and the status
 // snapshot is refreshed to clear the row's DRAIN flag.
 func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
+	m.poll.landed(pollDrain)
 	if msg.backend != m.backends.drain.backend {
 		return m, nil // a stale reading for a drain the pane already stopped following
 	}
@@ -346,7 +307,7 @@ func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
 // drainEndStatus reports how a followed drain ended: finished, or failed with
 // the reason the drain recorded.
 func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) (ok bool, text string) {
-	if p.State == "failed" {
+	if p.State == core.DrainStateFailed {
 		return false, "drain failed on " + backend + ": " + p.Error
 	}
 	return true, "drain finished on " + backend
@@ -383,28 +344,11 @@ var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"OBJECTS": by(func(b *adminapi.BackendStatus) int64 { return b.ObjectCount }),
 }
 
-// rowsFromBackends builds table rows from the status snapshot, in the same
-// order so the table cursor indexes straight into rows.
-func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
-	rows := make([]table.Row, 0, len(backends))
-	for i := range backends {
-		b := &backends[i]
-		storage := output.StorageCeiling(b)
-		limit := "-"
-		if storage.Limit > 0 {
-			limit = storage.Format(storage.Limit)
-		}
-		rows = append(rows, table.Row{
-			b.Name,
-			core.CallsNamed(b.RefusedCalls).Health(),
-			output.NameList(b.Flags),
-			storage.Format(storage.Used),
-			limit,
-			storage.PercentText(),
-			strconv.FormatInt(b.ObjectCount, 10),
-		})
-	}
-	return rows
+// backendRow renders one backend's status from the cells the admin CLI's status
+// table shares.
+func backendRow(b *adminapi.BackendStatus) table.Row {
+	c := output.BackendCellsOf(b)
+	return table.Row{b.Name, c.Health, c.Flags, c.Used, c.Limit, c.Use, c.Objects}
 }
 
 // healthRank orders backends by health for sorting: down first, then
@@ -423,7 +367,7 @@ func healthRank(refused []string) int {
 // backendsHeaderView renders the title bar with the backend count and DB health.
 func (m *model) backendsHeaderView() string {
 	title := fmt.Sprintf("backends   %d configured", len(m.backends.list.received))
-	titleLine := m.contentTitleStyle().Width(m.contentWidth()).Render(title)
+	titleLine := m.titleBar(title)
 	header := titleLine + "\n" + m.backendsStatsLine()
 	if line := m.drainProgressLine(); line != "" {
 		header += "\n" + line
@@ -547,7 +491,7 @@ func deferredSuffix(deferred int64) string {
 // below it. The detail is drawn from the cursor on every render, so it follows
 // the selection without a key of its own.
 func (m *model) backendsBody() []pane {
-	return m.paneBody(m.backends.err, "", m.backends.loading, func() []pane {
+	return m.paneBody(&m.backends.loadState, func() []pane {
 		b, ok := m.backends.list.selected()
 		if !ok {
 			return []pane{textPane(pathStyle.Render("(no backends)"))}

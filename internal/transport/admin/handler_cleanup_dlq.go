@@ -41,8 +41,8 @@ const (
 // handleCleanupDLQ lists dead-lettered cleanups plus the total DLQ depth,
 // optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
-	backend := r.URL.Query().Get(paramBackend)
-	limit, ok := httputil.RequireQueryCount(w, r, "limit", defaultCleanupDLQLimit, maxCleanupDLQLimit)
+	backend := r.URL.Query().Get(adminapi.ParamBackend)
+	limit, ok := httputil.RequireQueryCount(w, r, adminapi.ParamLimit, defaultCleanupDLQLimit, maxCleanupDLQLimit)
 	if !ok {
 		return
 	}
@@ -67,7 +67,7 @@ func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
 // handleCleanupDLQRequeue moves dead-lettered rows back into cleanup_queue so
 // the worker retries them, optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQRequeue(w http.ResponseWriter, r *http.Request) {
-	backend := r.URL.Query().Get(paramBackend)
+	backend := r.URL.Query().Get(adminapi.ParamBackend)
 
 	n, err := h.d.Cleanup.RequeueCleanupDLQ(r.Context(), backend)
 	if err != nil {

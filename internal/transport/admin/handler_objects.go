@@ -40,14 +40,14 @@ const objectKeyPattern = "{key...}"
 // or sweeping a subtree needs. Continuation resumes a truncated page.
 func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	prefix := q.Get(paramPrefix)
+	prefix := q.Get(adminapi.ParamPrefix)
 
-	delimiter := q.Get("delimiter")
-	if !q.Has("delimiter") {
+	delimiter := q.Get(adminapi.ParamDelimiter)
+	if !q.Has(adminapi.ParamDelimiter) {
 		delimiter = "/"
 	}
 
-	page, err := h.d.Ops.Objects.List(r.Context(), prefix, delimiter, q.Get("continuation"))
+	page, err := h.d.Ops.Objects.List(r.Context(), prefix, delimiter, q.Get(adminapi.ParamContinuation))
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to list objects", err, slog.String("prefix", prefix))
 		return
@@ -70,7 +70,7 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
 
 // handleGetObject streams one object to the caller.
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request) {
-	ServeObject(w, r, h.log, h.d.Ops.Objects, r.PathValue(paramKey))
+	ServeObject(w, r, h.log, h.d.Ops.Objects, r.PathValue(adminapi.ParamKey))
 }
 
 // handlePutObject stores the request body as one object. The body is the
@@ -89,18 +89,18 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, ops.MaxUploadSize)
 	defer body.Close()
 	StoreObject(w, r, h.log, h.d.Ops.Objects, &object.PutObjectRequest{
-		Key: r.PathValue(paramKey), Body: body, Size: r.ContentLength, ContentType: r.Header.Get(httputil.HeaderContentType),
+		Key: r.PathValue(adminapi.ParamKey), Body: body, Size: r.ContentLength, ContentType: r.Header.Get(httputil.HeaderContentType),
 	})
 }
 
 // handleDeleteObject removes one object and every copy of it.
 func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
-	DeleteObject(w, r, h.log, h.d.Ops.Objects, r.PathValue(paramKey))
+	DeleteObject(w, r, h.log, h.d.Ops.Objects, r.PathValue(adminapi.ParamKey))
 }
 
 // handleDeletePrefix removes every object under the given prefix.
 func (h *Handler) handleDeletePrefix(w http.ResponseWriter, r *http.Request) {
-	DeletePrefix(w, r, h.log, h.d.Ops.Objects, r.URL.Query().Get(paramPrefix))
+	DeletePrefix(w, r, h.log, h.d.Ops.Objects, r.URL.Query().Get(adminapi.ParamPrefix))
 }
 
 // -------------------------------------------------------------------------

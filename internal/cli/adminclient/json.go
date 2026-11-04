@@ -51,15 +51,11 @@ func (c *Client) do[T any](ctx context.Context, method, path string, q url.Value
 			return nil, fmt.Errorf("encode request: %w", err)
 		}
 	}
-	resp, err := c.send(ctx, c.http, method, path, q, body, "")
+	resp, err := c.Do(ctx, method, path, q, body)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, ReadError(resp)
-	}
 
 	var out T
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {

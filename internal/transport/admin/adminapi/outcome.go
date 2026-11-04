@@ -10,14 +10,9 @@
 
 package adminapi
 
-// The status words an operation response reports.
-const (
-	StatusOK      = "ok"
-	StatusSkipped = "skipped"
-)
-
-// Outcome is the part every pass reports the same way. Status is StatusOK when
-// the pass ran and StatusSkipped when it had nothing to run against, such as a
+// Outcome is the part every pass reports the same way, in the words a stream's
+// result reports: Status is adminstream.OutcomeOK when the pass ran and
+// adminstream.OutcomeSkipped when it had nothing to run against, such as a
 // feature that is not configured; Reason accompanies a skip only.
 type Outcome struct {
 	Status string `json:"status"`

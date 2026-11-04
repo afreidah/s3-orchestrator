@@ -202,7 +202,7 @@ Monitor `s3o_cleanup_dlq_depth` (gauge) and `s3o_cleanup_dlq_enqueued_total{back
 List the dead-lettered rows, and push them back through automatic retry once the backend is fixed:
 
 ```bash
-s3-orchestrator admin cleanup-dlq [-backend NAME]
+s3-orchestrator admin cleanup-dlq list [-backend NAME]
 s3-orchestrator admin cleanup-dlq requeue [-backend NAME]
 ```
 

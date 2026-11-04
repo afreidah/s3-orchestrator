@@ -24,5 +24,5 @@ func cmdObjectLocations(args []string, c *client) int {
 	if !c.parse(fs, args, "key") {
 		return 1
 	}
-	return c.get(adminclient.WithQuery(adminapi.PathObjectLocations, url.Values{"key": {*key}}), nil)
+	return c.get(adminclient.WithQuery(adminapi.PathObjectLocations, url.Values{adminapi.ParamKey: {*key}}), nil)
 }

@@ -78,7 +78,7 @@ func TestBucketsTable_ShowsWhoReachesEach(t *testing.T) {
 	t.Parallel()
 	m := bucketsModel(t)
 
-	rows := rowsFromBuckets(m.buckets.list.items)
+	rows := rowsOf(m.buckets.list.items, bucketRow)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
@@ -181,8 +181,8 @@ func TestHandleBucketsKey_BackAndReload(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("reload returned no command")
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.ProvisioningResponse]); !ok {
-		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.ProvisioningResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("reload result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -200,8 +200,8 @@ func TestSelectSection_Buckets(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("entering the section issued no fetch")
 	}
-	if _, ok := cmd().(loadedMsg[*adminapi.ProvisioningResponse]); !ok {
-		t.Errorf("fetch result = %#v, want loadedMsg[*adminapi.ProvisioningResponse]", cmd())
+	if _, ok := cmd().(loadDone); !ok {
+		t.Errorf("fetch result = %#v, want loadDone", cmd())
 	}
 }
 
@@ -209,9 +209,10 @@ func TestSelectSection_Buckets(t *testing.T) {
 // message rather than a nil snapshot.
 func TestLoadBuckets_Error(t *testing.T) {
 	t.Parallel()
-	cmd := initialModel(errLister{}).loadBuckets()
-	if _, ok := cmd().(loadErrMsg[*adminapi.ProvisioningResponse]); !ok {
-		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ProvisioningResponse]", cmd())
+	m := initialModel(errLister{})
+	m.Update(m.loadBuckets()())
+	if m.buckets.err == nil {
+		t.Error("a failed fetch should surface on the pane")
 	}
 }
 

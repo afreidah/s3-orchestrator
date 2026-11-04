@@ -975,30 +975,6 @@ func TestCommand_CacheInvalidatePrefix_MissingPrefix(t *testing.T) {
 	}
 }
 
-// TestErrorMessage verifies extraction of the "error" field and the fallback
-// to the trimmed raw body when the response is not the expected shape.
-func TestErrorMessage(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{"error field", `{"error":"boom"}`, "boom"},
-		{"no error field", `{"status":"weird"}`, `{"status":"weird"}`},
-		{"empty error field", `{"error":""}`, `{"error":""}`},
-		{"non-json", "  plain text  ", "plain text"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := errorMessage([]byte(tc.body)); got != tc.want {
-				t.Errorf("errorMessage(%q) = %q, want %q", tc.body, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestCommand_TextVsJSONRendering verifies the format split on a generic
 // (no bespoke renderer) command: text mode renders a human "key: value" view,
 // JSON mode pretty-prints the raw body with indentation.

@@ -11,6 +11,7 @@
 package tui
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -112,15 +113,15 @@ func TestParseArgs_ThemeSource(t *testing.T) {
 	t.Setenv(EnvTheme, "light")
 	creds := []string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"}
 
-	_, th, err := parseArgs(creds)
+	_, th, err := parseArgs(creds, io.Discard)
 	if err != nil || th.accent != themePresets["light"].accent {
 		t.Errorf("from the environment: accent=%s err=%v, want the light preset", th.accent, err)
 	}
-	_, th, err = parseArgs(append([]string{"-theme", "high-contrast"}, creds...))
+	_, th, err = parseArgs(append([]string{"-theme", "high-contrast"}, creds...), io.Discard)
 	if err != nil || th.accent != themePresets["high-contrast"].accent {
 		t.Errorf("from the flag: accent=%s err=%v, want the flag to win", th.accent, err)
 	}
-	if _, _, err := parseArgs([]string{"-theme", "solarized"}); err == nil || !strings.Contains(err.Error(), "unknown theme") {
+	if _, _, err := parseArgs([]string{"-theme", "solarized"}, io.Discard); err == nil || !strings.Contains(err.Error(), "unknown theme") {
 		t.Errorf("bad theme without a target: err=%v, want the theme error", err)
 	}
 }

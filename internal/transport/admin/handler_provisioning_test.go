@@ -262,7 +262,7 @@ func TestHandleUpdateBucket(t *testing.T) {
 				AllowedMethods: []string{"GET"},
 			}},
 		})
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleUpdateBucket(w, req)
 
@@ -298,7 +298,7 @@ func TestHandleUpdateBucket_ClearsOmittedCORS(t *testing.T) {
 
 	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/buckets/photos",
 		adminapi.UpdateBucketRequest{})
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleUpdateBucket(w, req)
 
@@ -319,7 +319,7 @@ func TestHandleUpdateBucket_MalformedBodyIs400(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
 		"/admin/api/provisioning/buckets/photos", strings.NewReader("{"))
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleUpdateBucket(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -343,7 +343,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 	})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/admin/api/provisioning/buckets/photos", nil)
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleDeleteBucket(w, req)
 
@@ -396,7 +396,7 @@ func TestHandleDeleteUser(t *testing.T) {
 	store.EXPECT().DeleteUser(gomock.Any(), "u1").Return(nil)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/admin/api/provisioning/users/u1", nil)
-	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(adminapi.ParamID, "u1")
 	w := httptest.NewRecorder()
 	h.handleDeleteUser(w, req)
 
@@ -444,7 +444,7 @@ func TestHandleDeleteCredential(t *testing.T) {
 	store.EXPECT().DeleteCredential(gomock.Any(), "AK").Return(nil)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/admin/api/provisioning/credentials/AK", nil)
-	req.SetPathValue(paramID, "AK")
+	req.SetPathValue(adminapi.ParamID, "AK")
 	w := httptest.NewRecorder()
 	h.handleDeleteCredential(w, req)
 
@@ -493,8 +493,8 @@ func TestHandleSetGrant_NoPermissionsIsRefused(t *testing.T) {
 		&provRows{users: []core.User{{ID: "u1", Name: "ci"}}})
 
 	req := jsonRequest(t, http.MethodPut, "/admin/api/provisioning/grants/u1/photos", adminapi.SetGrantRequest{})
-	req.SetPathValue(paramID, "u1")
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamID, "u1")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleSetGrant(w, req)
 
@@ -516,8 +516,8 @@ func TestHandleDeleteGrant(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
 		"/admin/api/provisioning/grants/u1/photos", nil)
-	req.SetPathValue(paramID, "u1")
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamID, "u1")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleDeleteGrant(w, req)
 
@@ -683,7 +683,7 @@ func TestHandleRenameUser(t *testing.T) {
 
 	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/users/u1",
 		adminapi.RenameUserRequest{Name: "new"})
-	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(adminapi.ParamID, "u1")
 	w := httptest.NewRecorder()
 	h.handleRenameUser(w, req)
 
@@ -742,7 +742,7 @@ func TestHandleRenameUser_Refusals(t *testing.T) {
 			provisioningWith(t, h, tc.cfgBuckets, tc.rows)
 
 			req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/users/"+tc.id, tc.body)
-			req.SetPathValue(paramID, tc.id)
+			req.SetPathValue(adminapi.ParamID, tc.id)
 			w := httptest.NewRecorder()
 			h.handleRenameUser(w, req)
 
@@ -762,7 +762,7 @@ func TestHandleRenameUser_MalformedBodyIs400(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
 		"/admin/api/provisioning/users/u1", strings.NewReader("{"))
-	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(adminapi.ParamID, "u1")
 	w := httptest.NewRecorder()
 	h.handleRenameUser(w, req)
 
@@ -788,8 +788,8 @@ func TestHandleSetGrant(t *testing.T) {
 
 	req := jsonRequest(t, http.MethodPut, "/admin/api/provisioning/grants/u1/photos",
 		adminapi.SetGrantRequest{Permissions: []string{"list", "read"}})
-	req.SetPathValue(paramID, "u1")
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamID, "u1")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleSetGrant(w, req)
 
@@ -822,8 +822,8 @@ func TestHandleSetGrant_OrchestratorTakesNoName(t *testing.T) {
 	req := jsonRequest(t, http.MethodPut,
 		"/admin/api/provisioning/grants/u1/orchestrator?kind=orchestrator",
 		adminapi.SetGrantRequest{Permissions: []string{"admin-read"}})
-	req.SetPathValue(paramID, "u1")
-	req.SetPathValue(paramName, "orchestrator")
+	req.SetPathValue(adminapi.ParamID, "u1")
+	req.SetPathValue(adminapi.ParamName, "orchestrator")
 	w := httptest.NewRecorder()
 	h.handleSetGrant(w, req)
 
@@ -897,8 +897,8 @@ func TestHandleSetGrant_Refusals(t *testing.T) {
 			}
 			req := jsonRequest(t, http.MethodPut,
 				"/admin/api/provisioning/grants/"+userID+"/"+tc.resource, tc.body)
-			req.SetPathValue(paramID, userID)
-			req.SetPathValue(paramName, tc.resource)
+			req.SetPathValue(adminapi.ParamID, userID)
+			req.SetPathValue(adminapi.ParamName, tc.resource)
 			w := httptest.NewRecorder()
 			h.handleSetGrant(w, req)
 
@@ -919,8 +919,8 @@ func TestHandleSetGrant_MalformedBodyIs400(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut,
 		"/admin/api/provisioning/grants/u1/photos", strings.NewReader("{"))
-	req.SetPathValue(paramID, "u1")
-	req.SetPathValue(paramName, "photos")
+	req.SetPathValue(adminapi.ParamID, "u1")
+	req.SetPathValue(adminapi.ParamName, "photos")
 	w := httptest.NewRecorder()
 	h.handleSetGrant(w, req)
 
@@ -965,8 +965,8 @@ func TestHandleDeleteGrant_Refusals(t *testing.T) {
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
 				"/admin/api/provisioning/grants/"+tc.userID+"/photos", nil)
-			req.SetPathValue(paramID, tc.userID)
-			req.SetPathValue(paramName, "photos")
+			req.SetPathValue(adminapi.ParamID, tc.userID)
+			req.SetPathValue(adminapi.ParamName, "photos")
 			w := httptest.NewRecorder()
 			h.handleDeleteGrant(w, req)
 
