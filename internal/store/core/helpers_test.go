@@ -18,6 +18,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -495,15 +496,51 @@ func TestChargeStripes_KeySelectsTheStripe(t *testing.T) {
 	}
 }
 
-// stripeRecordingTxStub captures which stripe each charge landed on, which the
-// shared quotaTxStub deliberately discards.
+// TestStripeDeltas_ChargeWritesEachRowOnceInOrder spreads keys across every
+// stripe of two backends and asserts each row is written once, in one global
+// order, carrying the whole batch's bytes. That order is what stops two batches
+// holding the same rows from deadlocking.
+func TestStripeDeltas_ChargeWritesEachRowOnceInOrder(t *testing.T) {
+	t.Parallel()
+	const keys = 1000
+	deltas := stripeDeltas{}
+	for i := range keys {
+		key := "bucket/key-" + strconv.Itoa(i)
+		deltas.add(key, "b", -1)
+		deltas.add(key, "a", -1)
+	}
+
+	tx := &stripeRecordingTxStub{}
+	if err := deltas.charge(context.Background(), tx); err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+	if len(tx.rows) != 2*QuotaStripeCount {
+		t.Fatalf("wrote %d rows, want %d: one per stripe of each backend", len(tx.rows), 2*QuotaStripeCount)
+	}
+	for i := 1; i < len(tx.rows); i++ {
+		prev, cur := tx.rows[i-1], tx.rows[i]
+		if prev.backend > cur.backend || (prev.backend == cur.backend && prev.stripe >= cur.stripe) {
+			t.Errorf("row %d out of order: %+v after %+v", i, cur, prev)
+		}
+	}
+	if tx.total != -2*keys {
+		t.Errorf("total = %d, want %d", tx.total, -2*keys)
+	}
+}
+
+// stripeRecordingTxStub captures which rows the charges landed on and what they
+// added up to, which the shared quotaTxStub deliberately discards.
 type stripeRecordingTxStub struct {
 	noopTxAdapter
 	stripes []int16
+	rows    []stripeRow
+	total   int64
 }
 
-func (s *stripeRecordingTxStub) AdjustQuotaStripe(_ context.Context, _ string, stripe int16, _ int64) error {
+func (s *stripeRecordingTxStub) AdjustQuotaStripe(_ context.Context, backend string, stripe int16, delta int64) error {
 	s.stripes = append(s.stripes, stripe)
+	s.rows = append(s.rows, stripeRow{backend, stripe})
+	s.total += delta
 	return nil
 }
 

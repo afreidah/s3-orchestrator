@@ -223,7 +223,7 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 	if err := clearTagsForKey(ctx, tx, keys...); err != nil {
 		return nil, err
 	}
-	removed, perKey := splitRemovedCopies(rows, len(keys))
+	removed, debits := splitRemovedCopies(rows, len(keys))
 	var cleanup []CleanupItem
 	for _, key := range slices.Sorted(maps.Keys(removed)) {
 		superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
@@ -236,30 +236,27 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		}
 		cleanup = append(cleanup, queued...)
 	}
-	if err := chargeStripesByKey(ctx, tx, perKey); err != nil {
+	if err := debits.charge(ctx, tx); err != nil {
 		return nil, err
 	}
 	return cleanup, nil
 }
 
 // splitRemovedCopies folds the removed rows into the two views the batch needs:
-// the bytes each key queues, and the per-key totals the stripe charge uses,
-// since each key's bytes belong on the stripe its own name selects.
-func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removedCopy, map[string]quotaDeltas) {
+// the bytes each key queues, and the debits the stripe charge writes, each on
+// the stripe its own key selects.
+func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removedCopy, stripeDeltas) {
 	removed := make(map[string][]removedCopy, keyCount)
-	perKey := make(map[string]quotaDeltas, keyCount)
+	debits := make(stripeDeltas)
 	for _, r := range rows {
 		removed[r.ObjectKey] = append(removed[r.ObjectKey], removedCopy{
 			BackendName: r.BackendName,
 			StorageKey:  r.StorageKey,
 			SizeBytes:   r.SizeBytes,
 		})
-		if perKey[r.ObjectKey] == nil {
-			perKey[r.ObjectKey] = make(quotaDeltas)
-		}
-		perKey[r.ObjectKey].add(r.BackendName, -r.SizeBytes)
+		debits.add(r.ObjectKey, r.BackendName, -r.SizeBytes)
 	}
-	return removed, perKey
+	return removed, debits
 }
 
 // lockInOrder takes lock on every distinct name in sorted order, so concurrent

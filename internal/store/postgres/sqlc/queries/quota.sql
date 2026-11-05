@@ -68,7 +68,9 @@ GROUP BY backend_name;
 -- added to stripe zero rather than written over the total, so a write that
 -- commits alongside keeps its own adjustment on whichever stripe it charged. A
 -- backend with no copies left is brought to zero. The insert is a writable CTE,
--- which Postgres runs whether or not the outer select reads it.
+-- which Postgres runs whether or not the outer select reads it. It takes the
+-- rows in byte order of backend name, the order every stripe write uses, so it
+-- cannot deadlock against a batch delete.
 WITH ledger AS (
     SELECT backend_name, SUM(size_bytes) AS total
     FROM object_locations
@@ -89,6 +91,7 @@ drift AS (
 applied AS (
     INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
     SELECT backend_name, 0, delta FROM drift
+    ORDER BY backend_name COLLATE "C"
     ON CONFLICT (backend_name, stripe_id) DO UPDATE
     SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
 )

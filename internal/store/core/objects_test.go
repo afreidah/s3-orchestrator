@@ -402,8 +402,15 @@ func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 	if !slices.Equal(cleanup, want) {
 		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
 	}
-	if want := []quotaOp{{"b1", -10}, {"b1", -20}}; !slices.Equal(stub.ops, want) {
-		t.Errorf("stripe charges = %+v, want each key debited on its own stripe: %+v", stub.ops, want)
+	var debited int64
+	for _, op := range stub.ops {
+		if op.backend != "b1" {
+			t.Errorf("charged %q, want only the copies' backend", op.backend)
+		}
+		debited += op.delta
+	}
+	if debited != -30 {
+		t.Errorf("stripe charges = %+v, want both keys' bytes debited", stub.ops)
 	}
 }
 

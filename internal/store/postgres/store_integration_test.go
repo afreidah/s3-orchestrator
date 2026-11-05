@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -1599,6 +1600,47 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	}
 	if before, after := beforeA["backend-b"].BytesUsed, afterA["backend-b"].BytesUsed; before-after != 100 {
 		t.Errorf("backend-b delta = %d, want 100 (k1 replica)", before-after)
+	}
+}
+
+// TestStoreInt_DeleteObjectsBatch_ConcurrentBatchesDoNotDeadlock runs batches
+// on disjoint keys at once. Each batch spans every stripe, so batches taking
+// those rows in their own key order deadlock and lose every key to 40P01.
+func TestStoreInt_DeleteObjectsBatch_ConcurrentBatchesDoNotDeadlock(t *testing.T) {
+	const batches, keysPerBatch, size = 4, 200, 10
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	groups := make([][]string, batches)
+	for b := range groups {
+		for i := range keysPerBatch {
+			key := uniqueKey(t, fmt.Sprintf("b%d/k%d", b, i))
+			if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: size}); err != nil {
+				t.Fatalf("RecordObject(%s): %v", key, err)
+			}
+			groups[b] = append(groups[b], key)
+		}
+	}
+	before, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats(before): %v", err)
+	}
+
+	errs := make([]error, batches)
+	var wg sync.WaitGroup
+	for b := range groups {
+		wg.Go(func() { _, errs[b] = s.DeleteObjectsBatch(ctx, groups[b]) })
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		t.Fatalf("concurrent batches: %v", err)
+	}
+
+	after, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats(after): %v", err)
+	}
+	if got, want := before["backend-a"].BytesUsed-after["backend-a"].BytesUsed, int64(batches*keysPerBatch*size); got != want {
+		t.Errorf("backend-a delta = %d, want %d", got, want)
 	}
 }
 
