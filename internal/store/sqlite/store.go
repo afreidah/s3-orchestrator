@@ -60,15 +60,12 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 	// SQLite is single-writer; serialize all writes through one connection.
 	db.SetMaxOpenConns(1)
 
-	// Apply performance and correctness pragmas. LIKE ignores ASCII case by
-	// default, and every LIKE here is a key prefix, which S3 matches byte for
-	// byte.
+	// Apply performance and correctness pragmas.
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
-		"PRAGMA case_sensitive_like=ON",
 	}
 	for _, p := range pragmas {
 		if _, err := db.ExecContext(ctx, p); err != nil {

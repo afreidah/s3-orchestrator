@@ -6,9 +6,9 @@
 // Implements the Postgres read-side bindings for object_locations - the
 // canonical (object_key, backend_name) ledger of which backends hold which
 // objects - that the manager and dashboard consume; the writes are core's
-// shared transactions. Listing queries use the (object_key, created_at) index
-// for stable pagination; pagination tokens are advanced past emitted
-// CommonPrefix entries so a delimiter scan never re-emits the same prefix.
+// shared transactions. Listing queries scan a byte range of the
+// (object_key, created_at) index for stable pagination; core builds the range
+// and folds the rows into pages.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -71,16 +72,13 @@ func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter s
 	return core.ListPage(ctx, prefix, delimiter, startAfter, maxKeys, s.listFlat, s.listDelimited)
 }
 
-// listFlat returns the keys under prefix sorted by key, fetching one extra row
-// to detect truncation.
-func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
-	// Fetch one extra to detect truncation
+// listFlat returns up to limit keys in the range, sorted by key, one row per
+// key. The rows carry no storage path, which no listing reads.
+func (s *Store) listFlat(ctx context.Context, from, end string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{
-		Prefix:     escapedPrefix,
-		StartAfter: startAfter,
-		MaxKeys:    rowLimit(maxKeys + 1),
+		FromKey: from,
+		EndKey:  end,
+		MaxKeys: rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
@@ -90,53 +88,46 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 	for i := range rows {
 		objects[i].Identity = core.ListedIdentity(derefStr(rows[i].Etag))
 	}
-	return core.BuildListPage(objects, maxKeys), nil
+	return objects, nil
 }
 
 // CountObjectsByPrefix returns how many distinct keys live under a prefix,
 // which is what answers whether a bucket still holds anything.
 func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
-	n, err := s.queries.CountObjectsByPrefix(ctx, core.EscapeLike(prefix))
+	n, err := s.queries.CountObjectsByPrefix(ctx, db.CountObjectsByPrefixParams{
+		FromKey: prefix,
+		EndKey:  core.PrefixEnd(prefix),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count objects by prefix: %w", err)
 	}
 	return n, nil
 }
 
-// listDelimited groups a delimiter listing in Postgres with a recursive-CTE
-// loose index scan (sqlc/queries/objects.sql). Comparisons run under
-// COLLATE "C", backed by idx_object_locations_key_collate_c, so groups come
-// back in the byte order SQLite and S3 use.
-func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
+// listDelimited walks a delimiter listing in Postgres with a recursive-CTE loose
+// index scan (sqlc/queries/objects.sql), returning one row per group or leaf in
+// the byte order SQLite and S3 use. Comparisons run under COLLATE "C", backed by
+// idx_object_locations_listing.
+func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, from, end string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsDelimited(ctx, db.ListObjectsDelimitedParams{
-		Escprefix:  escapedPrefix,
-		Prefix:     prefix,
-		Delim:      delimiter,
-		StartAfter: startAfter,
-		Lim:        rowLimit(maxKeys + 1),
+		FromKey: from,
+		EndKey:  end,
+		Prefix:  prefix,
+		Delim:   delimiter,
+		Lim:     rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
 	}
-
-	entries := make([]core.DelimitedEntry, len(rows))
-	for i := range rows {
-		r := rows[i]
-		e := core.DelimitedEntry{IsPrefix: r.IsPrefix, CommonPrefix: r.CommonPrefix, SkipBound: r.SkipBound}
-		if !r.IsPrefix {
-			e.Leaf = core.ObjectLocation{
-				ObjectKey:   r.ObjectKey,
-				BackendName: r.BackendName,
-				SizeBytes:   r.SizeBytes,
-				CreatedAt:   r.CreatedAt.Time,
-				Identity:    core.ListedIdentity(r.Etag),
-			}
+	return mapSlice(rows, func(r *db.ListObjectsDelimitedRow) core.ObjectLocation {
+		return core.ObjectLocation{
+			ObjectKey:   r.ObjectKey,
+			BackendName: r.BackendName,
+			SizeBytes:   r.SizeBytes,
+			CreatedAt:   r.CreatedAt.Time,
+			Identity:    core.ListedIdentity(r.Etag),
 		}
-		entries[i] = e
-	}
-	return core.BuildDelimitedPage(entries, maxKeys), nil
+	}), nil
 }
 
 // ListExpiredObjects returns one row per unique key matching the query's
@@ -159,8 +150,8 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 		return nil, fmt.Errorf("failed to encode lifecycle tag filter: %w", err)
 	}
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
-		Prefix:   core.EscapeLike(q.Prefix),
-		AfterKey: q.After,
+		FromKey:  core.KeysFrom(q.Prefix, q.After),
+		EndKey:   core.PrefixEnd(q.Prefix),
 		Cutoff:   pgTimestamptz(q.Cutoff),
 		TagCount: int32(len(q.Tags)), //nolint:gosec // G115: capped at MaxTagsPerObject by config validation
 		Tags:     tags,
@@ -180,14 +171,14 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 // with aggregate stats for subdirectories. Files include backend and creation
 // time. Prefix must end with "/" (or be "" for root).
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
+	end := core.PrefixEnd(prefix)
 
 	// Get aggregate stats for all immediate children (dirs + files). NameStart
-	// uses the unescaped prefix length so EscapeLike's '\_' insertions don't
-	// shift the child-name substring offset (see GetDirectoryStats).
+	// counts characters, the unit substr cuts in.
 	stats, err := s.queries.GetDirectoryStats(ctx, db.GetDirectoryStatsParams{
-		Prefix:    escapedPrefix,
-		NameStart: int32(len(prefix) + 1), //nolint:gosec // G115: directory prefix length is small and bounded
+		FromKey:   prefix,
+		EndKey:    end,
+		NameStart: int32(utf8.RuneCountInString(prefix) + 1), //nolint:gosec // G115: directory prefix length is small and bounded
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get directory stats: %w", err)
@@ -195,9 +186,10 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 
 	// Get per-file detail for direct file children (paginated).
 	fileRows, err := s.queries.ListDirectChildren(ctx, db.ListDirectChildrenParams{
-		Prefix:     escapedPrefix,
-		StartAfter: startAfter,
-		MaxKeys:    rowLimit(maxKeys + 1),
+		FromKey: core.KeysFrom(prefix, startAfter),
+		EndKey:  end,
+		Prefix:  prefix,
+		MaxKeys: rowLimit(maxKeys + 1),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list direct children: %w", err)

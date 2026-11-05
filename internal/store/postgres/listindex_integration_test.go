@@ -6,11 +6,16 @@
 // Author: Alex Freidah
 //
 // Pins that ListObjectsByPrefix plans an index-only scan with no sort against
-// the covering index. Both properties are easy to lose by accident: adding a
-// column to the projection without adding it to the index's INCLUDE list drops
-// the plan back to heap fetches per replica row walked, and moving created_at
-// out of the index key reintroduces a per-group sort. Neither shows up as a
-// test failure anywhere else, only as a slower listing.
+// the listing index, and that both listings keep their key range in the index
+// under a generic plan. These are easy to lose by accident: adding a column to
+// the projection without adding it to the index's INCLUDE list drops the plan
+// back to heap fetches per replica row walked, moving created_at out of the index
+// key reintroduces a per-group sort, and a bound the generic plan cannot use
+// scans to the end of the index. None of them shows up as a test failure
+// anywhere else, only as a slower listing.
+//
+// The plans are taken from the statements the generated bindings send, so they
+// cannot drift from what production runs.
 //
 // The package shares one Postgres fixture, so the seed lives under its own key
 // prefix and backends and is removed again on cleanup. Tests that assert their
@@ -22,22 +27,18 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
-// listPlanQuery mirrors ListObjectsByPrefix. Kept as literal SQL rather than
-// driven through the generated method so the plan is measured for the exact
-// statement, with the named parameters resolved positionally.
-const listPlanQuery = `
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, etag, created_at
-FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND object_key COLLATE "C" > $2
-ORDER BY object_key COLLATE "C", created_at ASC
-LIMIT $3`
+// errStatementCaptured stops a generated query once the stub has its statement.
+var errStatementCaptured = errors.New("statement captured")
 
 // listPlanPrefix namespaces the seeded rows, and listPlanBackend their quota
 // rows, so both can be deleted without touching what other tests wrote.
@@ -60,8 +61,8 @@ func TestListObjectsByPrefix_PlansIndexOnlyWithoutSort(t *testing.T) {
 
 	plan := explainListing(ctx, t, s)
 
-	if !strings.Contains(plan, "Index Only Scan using idx_object_locations_key_collate_c_covering") {
-		t.Errorf("listing does not plan an index-only scan on the covering index; every replica row walked costs a heap fetch.\n%s", plan)
+	if !strings.Contains(plan, "Index Only Scan using idx_object_locations_listing") {
+		t.Errorf("listing does not plan an index-only scan on the listing index; every replica row walked costs a heap fetch.\n%s", plan)
 	}
 	// Covers "Sort" and "Incremental Sort" alike: the index supplies
 	// (object_key, created_at), so DISTINCT ON needs no sort to pick a winner.
@@ -77,6 +78,75 @@ func TestListObjectsByPrefix_PlansIndexOnlyWithoutSort(t *testing.T) {
 		t.Errorf("listing takes %d heap fetches over %d rows walked; the index is missing a projected column.\n%s",
 			fetches, walked, plan)
 	}
+}
+
+// TestListings_KeepTheirRangeUnderTheGenericPlan asks for the plan a pooled
+// connection moves to after five executions, which sees no parameter values. A
+// bound that plan cannot put in the index turns into a filter, and the listing
+// reads past its prefix to the end of the index.
+func TestListings_KeepTheirRangeUnderTheGenericPlan(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	seedListingRows(ctx, t, s, 50000, 3)
+	statements := map[string]func(*db.Queries) error{
+		"flat": func(q *db.Queries) error {
+			_, err := q.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{})
+			return err
+		},
+		"delimited": func(q *db.Queries) error {
+			_, err := q.ListObjectsDelimited(ctx, db.ListObjectsDelimitedParams{})
+			return err
+		},
+	}
+	for name, run := range statements {
+		t.Run(name, func(t *testing.T) {
+			query, _ := generatedStatement(t, run)
+			plan := genericPlan(ctx, t, s, query)
+			if !strings.Contains(plan, "Index Cond") {
+				t.Errorf("no index condition.\n%s", plan)
+			}
+			for line := range strings.Lines(plan) {
+				if strings.Contains(line, "Filter") && strings.Contains(line, "object_key") {
+					t.Errorf("a key bound is a filter, so the scan runs past the prefix: %s\n%s", line, plan)
+				}
+			}
+		})
+	}
+}
+
+// generatedStatement returns the SQL and arguments run sends through the
+// generated bindings, which is what a plan test has to measure.
+func generatedStatement(t *testing.T, run func(*db.Queries) error) (string, []any) {
+	t.Helper()
+	stub := &stubDBTX{queryErr: errStatementCaptured}
+	if err := run(db.New(stub)); !errors.Is(err, errStatementCaptured) {
+		t.Fatalf("generated query = %v, want it stopped at the stub", err)
+	}
+	return stub.querySQL, stub.queryArgs
+}
+
+// genericPlan returns the generic plan of query. The simple protocol carries the
+// statement with its parameters unbound, which pgx's own query path refuses.
+func genericPlan(ctx context.Context, t *testing.T, s *Store, query string) string {
+	t.Helper()
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire connection: %v", err)
+	}
+	defer conn.Release()
+
+	results, err := conn.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN, COSTS OFF) "+query).ReadAll()
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	var plan strings.Builder
+	for _, result := range results {
+		for _, row := range result.Rows {
+			plan.Write(row[0])
+			plan.WriteByte('\n')
+		}
+	}
+	return plan.String()
 }
 
 // heapFetches pulls the heap-fetch count and the rows the index scan walked
@@ -161,5 +231,11 @@ func dropListingRows(t *testing.T, s *Store) {
 // explainListing returns the plan for one page of the prefix listing.
 func explainListing(ctx context.Context, t *testing.T, s *Store) string {
 	t.Helper()
-	return explainPlan(ctx, t, s.pool, "ANALYZE, BUFFERS, COSTS OFF, TIMING OFF", listPlanQuery, listPlanPrefix, "", 1000)
+	query, args := generatedStatement(t, func(q *db.Queries) error {
+		_, err := q.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{
+			FromKey: listPlanPrefix, EndKey: core.PrefixEnd(listPlanPrefix), MaxKeys: 1000,
+		})
+		return err
+	})
+	return explainPlan(ctx, t, s.pool, "ANALYZE, BUFFERS, COSTS OFF, TIMING OFF", query, args...)
 }

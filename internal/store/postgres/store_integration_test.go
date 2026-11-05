@@ -791,36 +791,6 @@ func TestStoreInt_ListPartsPagesAfterMarker(t *testing.T) {
 	}
 }
 
-// TestStoreInt_CountActiveMultipartUploads verifies the helper
-// counts in-progress uploads under a prefix.
-func TestStoreInt_CountActiveMultipartUploads(t *testing.T) {
-	s := adapterPgStore(t)
-	seedMultipartUpload(t, s, "", nil)
-
-	count, err := s.CountActiveMultipartUploads(context.Background(), t.Name())
-	if err != nil {
-		t.Fatalf("CountActiveMultipartUploads: %v", err)
-	}
-	if count < 1 {
-		t.Errorf("expected count>=1, got %d", count)
-	}
-}
-
-// TestStoreInt_ListMultipartUploads verifies the prefix list returns
-// in-progress uploads.
-func TestStoreInt_ListMultipartUploads(t *testing.T) {
-	s := adapterPgStore(t)
-	seedMultipartUpload(t, s, "", nil)
-
-	uploads, err := s.ListMultipartUploads(context.Background(), t.Name(), 100)
-	if err != nil {
-		t.Fatalf("ListMultipartUploads: %v", err)
-	}
-	if len(uploads) == 0 {
-		t.Error("expected at least one upload")
-	}
-}
-
 // TestStoreInt_ScanMultipartUploads verifies the backend filter and the
 // created-before cutoff each narrow the scan against real Postgres, including
 // the NULL cutoff that matches every upload, and that the cursor pages past
@@ -1173,22 +1143,10 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 // OBJECT LIST QUERIES
 // -------------------------------------------------------------------------
 
-// TestStoreInt_ListExpiredObjects verifies the prefix + cutoff query
-// runs and returns a non-error result, including the LIKE-escape path
-// for prefixes containing wildcards.
-func TestStoreInt_ListExpiredObjects(t *testing.T) {
-	s := adapterPgStore(t)
-	if _, err := s.ListExpiredObjects(context.Background(), core.ExpiredObjectsQuery{
-		Prefix: t.Name(), Cutoff: time.Now().Add(time.Hour), Limit: 100,
-	}); err != nil {
-		t.Fatalf("ListExpiredObjects: %v", err)
-	}
-	// Prefix containing a LIKE wildcard exercises the escaper.
-	if _, err := s.ListExpiredObjects(context.Background(), core.ExpiredObjectsQuery{
-		Prefix: t.Name() + "%", Cutoff: time.Now().Add(time.Hour), Limit: 100,
-	}); err != nil {
-		t.Errorf("ListExpiredObjects(wildcard): %v", err)
-	}
+// TestStoreInt_Listing runs the cross-engine prefix listing check against
+// Postgres.
+func TestStoreInt_Listing(t *testing.T) {
+	storetest.CheckListing(t, adapterPgStore(t), uniqueKey(t, ""), "backend-a", "backend-b")
 }
 
 // seedIntentPg inserts an in-flight write intent for key on backend-a,

@@ -35,11 +35,17 @@ func (q *Queries) BeginMultipartCompletion(ctx context.Context, arg BeginMultipa
 
 const countActiveMultipartUploadsByPrefix = `-- name: CountActiveMultipartUploadsByPrefix :one
 SELECT COUNT(*) FROM multipart_uploads
-WHERE object_key LIKE $1 || '%' ESCAPE '\'
+WHERE object_key COLLATE "C" >= $1::text
+  AND object_key COLLATE "C" < $2::text
 `
 
-func (q *Queries) CountActiveMultipartUploadsByPrefix(ctx context.Context, prefix *string) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveMultipartUploadsByPrefix, prefix)
+type CountActiveMultipartUploadsByPrefixParams struct {
+	FromKey string
+	EndKey  string
+}
+
+func (q *Queries) CountActiveMultipartUploadsByPrefix(ctx context.Context, arg CountActiveMultipartUploadsByPrefixParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveMultipartUploadsByPrefix, arg.FromKey, arg.EndKey)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -231,13 +237,15 @@ func (q *Queries) GetPartForUpdate(ctx context.Context, arg GetPartForUpdatePara
 const listMultipartUploadsByPrefix = `-- name: ListMultipartUploadsByPrefix :many
 SELECT upload_id, object_key, content_type, created_at
 FROM multipart_uploads
-WHERE object_key LIKE $1 || '%' ESCAPE '\'
-ORDER BY object_key, created_at
-LIMIT $2
+WHERE object_key COLLATE "C" >= $1::text
+  AND object_key COLLATE "C" < $2::text
+ORDER BY object_key COLLATE "C", created_at
+LIMIT $3
 `
 
 type ListMultipartUploadsByPrefixParams struct {
-	Prefix     *string
+	FromKey    string
+	EndKey     string
 	MaxUploads int32
 }
 
@@ -249,7 +257,7 @@ type ListMultipartUploadsByPrefixRow struct {
 }
 
 func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMultipartUploadsByPrefixParams) ([]ListMultipartUploadsByPrefixRow, error) {
-	rows, err := q.db.Query(ctx, listMultipartUploadsByPrefix, arg.Prefix, arg.MaxUploads)
+	rows, err := q.db.Query(ctx, listMultipartUploadsByPrefix, arg.FromKey, arg.EndKey, arg.MaxUploads)
 	if err != nil {
 		return nil, err
 	}

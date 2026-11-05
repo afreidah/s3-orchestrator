@@ -100,13 +100,11 @@ func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter s
 	return core.ListPage(ctx, prefix, delimiter, startAfter, maxKeys, s.listFlat, s.listDelimited)
 }
 
-// listFlat returns the keys under prefix sorted by key, fetching one extra row
-// to detect truncation. A subquery with GROUP BY deduplicates replicated
-// objects (equivalent to DISTINCT ON in PostgreSQL).
-func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
-	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
+// listFlat returns up to limit keys in the range, sorted by key, one row per
+// key. A subquery with GROUP BY deduplicates replicated objects (equivalent to
+// DISTINCT ON in PostgreSQL), and carries the limit so grouping stops at the
+// page instead of running over every key in the range.
+func (s *Store) listFlat(ctx context.Context, from, end string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ol.object_key, ol.backend_name, ol.storage_key,
 		       ol.object_size AS size_bytes, ol.created_at, ol.etag
@@ -114,21 +112,17 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
 			FROM object_locations
-			WHERE object_key LIKE ? || '%' ESCAPE '\'
-			  AND object_key > ?
+			WHERE object_key >= ? AND object_key < ?
 			  AND managed
 			GROUP BY object_key
+			ORDER BY object_key
+			LIMIT ?
 		) dedup ON ol.rowid = dedup.min_rowid
-		ORDER BY ol.object_key
-		LIMIT ?`, escapedPrefix, startAfter, maxKeys+1)
+		ORDER BY ol.object_key`, from, end, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
 	}
-	objects, err := scanSlimObjectLocations(rows, true)
-	if err != nil {
-		return nil, err
-	}
-	return core.BuildListPage(objects, maxKeys), nil
+	return scanSlimObjectLocations(rows, true)
 }
 
 // CountObjectsByPrefix returns how many distinct keys live under a prefix,
@@ -137,57 +131,42 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 	return s.countRows(ctx, "objects by prefix", `
 		SELECT COUNT(DISTINCT object_key)
 		FROM object_locations
-		WHERE object_key LIKE ? || '%' ESCAPE '\'`, core.EscapeLike(prefix))
+		WHERE object_key >= ? AND object_key < ?`, prefix, core.PrefixEnd(prefix))
 }
 
-// listDelimited groups a delimiter listing inside SQLite with a recursive CTE
-// that seeks past each group instead of scanning through it: the skip bound is
-// the CommonPrefix with its last byte incremented, or the leaf key. Ordering is
-// BINARY collation (byte order).
-func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
-	// dpos    = position of the first delimiter after the prefix (0 = none -> leaf)
-	// cplen   = prefix length + delimiter offset = length of the CommonPrefix
-	// skip    = CommonPrefix with its last char incremented (skips the whole
-	//           group in one seek), or the key itself for a leaf
+// listDelimited walks a delimiter listing inside SQLite with a recursive CTE that
+// seeks past each group instead of scanning through it, returning one row per
+// group or leaf in BINARY collation (byte order). A step states one lower bound
+// because SQLite seeks from only one, and a second would rescan from the prefix.
+func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, from, end string, limit int) ([]core.ObjectLocation, error) {
+	// From a leaf the next seek starts just past the key. From a group it starts
+	// at the common prefix with its last character raised, which a key may equal.
+	// A group's row takes placeholder leaf columns, which the fold discards.
 	const query = `
-		WITH RECURSIVE walk(k) AS (
+		WITH RECURSIVE walk(k, n) AS (
 			SELECT (
 				SELECT object_key FROM object_locations
-				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
+				WHERE object_key >= :from AND object_key < :end
 				  AND managed
-				  AND object_key >:startafter
 				ORDER BY object_key LIMIT 1
-			)
+			), 1
 			UNION ALL
 			SELECT (
 				SELECT object_key FROM object_locations
-				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
+				WHERE object_key < :end
 				  AND managed
-				  AND object_key >CASE
+				  AND object_key >= CASE
 					WHEN instr(substr(walk.k, length(:prefix) + 1), :delim) > 0 THEN
 						substr(walk.k, 1, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 2)
 						|| char(unicode(substr(walk.k, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
-					ELSE walk.k
+					ELSE walk.k || char(1)
 				  END
 				ORDER BY object_key LIMIT 1
-			)
-			FROM walk WHERE walk.k IS NOT NULL
+			), walk.n + 1
+			FROM walk WHERE walk.k IS NOT NULL AND walk.n < :limit
 		)
-		SELECT
-			w.k,
-			CASE WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0 THEN 1 ELSE 0 END AS is_prefix,
-			CASE WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0
-				THEN substr(w.k, 1, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1)
-				ELSE NULL END AS common_prefix,
-			CASE
-				WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0 THEN
-					substr(w.k, 1, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 2)
-					|| char(unicode(substr(w.k, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
-				ELSE w.k
-			END AS skip_bound,
-			ol.backend_name, ol.object_size AS size_bytes, ol.created_at, ol.etag
+		SELECT w.k, COALESCE(ol.backend_name, ''), COALESCE(ol.storage_key, ''),
+		       COALESCE(ol.object_size, 0), COALESCE(ol.created_at, '1970-01-01T00:00:00Z'), ol.etag
 		FROM walk w
 		LEFT JOIN object_locations ol ON ol.rowid = (
 			SELECT MIN(rowid) FROM object_locations o2
@@ -196,56 +175,19 @@ func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter
 			  AND instr(substr(w.k, length(:prefix) + 1), :delim) = 0
 		)
 		WHERE w.k IS NOT NULL
-		ORDER BY w.k
-		LIMIT :limit`
+		ORDER BY w.k`
 
 	rows, err := s.db.QueryContext(ctx, query,
-		sql.Named("escprefix", escapedPrefix),
+		sql.Named("from", from),
+		sql.Named("end", end),
 		sql.Named("prefix", prefix),
 		sql.Named("delim", delimiter),
-		sql.Named("startafter", startAfter),
-		sql.Named("limit", maxKeys+1),
+		sql.Named("limit", limit),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
 	}
-	entries, err := scanDelimitedEntries(rows)
-	if err != nil {
-		return nil, err
-	}
-	return core.BuildDelimitedPage(entries, maxKeys), nil
-}
-
-// scanDelimitedEntries reads the loose-index-scan rows. Leaf columns are NULL on
-// CommonPrefix rows (the LEFT JOIN only matches leaves).
-func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
-	return collectRows(rows, "delimited entries", func(rows *sql.Rows) (core.DelimitedEntry, error) {
-		var (
-			e         core.DelimitedEntry
-			key       string
-			commonPfx sql.NullString
-			backend   sql.NullString
-			sizeBytes sql.NullInt64
-			createdAt sql.NullString
-			etag      sql.NullString
-		)
-		if err := rows.Scan(&key, &e.IsPrefix, &commonPfx, &e.SkipBound, &backend, &sizeBytes, &createdAt, &etag); err != nil {
-			return core.DelimitedEntry{}, fmt.Errorf("failed to scan delimited entry: %w", err)
-		}
-		e.CommonPrefix = commonPfx.String
-		if !e.IsPrefix {
-			e.Leaf.ObjectKey = key
-			e.Leaf.BackendName = backend.String
-			e.Leaf.SizeBytes = sizeBytes.Int64
-			t, err := parseTime(createdAt.String)
-			if err != nil {
-				return core.DelimitedEntry{}, err
-			}
-			e.Leaf.CreatedAt = t
-			e.Leaf.Identity = core.ListedIdentity(etag.String)
-		}
-		return e, nil
-	})
+	return scanSlimObjectLocations(rows, true)
 }
 
 // ListExpiredObjects returns one row per unique key matching the query's
@@ -256,7 +198,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 // intersection. EXISTS rather than a join because the dedup subquery groups by
 // object_key and a join would multiply its input row per matching tag.
 func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
-	args := []any{core.EscapeLike(q.Prefix), q.After, formatTime(q.Cutoff)}
+	args := []any{core.KeysFrom(q.Prefix, q.After), core.PrefixEnd(q.Prefix), formatTime(q.Cutoff)}
 
 	// Sorted keys keep the generated SQL and its arguments identical run to run.
 	var tagFilter strings.Builder
@@ -276,13 +218,13 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
 			FROM object_locations
-			WHERE object_key LIKE ? || '%' ESCAPE '\'
-			  AND object_key > ?
+			WHERE object_key >= ? AND object_key < ?
 			  AND created_at < ?`+tagFilter.String()+`
 			GROUP BY object_key
+			ORDER BY object_key
+			LIMIT ?
 		) dedup ON ol.rowid = dedup.min_rowid
-		ORDER BY ol.object_key
-		LIMIT ?`, args...)
+		ORDER BY ol.object_key`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
 	}

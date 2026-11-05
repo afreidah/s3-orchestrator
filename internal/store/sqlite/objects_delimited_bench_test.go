@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Measures the loose-index-scan delimiter query as the underlying keyspace
-// grows while the number of emitted CommonPrefixes stays fixed. Latency and
-// allocations should stay roughly flat across sizes - that is the whole point of
-// the skip-scan: cost tracks the prefixes returned, not the keys under them.
+// grows. Latency and allocations should stay roughly flat across sizes - that is
+// the whole point of the skip-scan: cost tracks the page returned, not the keys
+// under it or the children past it.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -39,25 +39,28 @@ func newBenchStore(b *testing.B) *Store {
 	return s
 }
 
-// BenchmarkListObjectsDelimited spreads each keyspace across 8 second-level
-// directories, so a delimiter list always emits 8 CommonPrefixes regardless of
-// how many keys back them.
+// BenchmarkListObjectsDelimited spreads each keyspace across second-level
+// directories. With 8 of them a list emits 8 CommonPrefixes however many keys
+// back them, and with one per key it stops at the page however many follow.
 func BenchmarkListObjectsDelimited(b *testing.B) {
-	const dirs = 8
+	const pageSize = 1000
 	ctx := context.Background()
-	for _, n := range []int{1_000, 10_000, 100_000} {
-		b.Run(fmt.Sprintf("keys=%d", n), func(b *testing.B) {
+	for _, tc := range []struct{ keys, dirs int }{
+		{1_000, 8}, {10_000, 8}, {100_000, 8}, {100_000, 100_000},
+	} {
+		b.Run(fmt.Sprintf("keys=%d/dirs=%d", tc.keys, tc.dirs), func(b *testing.B) {
 			s := newBenchStore(b)
-			seedDelimitedKeys(b, s, n, dirs)
+			seedDelimitedKeys(b, s, tc.keys, tc.dirs)
+			want := min(tc.dirs, pageSize)
 
 			b.ResetTimer()
 			for b.Loop() {
-				res, err := s.ListObjects(ctx, "logs/", "/", "", 1000)
+				res, err := s.ListObjects(ctx, "logs/", "/", "", pageSize)
 				if err != nil {
 					b.Fatalf("ListObjects: %v", err)
 				}
-				if len(res.CommonPrefixes) != dirs {
-					b.Fatalf("got %d prefixes, want %d", len(res.CommonPrefixes), dirs)
+				if len(res.CommonPrefixes) != want {
+					b.Fatalf("got %d prefixes, want %d", len(res.CommonPrefixes), want)
 				}
 			}
 		})
