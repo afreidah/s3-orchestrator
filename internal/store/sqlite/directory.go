@@ -28,13 +28,11 @@ import (
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
-	stats, err := queryDirectoryStats(ctx, s, prefix, escapedPrefix)
+	stats, err := queryDirectoryStats(ctx, s, prefix)
 	if err != nil {
 		return nil, err
 	}
-	files, err := queryDirectFiles(ctx, s, prefix, escapedPrefix, startAfter, maxKeys)
+	files, err := queryDirectFiles(ctx, s, prefix, startAfter, maxKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +43,7 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 // under prefix. file_count counts distinct object_keys (logical files);
 // total_size sums every replica row so directory totals reflect physical
 // storage, matching the Storage Summary semantics.
-func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix string) ([]core.DirStat, error) {
+func queryDirectoryStats(ctx context.Context, s *Store, prefix string) ([]core.DirStat, error) {
 	const statsQuery = `
 		SELECT
 			CASE WHEN INSTR(SUBSTR(object_key, LENGTH(?) + 1), '/') > 0
@@ -58,14 +56,14 @@ func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix st
 			COUNT(DISTINCT object_key) AS file_count,
 			COALESCE(SUM(size_bytes), 0) AS total_size
 		FROM object_locations
-		WHERE object_key LIKE ? || '%' ESCAPE '\'
+		WHERE object_key >= ? AND object_key < ?
 		  AND LENGTH(object_key) > LENGTH(?)
 		GROUP BY name, is_dir
 		ORDER BY is_dir DESC, name ASC`
 
 	rows, err := s.db.QueryContext(ctx, statsQuery,
 		prefix, prefix, prefix, prefix, prefix,
-		escapedPrefix, prefix,
+		prefix, core.PrefixEnd(prefix), prefix,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("directory stats: %w", err)
@@ -87,23 +85,22 @@ func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix st
 // after prefix) in key order. Backends are aggregated into a comma-separated
 // string per object_key and returned sorted. One extra row is fetched to
 // detect truncation.
-func queryDirectFiles(ctx context.Context, s *Store, prefix, escapedPrefix, startAfter string, maxKeys int) ([]core.DirFile, error) {
+func queryDirectFiles(ctx context.Context, s *Store, prefix, startAfter string, maxKeys int) ([]core.DirFile, error) {
 	const fileQuery = `
 		SELECT object_key,
 		       GROUP_CONCAT(backend_name, ',') AS backends,
 		       MAX(size_bytes) AS size_bytes,
 		       MIN(created_at) AS created_at
 		FROM object_locations
-		WHERE object_key LIKE ? || '%' ESCAPE '\'
+		WHERE object_key >= ? AND object_key < ?
 		  AND LENGTH(object_key) > LENGTH(?)
 		  AND INSTR(SUBSTR(object_key, LENGTH(?) + 1), '/') = 0
-		  AND object_key > ?
 		GROUP BY object_key
 		ORDER BY object_key
 		LIMIT ?`
 
 	rows, err := s.db.QueryContext(ctx, fileQuery,
-		escapedPrefix, prefix, prefix, startAfter, maxKeys+1,
+		core.KeysFrom(prefix, startAfter), core.PrefixEnd(prefix), prefix, prefix, maxKeys+1,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list direct children: %w", err)

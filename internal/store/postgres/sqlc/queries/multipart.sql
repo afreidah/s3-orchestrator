@@ -103,11 +103,13 @@ DELETE FROM multipart_uploads WHERE backend_name = $1;
 
 -- name: CountActiveMultipartUploadsByPrefix :one
 SELECT COUNT(*) FROM multipart_uploads
-WHERE object_key LIKE @prefix || '%' ESCAPE '\';
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text;
 
 -- name: ListMultipartUploadsByPrefix :many
 SELECT upload_id, object_key, content_type, created_at
 FROM multipart_uploads
-WHERE object_key LIKE @prefix || '%' ESCAPE '\'
-ORDER BY object_key, created_at
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text
+ORDER BY object_key COLLATE "C", created_at
 LIMIT @max_uploads;

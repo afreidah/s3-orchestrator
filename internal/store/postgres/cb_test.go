@@ -30,12 +30,15 @@ import (
 
 // stubDBTX is a minimal db.DBTX whose three methods record their last
 // call and return canned responses. Lets cb_test.go exercise the
-// wrapper without standing up a real postgres connection.
+// wrapper without standing up a real postgres connection, and a plan test read
+// the statement a generated query sends.
 type stubDBTX struct {
 	execErr     error
 	queryErr    error
 	queryRowErr error
 	calls       int
+	querySQL    string
+	queryArgs   []any
 }
 
 // -------------------------------------------------------------------------
@@ -47,8 +50,9 @@ func (s *stubDBTX) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTa
 	return pgconn.CommandTag{}, s.execErr
 }
 
-func (s *stubDBTX) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+func (s *stubDBTX) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	s.calls++
+	s.querySQL, s.queryArgs = sql, args
 	return nil, s.queryErr
 }
 

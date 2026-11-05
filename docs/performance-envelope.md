@@ -164,19 +164,24 @@ The result tables follow the inventory above: scenarios 2 and 3 share one table,
 | 100 K | _TBD_ | _TBD_ | _TBD_ |
 | 1 M | _TBD_ | _TBD_ | _TBD_ |
 
-Delimiter listings collapse keys into CommonPrefixes in the database via a
-loose index scan (recursive CTE skip-scan), so latency tracks the number of
-prefixes returned rather than the namespace size; it should stay roughly flat
-across these rows.
+Delimiter listings find each group or key in the database with a loose index
+scan (recursive CTE skip-scan) that stops at the page, so latency tracks the page
+rather than the namespace size or the children under the prefix; it should stay
+roughly flat across these rows.
+
+Both listings state a prefix as a byte range rather than a `LIKE`. A `LIKE` only
+becomes index bounds when the plan sees its value, and a prepared statement can
+move to a generic plan after five executions on a connection, which would read
+past the prefix to the end of the index.
 
 Plain prefix listings are served index-only from
-`idx_object_locations_key_collate_c_covering`, which carries
-`(object_key COLLATE "C", created_at)` as its key and the projected
-`backend_name`, `size_bytes` and `etag` as payload. Both halves matter, because
-`DISTINCT ON` walks every replica row per key and emits one: the payload is what
-keeps those rows off the heap, and `created_at` in the key is what lets the
-first row of each group win without a sort. On 360 K rows (120 K keys x 3
-copies), one 1000-key page reads 51 buffers instead of 3017.
+`idx_object_locations_listing`, which carries
+`(object_key COLLATE "C", created_at)` as its key and `backend_name`,
+`size_bytes`, `object_size`, `etag` and `managed` as payload. Both halves matter,
+because `DISTINCT ON` walks every replica row per key and emits one: the payload
+is what keeps those rows off the heap, and `created_at` in the key is what lets
+the first row of each group win without a sort. On 1.7 M rows in shuffled heap
+order, one 1000-key page reads 169 buffers instead of about 2000.
 
 The remaining caveat is the visibility map. An index-only scan still fetches
 from the heap for rows on pages not marked all-visible, and `object_locations`

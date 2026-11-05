@@ -14,8 +14,11 @@ package core
 import (
 	"cmp"
 	"context"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // -------------------------------------------------------------------------
@@ -617,75 +620,109 @@ func TrimPage[T any](rows []T, limit int) ([]T, bool) {
 	return rows, false
 }
 
-// ListPage answers one listing page with the engine's delimited query when a
-// delimiter is set and its flat query otherwise. A maxKeys of zero or less is
-// an empty, untruncated page without a query, as S3 answers max-keys=0.
+// ListPage answers one listing page. It turns the prefix and cursor into a key
+// range, reads one row past the page through the engine's delimited reader when
+// a delimiter is set and its flat reader otherwise, and builds the page. A
+// maxKeys of zero or less is an empty, untruncated page without a query, as S3
+// answers max-keys=0.
 func ListPage(
 	ctx context.Context, prefix, delimiter, startAfter string, maxKeys int,
-	flat func(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error),
-	delimited func(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsResult, error),
+	flat func(ctx context.Context, from, end string, limit int) ([]ObjectLocation, error),
+	delimited func(ctx context.Context, prefix, delimiter, from, end string, limit int) ([]ObjectLocation, error),
 ) (*ListObjectsResult, error) {
-	switch {
-	case maxKeys <= 0:
+	if maxKeys <= 0 {
 		return &ListObjectsResult{}, nil
-	case delimiter != "":
-		return delimited(ctx, prefix, delimiter, startAfter, maxKeys)
-	default:
-		return flat(ctx, prefix, startAfter, maxKeys)
 	}
-}
-
-// likeEscaper escapes the LIKE wildcards and the escape character itself.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// EscapeLike escapes a prefix for a LIKE pattern with ESCAPE '\', which both
-// engines' prefix queries declare, so a key holding % or _ matches only
-// itself.
-func EscapeLike(prefix string) string {
-	return likeEscaper.Replace(prefix)
-}
-
-// BuildListPage caps a flat prefix listing at maxKeys and sets the continuation
-// token to the last kept key when more objects follow. Shared by both engines so
-// the flat listing's truncation contract stays identical. maxKeys must be
-// positive; ListPage answers a zero page before querying.
-func BuildListPage(objects []ObjectLocation, maxKeys int) *ListObjectsResult {
-	page, truncated := TrimPage(objects, maxKeys)
-	result := &ListObjectsResult{Objects: page, IsTruncated: truncated}
-	if truncated {
-		result.NextContinuationToken = page[len(page)-1].ObjectKey
+	from, end := KeysFrom(prefix, startAfter), PrefixEnd(prefix)
+	if group, ok := commonPrefix(prefix, delimiter, startAfter); ok && group == startAfter {
+		from = PrefixEnd(group)
 	}
-	return result
-}
-
-// DelimitedEntry is one key-ordered row of a delimiter-grouped scan: either a
-// CommonPrefix or a leaf object. SkipBound is the value a continuation token
-// takes when the page truncates on this entry (the CommonPrefix advanced past
-// its group, or the leaf key). Engine adapters scan their loose-index-scan rows
-// into these and call BuildDelimitedPage.
-type DelimitedEntry struct {
-	IsPrefix     bool
-	CommonPrefix string
-	SkipBound    string
-	Leaf         ObjectLocation
-}
-
-// BuildDelimitedPage splits the ordered entries into CommonPrefixes and leaf
-// objects, caps the page at maxKeys, and sets the continuation token to the last
-// kept entry's skip bound when more entries follow. Shared by both engines so
-// truncation and token semantics stay identical. maxKeys must be positive.
-func BuildDelimitedPage(entries []DelimitedEntry, maxKeys int) *ListObjectsResult {
-	entries, truncated := TrimPage(entries, maxKeys)
-	result := &ListObjectsResult{IsTruncated: truncated}
-	if truncated {
-		result.NextContinuationToken = entries[len(entries)-1].SkipBound
+	var (
+		rows []ObjectLocation
+		err  error
+	)
+	if delimiter == "" {
+		rows, err = flat(ctx, from, end, maxKeys+1)
+	} else {
+		rows, err = delimited(ctx, prefix, delimiter, from, end, maxKeys+1)
 	}
-	for i := range entries {
-		if entries[i].IsPrefix {
-			result.CommonPrefixes = append(result.CommonPrefixes, entries[i].CommonPrefix)
-		} else {
-			result.Objects = append(result.Objects, entries[i].Leaf)
+	if err != nil {
+		return nil, err
+	}
+	return buildPage(rows, prefix, delimiter, maxKeys), nil
+}
+
+// keyStep is the lowest character a stored key can hold, because Postgres text
+// cannot hold NUL, so appending it steps just past a key.
+const keyStep = "\x01"
+
+// afterSurrogates is the first code point past the surrogates, which UTF-8
+// cannot encode.
+const afterSurrogates = 0xE000
+
+// KeysFrom returns the lowest key a listing under prefix may hold after the
+// cursor. Engines scan from one inclusive bound because SQLite seeks from only
+// one lower bound, however many a statement states.
+func KeysFrom(prefix, after string) string {
+	if after == "" {
+		return prefix
+	}
+	return max(prefix, after+keyStep)
+}
+
+// PrefixEnd returns the first string above every key under prefix, so those keys
+// are exactly the range from prefix up to it. UTF-8 sorts by code point, so it
+// raises the last character that can rise. A prefix with nothing to raise, the
+// empty one included, gets the highest code point, which leaves a key starting
+// with that noncharacter outside an unprefixed listing.
+func PrefixEnd(prefix string) string {
+	runes := []rune(prefix)
+	for i, r := range slices.Backward(runes) {
+		if r == utf8.MaxRune {
+			continue
 		}
+		next := r + 1
+		if utf16.IsSurrogate(next) {
+			next = afterSurrogates
+		}
+		return string(runes[:i]) + string(next)
+	}
+	return string(utf8.MaxRune)
+}
+
+// commonPrefix returns the group a key folds into, the key through the first
+// delimiter after prefix, and reports whether it folds at all. A key outside
+// prefix, one with no delimiter after it, or an empty delimiter does not.
+func commonPrefix(prefix, delimiter, key string) (string, bool) {
+	rest, ok := strings.CutPrefix(key, prefix)
+	if !ok || delimiter == "" {
+		return "", false
+	}
+	child, _, found := strings.Cut(rest, delimiter)
+	if !found {
+		return "", false
+	}
+	return key[:len(prefix)+len(child)+len(delimiter)], true
+}
+
+// buildPage caps rows at maxKeys and folds the keys that hold the delimiter into
+// CommonPrefixes, reusing the rows' storage for the leaves. A truncated page's
+// token is its last entry, a key or a group name, which ListPage resumes past.
+func buildPage(rows []ObjectLocation, prefix, delimiter string, maxKeys int) *ListObjectsResult {
+	rows, truncated := TrimPage(rows, maxKeys)
+	result := &ListObjectsResult{Objects: rows[:0], IsTruncated: truncated}
+	var last string
+	for i := range rows {
+		last = rows[i].ObjectKey
+		if group, ok := commonPrefix(prefix, delimiter, last); ok {
+			result.CommonPrefixes = append(result.CommonPrefixes, group)
+			last = group
+			continue
+		}
+		result.Objects = append(result.Objects, rows[i])
+	}
+	if truncated {
+		result.NextContinuationToken = last
 	}
 	return result
 }

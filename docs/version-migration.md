@@ -64,6 +64,21 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Listings scan a key range ([#1878](https://github.com/afreidah/s3-orchestrator/issues/1878), v0.179.13)**
+
+Prefix queries state a byte range instead of a `LIKE` pattern, and a delimited listing stops at its page. A listing used to scan to the end of the index once a pooled connection moved it to a generic plan, and a delimited one read every entry after its cursor.
+
+- A delimited listing returns a key equal to the bound just past a group, such as `logs0` beside `logs/`. It used to drop that key.
+- A delimited page that ends on a group carries the group's name as its continuation token, and a cursor equal to a group name resumes past that group. `start-after=logs/` with delimiter `/` no longer returns `logs/`.
+- On Postgres, the dashboard's directory view sorts in byte order, as it does on SQLite. It also shows one-character file names under a prefix holding `_` or `%`, and whole child names under a non-ASCII prefix. Both used to be cut or dropped.
+- On Postgres, `ListMultipartUploads` sorts keys in byte order, as it does on SQLite.
+
+**Operator action items after upgrade:**
+
+- No config change required. Migration 00049 builds `idx_object_locations_listing` and `idx_multipart_uploads_key_collate_c` with `CREATE INDEX CONCURRENTLY`, then drops `idx_object_locations_key_collate_c_covering` and both `text_pattern_ops` indexes concurrently, so it does not block writes.
+- **Disk peaks during the migration**, because the new listing index and the one it replaces both exist until the drop. Afterwards the two indexes that remain on `object_locations` take less space than the two they replace: at 1.7 M rows the listing index is 190 MB and the dropped pattern index was 66 MB.
+- Migration 00049 cannot run inside a transaction. A failed `CREATE INDEX CONCURRENTLY` leaves an invalid index behind that needs dropping before the migration is retried.
+
 **One S3 dispatch, error mapping and XML writer ([#1858](https://github.com/afreidah/s3-orchestrator/issues/1858), v0.179.8)**
 
 Log queries and alerts that read S3 refusals need updating.

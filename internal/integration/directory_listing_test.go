@@ -19,7 +19,6 @@ package integration
 import (
 	"context"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -29,14 +28,11 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// dirTestPrefix builds a per-test directory prefix free of LIKE special
-// characters (% _ \) so these replication-semantics tests stay focused on
-// roll-up behaviour; the LIKE-escaping path has its own coverage in
-// TestPgListDirectoryChildren_UnderscorePrefix.
+// dirTestPrefix builds a per-test directory prefix, so one test's keys stay out
+// of another's roll-ups.
 func dirTestPrefix(t *testing.T, label string) string {
 	t.Helper()
-	clean := strings.ReplaceAll(t.Name(), "_", "-")
-	return label + "-" + clean + "/"
+	return label + "-" + t.Name() + "/"
 }
 
 // -------------------------------------------------------------------------
@@ -146,53 +142,6 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	}
 	if got.TotalSize != 250 {
 		t.Errorf("TotalSize = %d, want 250 (physical: 100+100+50)", got.TotalSize)
-	}
-}
-
-// TestPgListDirectoryChildren_UnderscorePrefix checks that a directory whose
-// name contains an underscore lists both file and subdirectory children. The
-// LIKE-escaped prefix is longer than the raw one, so using its length as the
-// child-name offset would mangle every name.
-func TestPgListDirectoryChildren_UnderscorePrefix(t *testing.T) {
-	resetState(t)
-	ctx := context.Background()
-	// The underscore is the whole point, so build the prefix directly rather
-	// than via dirTestPrefix (which strips LIKE specials).
-	prefix := "dirtest_underscore/"
-	fileKey := prefix + "file.txt"
-	subKey := prefix + "sub/inner.txt"
-
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: fileKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
-		t.Fatalf("RecordObject(file): %v", err)
-	}
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: subKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
-		t.Fatalf("RecordObject(sub): %v", err)
-	}
-	t.Cleanup(func() {
-		bg := context.Background()
-		_, _ = testStore.DeleteObject(bg, fileKey)
-		_, _ = testStore.DeleteObject(bg, subKey)
-	})
-
-	result, err := testStore.ListDirectoryChildren(ctx, prefix, "", 100)
-	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
-	}
-
-	file := findEntryByName(result.Entries, fileKey)
-	if file == nil {
-		t.Fatalf("file child missing under underscore prefix %q; got %+v", prefix, result.Entries)
-	}
-	if file.IsDir || file.TotalSize != 100 {
-		t.Errorf("file entry = %+v, want IsDir=false TotalSize=100", file)
-	}
-
-	dir := findEntryByName(result.Entries, prefix+"sub/")
-	if dir == nil || !dir.IsDir {
-		t.Fatalf("subdirectory child missing under underscore prefix; got %+v", result.Entries)
-	}
-	if dir.FileCount != 1 {
-		t.Errorf("subdir FileCount = %d, want 1", dir.FileCount)
 	}
 }
 

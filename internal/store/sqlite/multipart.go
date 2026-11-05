@@ -154,15 +154,13 @@ func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT upload_id, object_key, content_type, created_at
 		 FROM multipart_uploads
-		 WHERE object_key LIKE ? || '%' ESCAPE '\'
+		 WHERE object_key >= ? AND object_key < ?
 		 ORDER BY object_key, created_at
 		 LIMIT ?`,
-		escapedPrefix, maxUploads,
+		prefix, core.PrefixEnd(prefix), maxUploads,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
@@ -195,8 +193,8 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
 	return s.countRows(ctx, "active multipart uploads",
 		`SELECT COUNT(*) FROM multipart_uploads
-		 WHERE object_key LIKE ? || '%' ESCAPE '\'`,
-		core.EscapeLike(bucketPrefix))
+		 WHERE object_key >= ? AND object_key < ?`,
+		bucketPrefix, core.PrefixEnd(bucketPrefix))
 }
 
 // ScanMultipartUploads returns up to limit uploads matching filter after

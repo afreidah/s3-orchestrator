@@ -231,8 +231,10 @@ func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartU
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
-	escapedPrefix := core.EscapeLike(bucketPrefix)
-	count, err := s.queries.CountActiveMultipartUploadsByPrefix(ctx, &escapedPrefix)
+	count, err := s.queries.CountActiveMultipartUploadsByPrefix(ctx, db.CountActiveMultipartUploadsByPrefixParams{
+		FromKey: bucketPrefix,
+		EndKey:  core.PrefixEnd(bucketPrefix),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count active multipart uploads: %w", err)
 	}
@@ -242,10 +244,9 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	escapedPrefix := core.EscapeLike(prefix)
-
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
-		Prefix:     &escapedPrefix,
+		FromKey:    prefix,
+		EndKey:     core.PrefixEnd(prefix),
 		MaxUploads: rowLimit(maxUploads),
 	})
 	if err != nil {

@@ -51,15 +51,19 @@ func (q *Queries) CountCopiesByForm(ctx context.Context, arg CountCopiesByFormPa
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
 SELECT count(DISTINCT object_key)
 FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+WHERE object_key COLLATE "C" >= $1::text
+  AND object_key COLLATE "C" < $2::text
 `
 
+type CountObjectsByPrefixParams struct {
+	FromKey string
+	EndKey  string
+}
+
 // Distinct keys, not copies: an object replicated three times is one object to
-// an operator asking whether a bucket is empty. The prefix is escaped the same
-// way ListObjectsByPrefix escapes it, so a bucket whose name contains a LIKE
-// metacharacter counts its own keys rather than a wider set.
-func (q *Queries) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
-	row := q.db.QueryRow(ctx, countObjectsByPrefix, prefix)
+// an operator asking whether a bucket is empty.
+func (q *Queries) CountObjectsByPrefix(ctx context.Context, arg CountObjectsByPrefixParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countObjectsByPrefix, arg.FromKey, arg.EndKey)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -189,18 +193,19 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 
 const getDirectoryStats = `-- name: GetDirectoryStats :many
 SELECT
-    (CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
+    ((CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
          THEN substr(object_key, $1::int,
               position('/' IN substr(object_key, $1::int)))
          ELSE substr(object_key, $1::int)
-    END)::text AS name,
+    END) COLLATE "C")::text AS name,
     (CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
-WHERE object_key LIKE $2::text || '%' ESCAPE '\'
+WHERE object_key COLLATE "C" >= $2::text
+  AND object_key COLLATE "C" < $3::text
   AND length(object_key) >= $1::int
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC
@@ -208,7 +213,8 @@ ORDER BY is_dir DESC, name ASC
 
 type GetDirectoryStatsParams struct {
 	NameStart int32
-	Prefix    string
+	FromKey   string
+	EndKey    string
 }
 
 type GetDirectoryStatsRow struct {
@@ -223,11 +229,10 @@ type GetDirectoryStatsRow struct {
 // file_count counts distinct object_keys (logical files); total_size sums
 // every replica row in object_locations so directory totals reflect real
 // physical storage consumption, matching the Storage Summary semantics.
-// @prefix is LIKE-escaped for the WHERE match; @name_start is the 1-based
-// character position where the child name begins (len(unescaped prefix) + 1),
-// so escaped wildcards (e.g. '\_') don't shift the substring cut point.
+// @name_start is the 1-based character position where the child name begins.
+// Names sort in byte order, the order ListDirectChildren pages the files in.
 func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsParams) ([]GetDirectoryStatsRow, error) {
-	rows, err := q.db.Query(ctx, getDirectoryStats, arg.NameStart, arg.Prefix)
+	rows, err := q.db.Query(ctx, getDirectoryStats, arg.NameStart, arg.FromKey, arg.EndKey)
 	if err != nil {
 		return nil, err
 	}
@@ -641,24 +646,25 @@ func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormPara
 
 const listDirectChildren = `-- name: ListDirectChildren :many
 SELECT
-    object_key,
+    (object_key COLLATE "C")::text AS object_key,
     ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
     MAX(size_bytes)::bigint AS size_bytes,
     MIN(created_at)::timestamptz AS created_at
 FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND position('/' IN substring(object_key FROM length($1::text) + 1)) = 0
-  AND length(object_key) > length($1::text)
-  AND object_key > $2
-GROUP BY object_key
-ORDER BY object_key
-LIMIT $3
+WHERE object_key COLLATE "C" >= $1::text
+  AND object_key COLLATE "C" < $2::text
+  AND position('/' IN substring(object_key FROM length($3::text) + 1)) = 0
+  AND length(object_key) > length($3::text)
+GROUP BY object_key COLLATE "C"
+ORDER BY object_key COLLATE "C"
+LIMIT $4
 `
 
 type ListDirectChildrenParams struct {
-	Prefix     string
-	StartAfter string
-	MaxKeys    int32
+	FromKey string
+	EndKey  string
+	Prefix  string
+	MaxKeys int32
 }
 
 type ListDirectChildrenRow struct {
@@ -670,9 +676,16 @@ type ListDirectChildrenRow struct {
 
 // Return per-file detail for non-directory children under a prefix, with pagination.
 // Aggregates every replica into a sorted backend_names array per object_key so
-// the file row reflects all backends a file lives on, not just one.
+// the file row reflects all backends a file lives on, not just one. Grouped in
+// byte order so the groups stream from the listing index and the page stops at
+// its limit.
 func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ListDirectChildrenRow, error) {
-	rows, err := q.db.Query(ctx, listDirectChildren, arg.Prefix, arg.StartAfter, arg.MaxKeys)
+	rows, err := q.db.Query(ctx, listDirectChildren,
+		arg.FromKey,
+		arg.EndKey,
+		arg.Prefix,
+		arg.MaxKeys,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -699,8 +712,8 @@ func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildren
 const listExpiredObjects = `-- name: ListExpiredObjects :many
 SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
-WHERE ol.object_key LIKE $1::text || '%' ESCAPE '\'
-  AND ol.object_key COLLATE "C" > $2::text
+WHERE ol.object_key COLLATE "C" >= $1::text
+  AND ol.object_key COLLATE "C" < $2::text
   AND ol.created_at < $3
   AND (
     $4::int = 0
@@ -717,8 +730,8 @@ LIMIT $6
 `
 
 type ListExpiredObjectsParams struct {
-	Prefix   string
-	AfterKey string
+	FromKey  string
+	EndKey   string
 	Cutoff   pgtype.Timestamptz
 	TagCount int32
 	Tags     []byte
@@ -750,8 +763,8 @@ type ListExpiredObjectsRow struct {
 // the next sweep rather than on every page of this one.
 func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ListExpiredObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredObjects,
-		arg.Prefix,
-		arg.AfterKey,
+		arg.FromKey,
+		arg.EndKey,
 		arg.Cutoff,
 		arg.TagCount,
 		arg.Tags,
@@ -907,20 +920,20 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 }
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, ''::text AS storage_key,
        object_size AS size_bytes, etag, created_at
 FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND object_key COLLATE "C" > $2
+WHERE object_key COLLATE "C" >= $1::text
+  AND object_key COLLATE "C" < $2::text
   AND managed
 ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT $3
 `
 
 type ListObjectsByPrefixParams struct {
-	Prefix     string
-	StartAfter string
-	MaxKeys    int32
+	FromKey string
+	EndKey  string
+	MaxKeys int32
 }
 
 type ListObjectsByPrefixRow struct {
@@ -934,13 +947,18 @@ type ListObjectsByPrefixRow struct {
 
 // COLLATE "C" is required: S3 ListObjectsV2 returns keys in UTF-8 byte order,
 // and object_key is plain TEXT so it would otherwise sort under the database's
-// LC_COLLATE. The cursor predicate carries the same collation as the ORDER BY -
-// splitting them would page a byte-ordered scan with a locale-ordered cursor and
-// skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
-// query for not matching the leading ORDER BY expression. Unmanaged rows are
-// left out because clients cannot read them.
+// LC_COLLATE. The range carries the same collation as the ORDER BY - splitting
+// them would page a byte-ordered scan with a locale-ordered cursor and skip or
+// repeat keys. DISTINCT ON must carry it too, or Postgres rejects the query for
+// not matching the leading ORDER BY expression. Unmanaged rows are left out
+// because clients cannot read them.
+//
+// The range is two plain bounds rather than a LIKE, because a LIKE only becomes
+// index bounds when the plan sees its value, and a prepared statement moves to a
+// generic plan that does not. storage_key is blank because no listing reads it
+// and selecting it would leave the index.
 func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPrefixParams) ([]ListObjectsByPrefixRow, error) {
-	rows, err := q.db.Query(ctx, listObjectsByPrefix, arg.Prefix, arg.StartAfter, arg.MaxKeys)
+	rows, err := q.db.Query(ctx, listObjectsByPrefix, arg.FromKey, arg.EndKey, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -967,11 +985,11 @@ func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPref
 }
 
 const listObjectsDelimited = `-- name: ListObjectsDelimited :many
-WITH RECURSIVE walk(k) AS (
-    (SELECT object_key
+WITH RECURSIVE walk(k, n) AS (
+    (SELECT object_key, 1
        FROM object_locations
-      WHERE object_key LIKE $4::text || '%' ESCAPE '\'
-        AND object_key COLLATE "C" > $5::text
+      WHERE object_key COLLATE "C" >= $3::text
+        AND object_key COLLATE "C" < $4::text
         AND managed
       ORDER BY object_key COLLATE "C"
       LIMIT 1)
@@ -979,29 +997,21 @@ WITH RECURSIVE walk(k) AS (
     SELECT (
         SELECT object_key
           FROM object_locations
-         WHERE object_key LIKE $4::text || '%' ESCAPE '\'
+         WHERE object_key COLLATE "C" < $4::text
            AND managed
-           AND object_key COLLATE "C" > CASE
+           AND object_key COLLATE "C" >= CASE
             WHEN position($2::text IN substr(walk.k, length($1::text) + 1)) > 0 THEN
                 substr(walk.k, 1, length($1::text) + position($2::text IN substr(walk.k, length($1::text) + 1)) + length($2::text) - 2)
                 || chr(ascii(substr(walk.k, length($1::text) + position($2::text IN substr(walk.k, length($1::text) + 1)) + length($2::text) - 1, 1)) + 1)
-            ELSE walk.k
+            ELSE walk.k || chr(1)
            END
          ORDER BY object_key COLLATE "C"
          LIMIT 1
-    )
-    FROM walk WHERE walk.k IS NOT NULL
+    ), walk.n + 1
+    FROM walk WHERE walk.k IS NOT NULL AND walk.n < $5::int
 )
 SELECT
     w.k::text AS object_key,
-    (position($2::text IN substr(w.k, length($1::text) + 1)) > 0)::boolean AS is_prefix,
-    (CASE WHEN position($2::text IN substr(w.k, length($1::text) + 1)) > 0
-        THEN substr(w.k, 1, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 1)
-        ELSE '' END)::text AS common_prefix,
-    (CASE WHEN position($2::text IN substr(w.k, length($1::text) + 1)) > 0 THEN
-            substr(w.k, 1, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 2)
-            || chr(ascii(substr(w.k, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 1, 1)) + 1)
-        ELSE w.k END)::text AS skip_bound,
     COALESCE(leaf.backend_name, '')::text AS backend_name,
     COALESCE(leaf.client_size, 0)::bigint AS size_bytes,
     COALESCE(leaf.etag, '')::text AS etag,
@@ -1018,41 +1028,42 @@ LEFT JOIN LATERAL (
 ) leaf ON true
 WHERE w.k IS NOT NULL
 ORDER BY w.k COLLATE "C"
-LIMIT $3::int
 `
 
 type ListObjectsDelimitedParams struct {
-	Prefix     string
-	Delim      string
-	Lim        int32
-	Escprefix  string
-	StartAfter string
+	Prefix  string
+	Delim   string
+	FromKey string
+	EndKey  string
+	Lim     int32
 }
 
 type ListObjectsDelimitedRow struct {
-	ObjectKey    string
-	IsPrefix     bool
-	CommonPrefix string
-	SkipBound    string
-	BackendName  string
-	SizeBytes    int64
-	Etag         string
-	CreatedAt    pgtype.Timestamptz
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	Etag        string
+	CreatedAt   pgtype.Timestamptz
 }
 
-// Unmanaged rows are left out of the walk and the leaf lookup, as in
-// ListObjectsByPrefix.
+// A loose index scan: each step seeks past the group it landed in, so a page
+// costs one seek per entry however many keys sit under it, and @lim stops the
+// walk at the page. From a leaf the next seek starts just past the key; from a
+// group it starts at the common prefix with its last character raised, which a
+// key may equal, so the bound is inclusive. A group's row carries only a key
+// from the group, and the caller folds it. Unmanaged rows are left out of the
+// walk and the leaf lookup, as in ListObjectsByPrefix.
 // Every projected column is forced non-null (empty string / 0 / epoch) because
 // the built-in sqlc analyzer cannot infer nullability for computed and
-// LATERAL-joined columns; the Go side uses is_prefix to pick the meaningful
-// fields per row, so the placeholder values for the other branch are ignored.
+// LATERAL-joined columns. A group's row takes those placeholders, which the
+// fold discards.
 func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelimitedParams) ([]ListObjectsDelimitedRow, error) {
 	rows, err := q.db.Query(ctx, listObjectsDelimited,
 		arg.Prefix,
 		arg.Delim,
+		arg.FromKey,
+		arg.EndKey,
 		arg.Lim,
-		arg.Escprefix,
-		arg.StartAfter,
 	)
 	if err != nil {
 		return nil, err
@@ -1063,9 +1074,6 @@ func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelim
 		var i ListObjectsDelimitedRow
 		if err := rows.Scan(
 			&i.ObjectKey,
-			&i.IsPrefix,
-			&i.CommonPrefix,
-			&i.SkipBound,
 			&i.BackendName,
 			&i.SizeBytes,
 			&i.Etag,

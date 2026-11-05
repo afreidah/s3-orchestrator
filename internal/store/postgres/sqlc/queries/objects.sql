@@ -109,28 +109,32 @@ WHERE object_key = $1 AND backend_name = $2;
 -- name: ListObjectsByPrefix :many
 -- COLLATE "C" is required: S3 ListObjectsV2 returns keys in UTF-8 byte order,
 -- and object_key is plain TEXT so it would otherwise sort under the database's
--- LC_COLLATE. The cursor predicate carries the same collation as the ORDER BY -
--- splitting them would page a byte-ordered scan with a locale-ordered cursor and
--- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
--- query for not matching the leading ORDER BY expression. Unmanaged rows are
--- left out because clients cannot read them.
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
+-- LC_COLLATE. The range carries the same collation as the ORDER BY - splitting
+-- them would page a byte-ordered scan with a locale-ordered cursor and skip or
+-- repeat keys. DISTINCT ON must carry it too, or Postgres rejects the query for
+-- not matching the leading ORDER BY expression. Unmanaged rows are left out
+-- because clients cannot read them.
+--
+-- The range is two plain bounds rather than a LIKE, because a LIKE only becomes
+-- index bounds when the plan sees its value, and a prepared statement moves to a
+-- generic plan that does not. storage_key is blank because no listing reads it
+-- and selecting it would leave the index.
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, ''::text AS storage_key,
        object_size AS size_bytes, etag, created_at
 FROM object_locations
-WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
-  AND object_key COLLATE "C" > @start_after
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text
   AND managed
 ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
 -- name: CountObjectsByPrefix :one
 -- Distinct keys, not copies: an object replicated three times is one object to
--- an operator asking whether a bucket is empty. The prefix is escaped the same
--- way ListObjectsByPrefix escapes it, so a bucket whose name contains a LIKE
--- metacharacter counts its own keys rather than a wider set.
+-- an operator asking whether a bucket is empty.
 SELECT count(DISTINCT object_key)
 FROM object_locations
-WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text;
 
 -- name: GetAllObjectLocations :many
 -- tag_count serves the read path's tagging-count header without a second
@@ -155,22 +159,22 @@ RETURNING true AS inserted;
 -- file_count counts distinct object_keys (logical files); total_size sums
 -- every replica row in object_locations so directory totals reflect real
 -- physical storage consumption, matching the Storage Summary semantics.
--- @prefix is LIKE-escaped for the WHERE match; @name_start is the 1-based
--- character position where the child name begins (len(unescaped prefix) + 1),
--- so escaped wildcards (e.g. '\_') don't shift the substring cut point.
+-- @name_start is the 1-based character position where the child name begins.
+-- Names sort in byte order, the order ListDirectChildren pages the files in.
 SELECT
-    (CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
+    ((CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
          THEN substr(object_key, @name_start::int,
               position('/' IN substr(object_key, @name_start::int)))
          ELSE substr(object_key, @name_start::int)
-    END)::text AS name,
+    END) COLLATE "C")::text AS name,
     (CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
-WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text
   AND length(object_key) >= @name_start::int
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC;
@@ -193,8 +197,8 @@ ORDER BY is_dir DESC, name ASC;
 -- the next sweep rather than on every page of this one.
 SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
-WHERE ol.object_key LIKE @prefix::text || '%' ESCAPE '\'
-  AND ol.object_key COLLATE "C" > @after_key::text
+WHERE ol.object_key COLLATE "C" >= @from_key::text
+  AND ol.object_key COLLATE "C" < @end_key::text
   AND ol.created_at < @cutoff
   AND (
     @tag_count::int = 0
@@ -349,29 +353,36 @@ WHERE object_key = ANY(@object_keys::text[]);
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.
 -- Aggregates every replica into a sorted backend_names array per object_key so
--- the file row reflects all backends a file lives on, not just one.
+-- the file row reflects all backends a file lives on, not just one. Grouped in
+-- byte order so the groups stream from the listing index and the page stops at
+-- its limit.
 SELECT
-    object_key,
+    (object_key COLLATE "C")::text AS object_key,
     ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
     MAX(size_bytes)::bigint AS size_bytes,
     MIN(created_at)::timestamptz AS created_at
 FROM object_locations
-WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
+WHERE object_key COLLATE "C" >= @from_key::text
+  AND object_key COLLATE "C" < @end_key::text
   AND position('/' IN substring(object_key FROM length(@prefix::text) + 1)) = 0
   AND length(object_key) > length(@prefix::text)
-  AND object_key > @start_after
-GROUP BY object_key
-ORDER BY object_key
+GROUP BY object_key COLLATE "C"
+ORDER BY object_key COLLATE "C"
 LIMIT @max_keys;
 
 -- name: ListObjectsDelimited :many
--- Unmanaged rows are left out of the walk and the leaf lookup, as in
--- ListObjectsByPrefix.
-WITH RECURSIVE walk(k) AS (
-    (SELECT object_key
+-- A loose index scan: each step seeks past the group it landed in, so a page
+-- costs one seek per entry however many keys sit under it, and @lim stops the
+-- walk at the page. From a leaf the next seek starts just past the key; from a
+-- group it starts at the common prefix with its last character raised, which a
+-- key may equal, so the bound is inclusive. A group's row carries only a key
+-- from the group, and the caller folds it. Unmanaged rows are left out of the
+-- walk and the leaf lookup, as in ListObjectsByPrefix.
+WITH RECURSIVE walk(k, n) AS (
+    (SELECT object_key, 1
        FROM object_locations
-      WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
-        AND object_key COLLATE "C" > @start_after::text
+      WHERE object_key COLLATE "C" >= @from_key::text
+        AND object_key COLLATE "C" < @end_key::text
         AND managed
       ORDER BY object_key COLLATE "C"
       LIMIT 1)
@@ -379,33 +390,25 @@ WITH RECURSIVE walk(k) AS (
     SELECT (
         SELECT object_key
           FROM object_locations
-         WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
+         WHERE object_key COLLATE "C" < @end_key::text
            AND managed
-           AND object_key COLLATE "C" > CASE
+           AND object_key COLLATE "C" >= CASE
             WHEN position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) > 0 THEN
                 substr(walk.k, 1, length(@prefix::text) + position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) + length(@delim::text) - 2)
                 || chr(ascii(substr(walk.k, length(@prefix::text) + position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) + length(@delim::text) - 1, 1)) + 1)
-            ELSE walk.k
+            ELSE walk.k || chr(1)
            END
          ORDER BY object_key COLLATE "C"
          LIMIT 1
-    )
-    FROM walk WHERE walk.k IS NOT NULL
+    ), walk.n + 1
+    FROM walk WHERE walk.k IS NOT NULL AND walk.n < @lim::int
 )
 -- Every projected column is forced non-null (empty string / 0 / epoch) because
 -- the built-in sqlc analyzer cannot infer nullability for computed and
--- LATERAL-joined columns; the Go side uses is_prefix to pick the meaningful
--- fields per row, so the placeholder values for the other branch are ignored.
+-- LATERAL-joined columns. A group's row takes those placeholders, which the
+-- fold discards.
 SELECT
     w.k::text AS object_key,
-    (position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0)::boolean AS is_prefix,
-    (CASE WHEN position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0
-        THEN substr(w.k, 1, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 1)
-        ELSE '' END)::text AS common_prefix,
-    (CASE WHEN position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0 THEN
-            substr(w.k, 1, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 2)
-            || chr(ascii(substr(w.k, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 1, 1)) + 1)
-        ELSE w.k END)::text AS skip_bound,
     COALESCE(leaf.backend_name, '')::text AS backend_name,
     COALESCE(leaf.client_size, 0)::bigint AS size_bytes,
     COALESCE(leaf.etag, '')::text AS etag,
@@ -421,5 +424,4 @@ LEFT JOIN LATERAL (
      LIMIT 1
 ) leaf ON true
 WHERE w.k IS NOT NULL
-ORDER BY w.k COLLATE "C"
-LIMIT @lim::int;
+ORDER BY w.k COLLATE "C";

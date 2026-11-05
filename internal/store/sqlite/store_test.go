@@ -1598,44 +1598,6 @@ func TestMultipartCompletionMark_ClosedStoreErrors(t *testing.T) {
 	}
 }
 
-// TestListMultipartUploads verifies prefix-scoped listing of active multipart uploads.
-func TestListMultipartUploads(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustCreateUpload(t, s, "u1", "bucket/a", "backend-a")
-	mustCreateUpload(t, s, "u2", "bucket/b", "backend-a")
-	mustCreateUpload(t, s, "u3", "other/c", "backend-a")
-
-	uploads, err := s.ListMultipartUploads(ctx, "bucket/", 10)
-	if err != nil {
-		t.Fatalf("ListMultipartUploads: %v", err)
-	}
-	if len(uploads) != 2 {
-		t.Errorf("expected 2 uploads with prefix bucket/, got %d", len(uploads))
-	}
-}
-
-// TestCountActiveMultipartUploads verifies the count active multipart uploads contract.
-// Asserts that CountActiveMultipartUploads:.
-func TestCountActiveMultipartUploads(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustCreateUpload(t, s, "u1", "bucket/a", "backend-a")
-	mustCreateUpload(t, s, "u2", "bucket/b", "backend-a")
-
-	count, err := s.CountActiveMultipartUploads(ctx, "bucket/")
-	if err != nil {
-		t.Fatalf("CountActiveMultipartUploads: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("count = %d, want 2", count)
-	}
-}
-
 // TestGetActiveMultipartCounts verifies per-backend active multipart upload counts.
 func TestGetActiveMultipartCounts(t *testing.T) {
 	t.Parallel()
@@ -2332,31 +2294,6 @@ func TestListDirectoryChildren(t *testing.T) {
 	}
 	if !foundFile {
 		t.Error("missing file entry for file.txt")
-	}
-}
-
-// TestListDirectoryChildren_UnderscorePrefix verifies a prefix containing an
-// underscore still lists its children. The LIKE pattern escapes '_' to '\_',
-// and using that escaped length as the child-name substring offset would
-// mangle every child.
-func TestListDirectoryChildren_UnderscorePrefix(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "dir_test/file.txt", "backend-a", 100)
-	mustRecordObject(t, s, "dir_test/sub/inner.txt", "backend-a", 50)
-
-	result, err := s.ListDirectoryChildren(ctx, "dir_test/", "", 100)
-	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
-	}
-
-	if file := findEntry(result.Entries, "dir_test/file.txt"); file == nil || file.IsDir {
-		t.Errorf("missing file child under underscore prefix; got %+v", result.Entries)
-	}
-	if dir := findEntry(result.Entries, "dir_test/sub/"); dir == nil || !dir.IsDir {
-		t.Errorf("missing subdirectory child under underscore prefix; got %+v", result.Entries)
 	}
 }
 
