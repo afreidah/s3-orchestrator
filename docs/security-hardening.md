@@ -406,6 +406,16 @@ Watch `s3o_cors_preflight_total{result="rejected"}`: a sustained climb from an o
 
 All admin and UI JSON endpoints enforce a request body limit via `http.MaxBytesReader`: 1 MB, and 64 KiB for the provisioning and object-tag endpoints. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.
 
+## Declared Body Digests
+
+A request can state what its body hashes to, and the orchestrator holds the body to it as AWS does:
+
+- **`Content-MD5`** -- a mismatch answers `400 BadDigest`, and a value that is not a base64 MD5 answers `400 InvalidDigest`.
+- **`x-amz-checksum-*`** (CRC32, CRC32C, CRC64NVME, SHA-1, SHA-256) -- a mismatch answers `400 BadDigest`, and a value of the wrong shape answers `400 InvalidRequest`.
+- **Hex `X-Amz-Content-Sha256`** -- a mismatch answers `400 XAmzContentSHA256Mismatch`.
+
+A refused object is not recorded, and any bytes that reached a backend are cleaned up.
+
 ## Streaming SigV4 Payloads
 
 The orchestrator accepts the three AWS streaming-payload modes clients

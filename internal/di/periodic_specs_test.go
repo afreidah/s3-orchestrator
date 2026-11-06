@@ -29,6 +29,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/notify"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -213,6 +215,38 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 			t.Parallel()
 			mgr := lifecycleManagerForMode(t, tc.mode)
 			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, append(tc.mustNotHave, "provisioning_watch"))
+		})
+	}
+}
+
+// TestLifecycleManager_NotifierBuiltInEveryMode verifies every mode builds the
+// notifier, because building it installs the emitter client write events go
+// through, while only a worker registers the service that delivers them.
+func TestLifecycleManager_NotifierBuiltInEveryMode(t *testing.T) {
+	t.Parallel()
+	for mode, delivers := range map[config.Mode]bool{config.ModeAPI: false, config.ModeWorker: true, config.ModeAll: true} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			cfg := happyPathConfig(t.TempDir())
+			cfg.Notifications.Endpoints = []config.NotificationEndpoint{{URL: "http://example.invalid/webhook", Events: []string{"*"}}}
+			if err := cfg.SetDefaultsAndValidate(); err != nil {
+				t.Fatalf("config validation: %v", err)
+			}
+			inj := NewInjector(InjectorDeps{Config: cfg, Mode: mode, LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
+			t.Cleanup(func() { _ = inj.Shutdown() })
+			mgr, err := do.Invoke[*lifecycle.Manager](inj)
+			if err != nil {
+				t.Fatalf("resolve LifecycleManager: %v", err)
+			}
+
+			name := do.NameOf[*notify.Notifier]()
+			built := slices.ContainsFunc(inj.ListInvokedServices(), func(s do.ServiceDescription) bool { return s.Service == name })
+			if !built {
+				t.Error("notifier was not built, so events have no emitter")
+			}
+			if got := slices.Contains(mgr.Names(), string(audit.WorkloadNotifier)); got != delivers {
+				t.Errorf("delivery registered = %v, want %v", got, delivers)
+			}
 		})
 	}
 }

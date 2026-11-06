@@ -155,6 +155,9 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		}
 	}
 
+	// Built in every mode, because building it installs the emitter client
+	// writes publish through. Delivering the outbox is a worker's job.
+	notifier := Optional[*notify.Notifier](i).Get(ctx)
 	if !mode.IsWorker() {
 		return sm, nil
 	}
@@ -176,7 +179,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		}
 		sm.Register(worker.NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
 	}
-	if notifier := Optional[*notify.Notifier](i).Get(ctx); notifier != nil {
+	if notifier != nil {
 		sm.Register(notifier)
 	}
 

@@ -324,8 +324,8 @@ func TestChunkReader_UnsignedTrailer_TamperedChecksum(t *testing.T) {
 	})
 	body := f.buildBody(payload, 64)
 	_, err := readAllFromBytes(t, body, f.material(int64(len(payload))))
-	if !errors.Is(err, ErrTrailerChecksumMismatch) {
-		t.Errorf("err = %v, want ErrTrailerChecksumMismatch", err)
+	if !errors.Is(err, ErrChecksumMismatch) {
+		t.Errorf("err = %v, want ErrChecksumMismatch", err)
 	}
 }
 

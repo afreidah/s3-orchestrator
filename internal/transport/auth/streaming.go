@@ -160,9 +160,9 @@ var ErrDecodedLengthMismatch = errors.New("decoded length does not match declare
 // Maps to S3 InvalidRequest.
 var ErrTrailerMalformed = errors.New("malformed trailer block")
 
-// ErrTrailerChecksumMismatch indicates a checksum trailer did not match the
-// decoded payload. Amazon S3 reports checksum mismatches as BadDigest.
-var ErrTrailerChecksumMismatch = errors.New("trailer checksum mismatch")
+// ErrChecksumMismatch indicates a body did not match a checksum its request
+// declared. Amazon S3 reports checksum mismatches as BadDigest.
+var ErrChecksumMismatch = errors.New("checksum mismatch")
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -643,26 +643,27 @@ func missingDeclaredTrailers(declared []string, headers []trailerKV) []string {
 	return missing
 }
 
+// checksumHashes starts a hash for each S3 checksum by the header or trailer name
+// that declares it. Every hash's Sum is big-endian, which is the byte order S3
+// base64-encodes on the wire.
+var checksumHashes = map[string]func() hash.Hash{
+	"x-amz-checksum-crc32":     func() hash.Hash { return crc32.NewIEEE() },
+	"x-amz-checksum-crc32c":    func() hash.Hash { return crc32.New(crc32.MakeTable(crc32.Castagnoli)) },
+	"x-amz-checksum-crc64nvme": func() hash.Hash { return crc64.New(crc64.MakeTable(crc64NVMEReversed)) },
+	"x-amz-checksum-sha1":      sha1.New, //nolint:gosec // S3 checksum algorithm, not authentication
+	"x-amz-checksum-sha256":    sha256.New,
+}
+
 // newTrailerChecksums starts a hash for each checksum declared through
-// x-amz-trailer, keyed by its trailer name. Every hash's Sum is big-endian,
-// which is the byte order S3 base64-encodes on the wire.
+// x-amz-trailer, keyed by its trailer name.
 func newTrailerChecksums(names []string) (map[string]hash.Hash, error) {
 	checksums := make(map[string]hash.Hash, len(names))
 	for _, name := range names {
-		switch name {
-		case "x-amz-checksum-crc32":
-			checksums[name] = crc32.NewIEEE()
-		case "x-amz-checksum-crc32c":
-			checksums[name] = crc32.New(crc32.MakeTable(crc32.Castagnoli))
-		case "x-amz-checksum-crc64nvme":
-			checksums[name] = crc64.New(crc64.MakeTable(crc64NVMEReversed))
-		case "x-amz-checksum-sha1":
-			checksums[name] = sha1.New() //nolint:gosec // S3 checksum algorithm, not authentication
-		case "x-amz-checksum-sha256":
-			checksums[name] = sha256.New()
-		default:
+		newHash, ok := checksumHashes[name]
+		if !ok {
 			return nil, trailerMalformed("unsupported unsigned trailer checksum %q", name)
 		}
+		checksums[name] = newHash()
 	}
 	return checksums, nil
 }
@@ -676,7 +677,7 @@ func (r *chunkReader) verifyUnsignedTrailerChecksums(headers []trailerKV) error 
 		provided := values[name]
 		expected := base64.StdEncoding.EncodeToString(checksum.Sum(nil))
 		if !hmac.Equal([]byte(expected), []byte(provided)) {
-			return fmt.Errorf("%w: %s", ErrTrailerChecksumMismatch, name)
+			return fmt.Errorf("%w: %s", ErrChecksumMismatch, name)
 		}
 	}
 	return nil

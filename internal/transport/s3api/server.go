@@ -40,14 +40,19 @@ import (
 // SERVER
 // -------------------------------------------------------------------------
 
+// methodOther stands for any method outside httpSpanName.
+const methodOther = "OTHER"
+
 // httpSpanName maps HTTP methods to pre-computed span names, avoiding
-// fmt.Sprintf allocation on every request.
+// fmt.Sprintf allocation on every request. Its keys are the methods a metric
+// label may carry.
 var httpSpanName = map[string]string{
 	http.MethodGet:    "HTTP GET",
 	http.MethodPut:    "HTTP PUT",
 	http.MethodHead:   "HTTP HEAD",
 	http.MethodDelete: "HTTP DELETE",
 	http.MethodPost:   "HTTP POST",
+	methodOther:       "HTTP OTHER",
 }
 
 //go:generate mockgen -destination=mock_ops_test.go -package=s3api github.com/afreidah/s3-orchestrator/internal/transport/s3api ObjectOps,MultipartOps
@@ -129,8 +134,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := audit.WithWorkload(audit.WithRequestID(r.Context(), requestID), audit.WorkloadClient)
 	w.Header().Set("X-Amz-Request-Id", requestID)
 
-	telemetry.InflightRequests.WithLabelValues(r.Method).Inc()
-	defer telemetry.InflightRequests.WithLabelValues(r.Method).Dec()
+	inflight := telemetry.InflightRequests.WithLabelValues(methodLabel(r.Method))
+	inflight.Inc()
+	defer inflight.Dec()
 
 	user, streamMat, err := s.registry.Load().Authenticate(r)
 	if err != nil {
@@ -145,6 +151,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if streamMat != nil {
 		applyStreamingBody(r, streamMat)
 	}
+	auth.VerifyDigests(r)
 
 	// Named before dispatch rather than reported after it. An authorization
 	// check has nowhere to sit if the operation is only known once the handler
@@ -289,10 +296,16 @@ func unsupportedSubresource(t *target) error {
 
 // spanName names the server span for an HTTP method.
 func spanName(method string) string {
-	if name, ok := httpSpanName[method]; ok {
-		return name
+	return httpSpanName[methodLabel(method)]
+}
+
+// methodLabel returns the label a method is counted under. A client chooses the
+// method before it authenticates, so an unknown one must not become a new series.
+func methodLabel(method string) string {
+	if _, ok := httpSpanName[method]; ok {
+		return method
 	}
-	return "HTTP " + method
+	return methodOther
 }
 
 // -------------------------------------------------------------------------
@@ -414,6 +427,7 @@ func (s *Server) recordRequest(method string, status int, start time.Time, reqSi
 	if !ok {
 		statusStr = strconv.Itoa(status)
 	}
+	method = methodLabel(method)
 	telemetry.RequestsTotal.WithLabelValues(method, statusStr).Inc()
 	telemetry.RequestDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 

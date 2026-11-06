@@ -41,7 +41,7 @@ func TestClassifyError(t *testing.T) {
 	}{
 		{"chunk_sig_mismatch", auth.ErrChunkSignatureMismatch, http.StatusForbidden, "SignatureDoesNotMatch", "chunk_signature_mismatch"},
 		{"trailer_sig_mismatch", auth.ErrTrailerSignatureMismatch, http.StatusForbidden, "SignatureDoesNotMatch", "trailer_signature_mismatch"},
-		{"trailer_checksum_mismatch", auth.ErrTrailerChecksumMismatch, http.StatusBadRequest, "BadDigest", "trailer_checksum_mismatch"},
+		{"checksum_mismatch", auth.ErrChecksumMismatch, http.StatusBadRequest, "BadDigest", "checksum_mismatch"},
 		{"decoded_length_mismatch", auth.ErrDecodedLengthMismatch, http.StatusBadRequest, "IncompleteBody", "decoded_length_mismatch"},
 		{"chunk_too_large", auth.ErrChunkTooLarge, http.StatusBadRequest, "InvalidRequest", "chunk_too_large"},
 		{"chunk_malformed", auth.ErrChunkMalformed, http.StatusBadRequest, "InvalidRequest", "chunk_malformed"},

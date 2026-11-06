@@ -235,7 +235,7 @@ Key metrics to alert on:
 | `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 - the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
 | `rate(s3o_worker_ticks_total{result="error"}[15m])` | Persistent error rate; alongside `consecutive_failures` distinguishes flapping from sustained failure |
 | `s3o_auth_streaming_requests_total{variant}` | Rate of streaming-payload SigV4 PUTs by variant - track which client SDKs are sending streaming uploads |
-| `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate - every increment is a chunk-validation failure (tampered body, malformed framing, length mismatch, or signature mismatch) |
+| `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate - every increment is a body-validation failure (tampered body, malformed framing, length mismatch, signature mismatch, or a body that disagrees with a digest its request declared) |
 | `s3o_encryption_errors_total{op,error_type}` | Any non-zero rate indicates encryption/decryption failures. `error_type="stream_failed"` specifically flags transport errors that surfaced mid-stream (after the encryptor/decryptor was constructed). |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
 | `s3o_decrypt_existing_objects_total{status="error"}` | Failures during bulk decryption of existing data |
@@ -375,7 +375,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_integrity_deferred_copies` | Gauge | - | Copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve |
 | `s3o_integrity_usage_declined_total` | Counter | - | Copies the scrubber skipped because the backend holding them was at its usage limit. A sustained rate means coverage is bounded by egress budget, not by scrubber throughput |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
-| `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |
+| `s3o_auth_streaming_rejections_total` | Counter | reason | Body-validation failures (tampered body, signature mismatch, digest mismatch, etc.) |
 | `s3o_notification_queue_depth` | Gauge | - | Webhook events still to be delivered, including those waiting out a retry backoff |
 | `s3o_notification_sent_total` | Counter | endpoint, event_type | Successfully POSTed webhook events |
 | `s3o_notification_failed_total` | Counter | endpoint, event_type | Webhook POST failures (before retry) |

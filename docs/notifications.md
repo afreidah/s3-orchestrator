@@ -43,8 +43,8 @@ notifications:
 
 ## Delivery semantics
 
-- An event is appended to `notification_outbox` once the change that raised it has happened, not inside that change's transaction.
-- The notification drainer ticks every 2 seconds under advisory lock 1014, so one instance drains the outbox at a time, up to 50 rows per tick.
+- An event is appended to `notification_outbox` once the change that raised it has happened, not inside that change's transaction. Every instance appends, in any mode.
+- The notification drainer runs on `worker` and `all` instances, so a fleet of `api` instances alone queues events without delivering them. It ticks every 2 seconds under advisory lock 1014, so one instance drains the outbox at a time, up to 50 rows per tick.
 - Failed deliveries retry with exponential backoff. After `max_retries`, the row is dropped, an error is logged, and the drop is counted in `s3o_notification_dropped_total`.
 - A row is deleted after a successful POST. If that delete fails, the row is delivered again on a later tick, so receivers should treat the event `id` as the deduplication key.
 
