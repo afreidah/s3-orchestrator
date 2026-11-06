@@ -37,7 +37,7 @@ func applyStreamingBody(r *http.Request, mat *auth.StreamingMaterial) {
 	telemetry.AuthStreamingRequestsTotal.WithLabelValues(mat.Variant.Label()).Inc()
 }
 
-// streamingFault is one chunk-validation failure: the auth error that names
+// streamingFault is one body-validation failure: the auth error that names
 // it, the S3 error it answers with, and the reason the rejection metric counts
 // it under.
 type streamingFault struct {
@@ -46,15 +46,21 @@ type streamingFault struct {
 	reason string
 }
 
-// streamingFaults maps every chunk-validation failure onto its S3 error. A
+// streamingFaults maps every body-validation failure onto its S3 error. A
 // tampered chunk answers 403 SignatureDoesNotMatch rather than InternalError.
 var streamingFaults = []streamingFault{
 	{auth.ErrChunkSignatureMismatch, s3Err(http.StatusForbidden, "SignatureDoesNotMatch",
 		"The chunk signature does not match the signature derived from the request."), "chunk_signature_mismatch"},
 	{auth.ErrTrailerSignatureMismatch, s3Err(http.StatusForbidden, "SignatureDoesNotMatch",
 		"The trailer signature does not match the signature derived from the request."), "trailer_signature_mismatch"},
-	{auth.ErrTrailerChecksumMismatch, s3Err(http.StatusBadRequest, "BadDigest",
-		"The checksum you specified did not match what was received."), "trailer_checksum_mismatch"},
+	{auth.ErrChecksumMismatch, s3Err(http.StatusBadRequest, "BadDigest",
+		"The checksum you specified did not match what was received."), "checksum_mismatch"},
+	{auth.ErrPayloadHashMismatch, s3Err(http.StatusBadRequest, "XAmzContentSHA256Mismatch",
+		"The provided x-amz-content-sha256 header does not match what was computed."), "payload_hash_mismatch"},
+	{auth.ErrDigestMalformed, s3Err(http.StatusBadRequest, "InvalidDigest",
+		"The Content-MD5 you specified is not valid."), "digest_malformed"},
+	{auth.ErrChecksumMalformed, s3Err(http.StatusBadRequest, "InvalidRequest",
+		"A checksum header value is invalid."), "checksum_malformed"},
 	{auth.ErrDecodedLengthMismatch, s3Err(http.StatusBadRequest, "IncompleteBody",
 		"The decoded body length does not match x-amz-decoded-content-length."), "decoded_length_mismatch"},
 	{auth.ErrChunkTooLarge, s3Err(http.StatusBadRequest, "InvalidRequest",
@@ -65,7 +71,7 @@ var streamingFaults = []streamingFault{
 		"Streaming trailer block is malformed."), "trailer_malformed"},
 }
 
-// asStreamingFault reports the chunk-validation failure err is, if it is one.
+// asStreamingFault reports the body-validation failure err is, if it is one.
 func asStreamingFault(err error) (streamingFault, bool) {
 	for _, f := range streamingFaults {
 		if errors.Is(err, f.err) {

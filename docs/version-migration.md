@@ -64,6 +64,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Webhooks from api instances, bounded method labels, digests enforced ([#1884](https://github.com/afreidah/s3-orchestrator/issues/1884), v0.179.17)**
+
+Instances in `api` mode never installed the event emitter, so client write events raised there were dropped. They now reach the outbox from every mode, and delivery stays on workers. An unknown HTTP method is counted under `OTHER`, because an unauthenticated client could otherwise create metric series without limit.
+
+Declared body digests are now enforced, as AWS does: `Content-MD5`, `x-amz-checksum-*` headers and a hex `X-Amz-Content-Sha256`.
+
+**Operator action items after upgrade:**
+
+- **A client sending a wrong digest now gets a 400.** It used to succeed. Requests that were signing a hash they never computed correctly will start failing.
+- **Webhook volume from `api` instances starts.** Endpoints subscribed to object events will see the events those instances were dropping.
+- **A rejection reason is renamed.** `s3o_auth_streaming_rejections_total{reason="trailer_checksum_mismatch"}` is now `reason="checksum_mismatch"`, and it also counts header digests.
+
 **Compressed reads and writes use every core and stop paying per frame ([#1880](https://github.com/afreidah/s3-orchestrator/issues/1880), v0.179.16)**
 
 The shared codec gave the whole process one encoder and one decoder, so every request compressing or decompressing queued for them. Each now has a slot per core. A whole read of a compressed object over 1 MiB reads its seek table, then streams the stored bytes in one GET instead of one GET per frame. A read of an encrypted compressed object unwraps its key once instead of once per frame, which with Vault was one network call per frame.

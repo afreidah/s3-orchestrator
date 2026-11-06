@@ -75,7 +75,7 @@ func isTypedStreamingError(err error) bool {
 	switch {
 	case errors.Is(err, ErrChunkSignatureMismatch),
 		errors.Is(err, ErrTrailerSignatureMismatch),
-		errors.Is(err, ErrTrailerChecksumMismatch),
+		errors.Is(err, ErrChecksumMismatch),
 		errors.Is(err, ErrChunkMalformed),
 		errors.Is(err, ErrChunkTooLarge),
 		errors.Is(err, ErrDecodedLengthMismatch),

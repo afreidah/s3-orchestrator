@@ -41,12 +41,25 @@ func Sign(tb testing.TB, req *http.Request, accessKey, secret string) {
 // for a real request but an in-process one lacks.
 func SignAt(tb testing.TB, req *http.Request, accessKey, secret string, at time.Time) {
 	tb.Helper()
+	signPayload(tb, req, accessKey, secret, UnsignedPayload, at)
+}
+
+// SignPayload is Sign for a request declaring payloadHash as its body's digest,
+// rather than leaving the body out of the signature.
+func SignPayload(tb testing.TB, req *http.Request, accessKey, secret, payloadHash string) {
+	tb.Helper()
+	signPayload(tb, req, accessKey, secret, payloadHash, time.Now())
+}
+
+// signPayload signs req as of at, declaring payloadHash.
+func signPayload(tb testing.TB, req *http.Request, accessKey, secret, payloadHash string, at time.Time) {
+	tb.Helper()
 	if req.ContentLength > 0 {
 		req.Header.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
 	}
-	req.Header.Set("X-Amz-Content-Sha256", UnsignedPayload)
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	creds := aws.Credentials{AccessKeyID: accessKey, SecretAccessKey: secret}
-	if err := v4.NewSigner().SignHTTP(req.Context(), creds, req, UnsignedPayload, "s3", Region, at.UTC()); err != nil {
+	if err := v4.NewSigner().SignHTTP(req.Context(), creds, req, payloadHash, "s3", Region, at.UTC()); err != nil {
 		tb.Fatalf("sign request: %v", err)
 	}
 }
