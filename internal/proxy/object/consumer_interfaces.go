@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
 
 // Runtime is the subset of *infra.BackendRuntime the Manager and its read
@@ -53,6 +54,7 @@ type RangeFetchRuntime interface {
 // Codec is the compression surface the Manager uses: encode on write,
 // decode on read.
 type Codec interface {
+	storedform.Decompressor
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
 	InspectStored(ctx context.Context, f compression.RangeFetcher, storedSize int64) (int64, bool)

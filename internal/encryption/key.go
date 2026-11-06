@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -41,6 +42,21 @@ type KeyProvider interface {
 	WrapDEK(ctx context.Context, dek []byte) (wrappedDEK []byte, keyID string, err error)
 	UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) (dek []byte, err error)
 	KeyID() string // the current master key
+}
+
+// unwrapOnce answers every unwrap with the result of the first, for a read of
+// one object, whose key never changes between its ranges.
+type unwrapOnce struct {
+	KeyProvider
+	once sync.Once
+	dek  []byte
+	err  error
+}
+
+// UnwrapDEK implements KeyProvider.
+func (u *unwrapOnce) UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) ([]byte, error) {
+	u.once.Do(func() { u.dek, u.err = u.KeyProvider.UnwrapDEK(ctx, wrappedDEK, keyID) })
+	return u.dek, u.err
 }
 
 // -------------------------------------------------------------------------

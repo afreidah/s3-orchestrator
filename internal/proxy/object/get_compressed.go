@@ -4,10 +4,11 @@
 // Author: Alex Freidah
 //
 // A compressed object is served by decoding it, not by handing the stored bytes
-// back. The stored form is chunked zstd, so the read is driven by the codec:
-// there is no whole-object GET, and frames are pulled through a RangeFetcher as
-// the client reads. A range therefore costs the frames it covers rather than
-// the object, which is the whole reason the format is chunked.
+// back. The seek table is read first, so a damaged copy fails over before any
+// header is sent. A range then pulls frames through a RangeFetcher as the client
+// reads, which costs the frames it covers rather than the object, the whole
+// reason the format is chunked. A whole read of a large object streams the stored
+// bytes in one GET instead of paying a backend round trip per frame.
 // -------------------------------------------------------------------------------
 
 package object
@@ -29,6 +30,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
+
+// streamMinSize is the object size above which a whole read streams the stored
+// bytes. A stream allocates a decoder per call, which costs a small object about
+// 40% more than decoding its frames, and the two are level at 1 MiB.
+const streamMinSize = 1 << 20
 
 // -------------------------------------------------------------------------
 // ROW INSPECTION
@@ -105,14 +111,14 @@ func resolveLastModified(backendValue time.Time, loc *core.ObjectLocation) time.
 // COMPRESSED READ
 // -------------------------------------------------------------------------
 
-// compressedGetAttempt is the per-backend GET callback for a compressed copy.
-// It issues no whole-object GET: the codec pulls frames through
-// storedRangeFetcher as the client reads, so a ranged read fetches only the
-// frames covering the range.
+// compressedGetAttempt is the per-backend GET callback for a compressed copy. The
+// codec pulls frames through storedRangeFetcher as the client reads, so a ranged
+// read fetches only the frames covering the range, and a whole read above
+// streamMinSize swaps those frames for one stream.
 //
-// The envelope signature at byte 0 is not checked, because the first bytes
-// fetched are the seek table at the end. A row that disagrees with its bytes
-// still fails: a copy it calls encrypted fails to decrypt, and one it calls
+// A frame read does not check the envelope signature at byte 0, because the first
+// bytes fetched are the seek table at the end. A row that disagrees with its
+// bytes still fails: a copy it calls encrypted fails to decrypt, and one it calls
 // plaintext fails to decode.
 func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
@@ -141,6 +147,14 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()
 		_ = reader.Close()
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
+	}
+	if r.ContentRange == "" && r.Size > streamMinSize {
+		stream, err := fetcher.stream(ctx, o.d.Codec)
+		_ = reader.Close()
+		if err != nil {
+			return fail, err
+		}
+		r.Body = stream
 	}
 	// The response size is what the client was promised, which is the
 	// denominator read amplification is measured against.

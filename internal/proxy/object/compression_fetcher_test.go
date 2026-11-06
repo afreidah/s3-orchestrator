@@ -20,8 +20,11 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
@@ -33,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -248,6 +252,155 @@ func TestStoredRangeFetcher_CompressedEncryptedRange(t *testing.T) {
 		if !bytes.Equal(buf, src[off:off+n]) {
 			t.Fatalf("ReadAt(%d, %d) returned the wrong bytes", n, off)
 		}
+	}
+}
+
+// countingKeys counts the unwraps a read asks the key provider for.
+type countingKeys struct {
+	encryption.KeyProvider
+	unwraps atomic.Int64
+}
+
+// UnwrapDEK counts the call and forwards it.
+func (k *countingKeys) UnwrapDEK(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
+	k.unwraps.Add(1)
+	return k.KeyProvider.UnwrapDEK(ctx, wrapped, keyID)
+}
+
+// countKeys swaps s's encryptor for one over the same key that counts unwraps.
+func countKeys(t *testing.T, s *storedObject) *countingKeys {
+	t.Helper()
+	keys := &countingKeys{KeyProvider: s.enc.Provider()}
+	enc, err := encryption.NewEncryptor(keys, 64)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	s.enc = enc
+	return keys
+}
+
+// countingGets counts the GETs a read sends the backend, and fails the whole
+// object GET when failStream is set.
+type countingGets struct {
+	*backendtest.InMemory
+	gets       atomic.Int64
+	failStream bool
+}
+
+// GetObject counts the call and forwards it.
+func (c *countingGets) GetObject(ctx context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
+	c.gets.Add(1)
+	if c.failStream && rangeHeader == "" {
+		return nil, errors.New("stream refused")
+	}
+	return c.InMemory.GetObject(ctx, key, rangeHeader)
+}
+
+// TestGetCompressed_FailedStreamFailsOver verifies a copy whose seek table reads
+// but whose stream cannot open fails over to the next copy, since no header has
+// been sent.
+func TestGetCompressed_FailedStreamFailsOver(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	src := incompressibleFixture(t, 2*streamMinSize)
+	s := storeCompressed(t, c, src, false)
+	broken := &countingGets{InMemory: s.be, failStream: true}
+
+	first, second := *s.loc, *s.loc
+	second.BackendName = "be2"
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{first, second}, nil).AnyTimes()
+	storetest.Permissive(store)
+	f := newFleet(t, store, map[string]backend.ObjectBackend{"be1": broken, "be2": s.be}, &fleetOpts{
+		Order: []string{"be1", "be2"}, Codec: c,
+	})
+
+	assertWholeRead(t, f, src)
+	if broken.gets.Load() == 0 {
+		t.Error("the broken copy was never tried")
+	}
+}
+
+// assertWholeRead reads the test object whole through f and compares it to want.
+func assertWholeRead(t *testing.T, f *fleet, want []byte) {
+	t.Helper()
+	res, err := f.GetObject(context.Background(), fetchTestKey, "")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	got, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("read returned the wrong bytes")
+	}
+}
+
+// TestStoredRangeFetcher_UnwrapsTheKeyOnce verifies a read crossing many frames
+// asks the key provider once. With Vault each unwrap is a network call, so one
+// per frame would cost more than the frames do.
+func TestStoredRangeFetcher_UnwrapsTheKeyOnce(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	src := incompressibleFixture(t, fetchTestChunk*5)
+	s := storeCompressed(t, c, src, true)
+	keys := countKeys(t, s)
+	f := s.fetcher()
+
+	r, err := c.DecompressRanged(context.Background(), f, f.compressedSize())
+	if err != nil {
+		t.Fatalf("DecompressRanged: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, src) {
+		t.Error("read returned the wrong bytes")
+	}
+	if n := keys.unwraps.Load(); n != 1 {
+		t.Errorf("unwrapped the key %d times, want 1", n)
+	}
+}
+
+// TestGetCompressed_WholeObjectIsOneStream verifies a whole read of a large
+// object costs the seek table fetch and one GET, however many frames it holds,
+// and unwraps its key once.
+func TestGetCompressed_WholeObjectIsOneStream(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	src := incompressibleFixture(t, 2*streamMinSize)
+	for _, encrypt := range []bool{false, true} {
+		t.Run(storedFormName(encrypt), func(t *testing.T) {
+			t.Parallel()
+			s := storeCompressed(t, c, src, encrypt)
+			wantUnwraps := int64(0)
+			keys := &countingKeys{}
+			if encrypt {
+				keys = countKeys(t, s)
+				wantUnwraps = 1
+			}
+			be := &countingGets{InMemory: s.be}
+			store := storetest.NewMockMetadataStore(gomock.NewController(t))
+			store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+				Return([]core.ObjectLocation{*s.loc}, nil).AnyTimes()
+			storetest.Permissive(store)
+			f := newFleet(t, store, map[string]backend.ObjectBackend{"be1": be}, &fleetOpts{
+				Order: []string{"be1"}, Codec: c, Encryptor: s.enc,
+			})
+
+			assertWholeRead(t, f, src)
+			if n := be.gets.Load(); n != 2 {
+				t.Errorf("backend GETs = %d, want 2", n)
+			}
+			if n := keys.unwraps.Load(); n != wantUnwraps {
+				t.Errorf("unwrapped the key %d times, want %d", n, wantUnwraps)
+			}
+		})
 	}
 }
 

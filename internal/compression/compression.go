@@ -105,13 +105,11 @@ func NewCodecForLevel(name string, chunkSize int) (*Codec, error) {
 			ErrChunkSizeRange, chunkSize, MinChunkSize, MaxChunkSize)
 	}
 
-	// Concurrency 1: a server encoding many objects at once should spend its
-	// cores on requests rather than fanning one object across all of them.
-	enc, err := zstd.NewWriter(
-		nil,
-		zstd.WithEncoderLevel(level),
-		zstd.WithEncoderConcurrency(1),
-	)
+	// EncodeAll and DecodeAll each take a slot from a pool sized by concurrency,
+	// which is how many requests can encode or decode at once. Both pools get a
+	// slot per core: the encoder by default, the decoder by passing zero. Each
+	// call runs on its own goroutine, so a request spends one core at most.
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(level))
 	if err != nil {
 		return nil, fmt.Errorf("build zstd encoder: %w", err)
 	}
@@ -119,7 +117,7 @@ func NewCodecForLevel(name string, chunkSize int) (*Codec, error) {
 	dec, err := zstd.NewReader(
 		nil,
 		zstd.WithDecoderMaxMemory(decoderMaxMemory),
-		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderConcurrency(0),
 	)
 	if err != nil {
 		enc.Close()
