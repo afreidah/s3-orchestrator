@@ -51,7 +51,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return cached, nil
 	}
 
-	// A compressed read meters itself per frame fetched, and every copy of a
+	// A compressed read meters itself per fetch, and every copy of a
 	// key agrees on whether it is compressed. Every other read is charged here
 	// on the bytes the winning attempt pulled off the backend, not result.Size:
 	// a decrypted object is smaller than its ciphertext, and a ranged read of
@@ -137,7 +137,7 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 //
 // The second return is the bytes the backend served, for the caller to charge
 // as egress, taken before decryption rewrites the result's size. It is zero for
-// a compressed copy, which meters itself per frame.
+// a compressed copy, which meters itself per fetch.
 func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], int64, error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 

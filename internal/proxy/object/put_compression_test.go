@@ -375,6 +375,11 @@ func (noDecode) DecompressRanged(context.Context, compression.RangeFetcher, int6
 	return nil, errors.New("decode is not reached on the write path")
 }
 
+// DecompressStream implements Codec.
+func (noDecode) DecompressStream(io.Reader) (io.ReadCloser, error) {
+	return nil, errors.New("decode is not reached on the write path")
+}
+
 // InspectStored implements Codec; the write path never inspects stored bytes.
 func (noDecode) InspectStored(context.Context, compression.RangeFetcher, int64) (int64, bool) {
 	return 0, false

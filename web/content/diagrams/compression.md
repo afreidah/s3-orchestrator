@@ -30,14 +30,14 @@ Splitting into independently decodable frames gives one entry point per chunk, a
 
 #### Reading an object
 
-A compressed copy is never served by a whole-object GET. The codec drives the read instead:
+A range is served through the codec, frame by frame. A whole read of an object over 1 MiB reads the seek table first, so a damaged copy fails over before any header is sent, then streams the stored bytes in one GET and decodes them front to back. A smaller object reads like a range, since a stream allocates a decoder per call.
 
 1. **Read the seek table** from the trailing skippable frame, which maps a logical offset to the frame holding it.
 2. **Map the client's range** onto the frames covering it.
 3. **Fetch those frames** with one ranged backend GET each, decrypting them first when the copy is an envelope. The seek table read pulls the last 8 KiB of the object in one fetch, and frames inside that tail need no further GET.
 4. **Decode and slice** to the exact bytes the client asked for.
 
-Each frame fetch is charged its own API call and egress, on the bytes that actually left the backend. Charging once per client request would under-report all but the first.
+Each fetch is charged its own API call and egress, on the bytes that actually left the backend. Charging once per client request would under-report all but the first. A read unwraps the copy's data key once, however many fetches it makes.
 
 #### The two thresholds
 
@@ -72,7 +72,10 @@ window.s3oDiagram = {
     '    ISCOMP -->|no| PLAINREAD[Whole-object GET]:::storage',
     '    ISCOMP -->|yes| RDTABLE[Fetch Seek Table]:::storage',
     '',
-    '    RDTABLE --> MAPFRAME[Map Range to<br>Covering Frames]:::process',
+    '    RDTABLE --> WHOLE{Whole read<br>over 1 MiB?}:::decision',
+    '    WHOLE -->|yes| STREAMF[One GET, Decrypt and<br>Decode Front to Back]:::storage',
+    '    STREAMF --> SERVE',
+    '    WHOLE -->|no| MAPFRAME[Map Range to<br>Covering Frames]:::process',
     '    MAPFRAME --> FETCHF[Ranged GET<br>per Needed Frame]:::storage',
     '    FETCHF --> DECR{Copy<br>Encrypted?}:::decision',
     '',
@@ -159,6 +162,16 @@ window.s3oDiagram = {
       title: 'Fetch Seek Table',
       badge: 'storage', badgeText: 'S3 API call',
       body: '<p>The table lives at the end of the object, so the first fetch a compressed read makes is a ranged GET of its tail rather than of byte zero.</p><p>The size handed to the decoder is the compressed stream\'s size, not the stored size: for an encrypted copy the stored bytes are its ciphertext, so the figure comes from <code>plaintext_size</code> rather than <code>size_bytes</code>.</p><p>Object metadata - content type, ETag, user metadata - is captured from this response rather than paid for with a separate HEAD.</p>'
+    },
+    WHOLE: {
+      title: 'Whole Read over 1 MiB?',
+      badge: 'decision', badgeText: 'read shape',
+      body: '<p>A read with no range, of an object over 1 MiB, has no use for the seek table beyond proving the copy can be decoded. Frame by frame it would pay a backend round trip per frame, so it streams instead. A smaller object reads by frame, because a stream allocates a decoder per call.</p>'
+    },
+    STREAMF: {
+      title: 'One GET, Decrypt and Decode Front to Back',
+      badge: 'storage', badgeText: 'S3 API call',
+      body: '<p>The stored bytes arrive in one GET and run through the same stages a scrub uses, with the envelope checked first. A failure here, before the response starts, fails over to the next copy. A frame that fails to decode after the response has started ends it, as it does on any read.</p>'
     },
     MAPFRAME: {
       title: 'Map Range to Covering Frames',

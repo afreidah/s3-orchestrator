@@ -84,6 +84,51 @@ func BenchmarkDecompress(b *testing.B) {
 	}
 }
 
+// BenchmarkCompressParallel measures encoding from many requests at once, which
+// is the load a shared encoder sees and BenchmarkCompress cannot show.
+func BenchmarkCompressParallel(b *testing.B) {
+	c := benchCodec(b)
+	src := logLike(DefaultChunkSize * 4)
+
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if _, err := c.Compress(discardWriter{}, bytes.NewReader(src)); err != nil {
+				b.Errorf("Compress: %v", err)
+				return
+			}
+		}
+	})
+}
+
+// BenchmarkDecompressParallel measures decoding from many requests at once.
+func BenchmarkDecompressParallel(b *testing.B) {
+	c := benchCodec(b)
+	src := logLike(DefaultChunkSize * 4)
+	var stored bytes.Buffer
+	if _, err := c.Compress(&stored, bytes.NewReader(src)); err != nil {
+		b.Fatalf("seed Compress: %v", err)
+	}
+	blob := stored.Bytes()
+
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			r, err := c.Decompress(bytes.NewReader(blob))
+			if err != nil {
+				b.Errorf("Decompress: %v", err)
+				return
+			}
+			if _, err := io.Copy(discardWriter{}, r); err != nil {
+				b.Errorf("read: %v", err)
+			}
+			_ = r.Close()
+		}
+	})
+}
+
 // BenchmarkCompressIncompressible measures data zstd cannot shrink, reporting
 // ratio alongside throughput. Compared with BenchmarkCompressLogLike it shows
 // that encoding an incompressible object costs less than a compressible one,

@@ -34,7 +34,7 @@ import (
 type Encryptor struct {
 	provider  KeyProvider
 	chunkSize int
-	bufPool   sync.Pool
+	bufPool   *sync.Pool
 }
 
 // EncryptResult holds the output of an encryption operation, including the
@@ -60,12 +60,20 @@ func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("encryption chunk size must be positive, got %d", chunkSize)
 	}
-	e := &Encryptor{
+	return &Encryptor{
 		provider:  provider,
 		chunkSize: chunkSize,
-	}
-	e.bufPool.New = func() any { return newChunkBuffers(chunkSize) }
-	return e, nil
+		bufPool:   &sync.Pool{New: func() any { return newChunkBuffers(chunkSize) }},
+	}, nil
+}
+
+// ForOneObject returns an encryptor for a read that decrypts one object's ranges
+// many times. It unwraps the object's key once and reuses it, so it must serve
+// only that object and be dropped when the read ends.
+func (e *Encryptor) ForOneObject() *Encryptor {
+	one := *e
+	one.provider = &unwrapOnce{KeyProvider: e.provider}
+	return &one
 }
 
 // Provider returns the underlying KeyProvider.

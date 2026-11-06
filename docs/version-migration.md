@@ -64,6 +64,12 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Compressed reads and writes use every core and stop paying per frame ([#1880](https://github.com/afreidah/s3-orchestrator/issues/1880), v0.179.16)**
+
+The shared codec gave the whole process one encoder and one decoder, so every request compressing or decompressing queued for them. Each now has a slot per core. A whole read of a compressed object over 1 MiB reads its seek table, then streams the stored bytes in one GET instead of one GET per frame. A read of an encrypted compressed object unwraps its key once instead of once per frame, which with Vault was one network call per frame.
+
+No migration or config change. Backend API calls and key provider calls for whole compressed reads fall sharply. Peak memory rises with the number of requests encoding or decoding at once, up to one slot per core.
+
 **Claims leave connections free ([#1879](https://github.com/afreidah/s3-orchestrator/issues/1879), v0.179.15)**
 
 Claims waiting on a backend's lock each held a database connection, so a queue on the lock could take the whole pool and stall queries unrelated to the claim. Claims now hold at most half of `database.max_conns` per instance, and the rest wait without a connection. A claim takes its backend locks in one statement, and a batch delete its key locks in one statement. A claim on a backend with no ceiling, and a new multipart upload on any backend, no longer reads the capacity sums, whose cost grows with the cleanup backlog.
