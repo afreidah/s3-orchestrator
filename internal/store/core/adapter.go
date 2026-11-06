@@ -26,11 +26,12 @@ import (
 // -------------------------------------------------------------------------
 
 // TxAdapter is the per-engine transactional seam a core operation receives from
-// Runner.WithTx. AcquireKeyLock takes a Postgres advisory lock on a hash of the
-// key. AcquireBackendLock takes one on the backend, in LockSpaceBackendClaim,
+// Runner.WithTx. AcquireKeyLock takes a Postgres advisory lock on a hash of each
+// key. AcquireBackendLock takes one on each backend, in LockSpaceBackendClaim,
 // only when the backend has a byte ceiling, since a claim on an unlimited
-// backend cannot overrun it. SQLite no-ops both because the engine already
-// serializes writers.
+// backend cannot overrun it. Both lock their names in one statement and in byte
+// order, so overlapping sets cannot deadlock. SQLite no-ops both because the
+// engine already serializes writers.
 type TxAdapter interface {
 	PendingTxAdapter
 	ObjectsTxAdapter
@@ -39,8 +40,8 @@ type TxAdapter interface {
 	TagsTxAdapter
 	MultipartTxAdapter
 
-	AcquireKeyLock(ctx context.Context, objectKey string) error
-	AcquireBackendLock(ctx context.Context, backendName string) error
+	AcquireKeyLock(ctx context.Context, objectKeys ...string) error
+	AcquireBackendLock(ctx context.Context, backendNames ...string) error
 }
 
 // -------------------------------------------------------------------------
@@ -53,7 +54,7 @@ type TxAdapter interface {
 // returns what it removed so the bytes can be cleaned up, including intents on
 // a backend the caller is writing to. InsertPendingIfFits records the intent
 // only while the backend has room for it and carries no flag outside accepts,
-// judged in the statement against backend_capacity.
+// judged in the statement.
 type PendingTxAdapter interface {
 	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)

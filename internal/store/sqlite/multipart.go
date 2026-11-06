@@ -25,8 +25,7 @@ import (
 // -------------------------------------------------------------------------
 
 // CreateMultipartUpload records a new multipart upload in the database, unless
-// its backend carries a flag writes do not accept, which reports false. The
-// check reads the same backend_capacity view every other admission test uses.
+// its backend carries a flag writes do not accept, which reports false.
 func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	metaJSON, err := core.EncodeUserMetadata(params.Metadata)
 	if err != nil {
@@ -40,8 +39,9 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 	return s.execChanged(ctx, "failed to create multipart upload",
 		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-		 FROM backend_capacity
-		 WHERE backend_name = ? AND (flags & ~?) = 0`,
+		 FROM backend_quotas q
+		 LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+		 WHERE q.backend_name = ? AND (COALESCE(st.flags, 0) & ~?) = 0`,
 		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey,
 		nullableString(params.KeyID), core.EncodeTags(params.Tags), now(), params.BackendName, core.AcceptForWrite,
 	)

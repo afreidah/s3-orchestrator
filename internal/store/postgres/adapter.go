@@ -41,11 +41,11 @@ func (s *Store) direct() *pgTxAdapter {
 	return &pgTxAdapter{q: s.queries, instanceID: s.instanceID}
 }
 
-// AcquireKeyLock takes a transaction-scoped advisory lock keyed by
-// objectKey. Postgres uses pg_advisory_xact_lock(hashtext(...)) under
-// the hood via the sqlc query.
-func (a *pgTxAdapter) AcquireKeyLock(ctx context.Context, objectKey string) error {
-	if err := a.q.LockObjectKeyForWrite(ctx, objectKey); err != nil {
+// AcquireKeyLock takes a transaction-scoped advisory lock on each key, in one
+// statement and in byte order, so transactions locking overlapping keys cannot
+// deadlock.
+func (a *pgTxAdapter) AcquireKeyLock(ctx context.Context, objectKeys ...string) error {
+	if err := a.q.LockObjectKeysForWrite(ctx, objectKeys); err != nil {
 		return fmt.Errorf("acquire object key lock: %w", err)
 	}
 	return nil
@@ -286,12 +286,13 @@ func (a *pgTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string,
 	return nil
 }
 
-// AcquireBackendLock serializes the claims on a backend with a byte ceiling
-// for the rest of the transaction; an unlimited backend takes no lock.
-func (a *pgTxAdapter) AcquireBackendLock(ctx context.Context, backendName string) error {
-	if err := a.q.LockBackendForClaim(ctx, db.LockBackendForClaimParams{
-		LockSpace:   core.LockSpaceBackendClaim,
-		BackendName: backendName,
+// AcquireBackendLock serializes the claims on backends with a byte ceiling for
+// the rest of the transaction, in one statement and in byte order; an unlimited
+// backend takes no lock.
+func (a *pgTxAdapter) AcquireBackendLock(ctx context.Context, backendNames ...string) error {
+	if err := a.q.LockBackendsForClaim(ctx, db.LockBackendsForClaimParams{
+		LockSpace:    core.LockSpaceBackendClaim,
+		BackendNames: backendNames,
 	}); err != nil {
 		return fmt.Errorf("acquire backend claim lock: %w", err)
 	}

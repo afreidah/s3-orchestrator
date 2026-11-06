@@ -64,6 +64,12 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Claims leave connections free ([#1879](https://github.com/afreidah/s3-orchestrator/issues/1879), v0.179.15)**
+
+Claims waiting on a backend's lock each held a database connection, so a queue on the lock could take the whole pool and stall queries unrelated to the claim. Claims now hold at most half of `database.max_conns` per instance, and the rest wait without a connection. A claim takes its backend locks in one statement, and a batch delete its key locks in one statement. A claim on a backend with no ceiling, and a new multipart upload on any backend, no longer reads the capacity sums, whose cost grows with the cleanup backlog.
+
+No migration or config change.
+
 **Listings scan a key range ([#1878](https://github.com/afreidah/s3-orchestrator/issues/1878), v0.179.13)**
 
 Prefix queries state a byte range instead of a `LIKE` pattern, and a delimited listing stops at its page. A listing used to scan to the end of the index once a pooled connection moved it to a generic plan, and a delimited one read every entry after its cursor.

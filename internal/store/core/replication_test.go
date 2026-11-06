@@ -39,7 +39,7 @@ type excessTxStub struct {
 // -------------------------------------------------------------------------
 
 // AcquireKeyLock returns the seeded lock error (nil = success).
-func (s *excessTxStub) AcquireKeyLock(context.Context, string) error { return s.lockErr }
+func (s *excessTxStub) AcquireKeyLock(context.Context, ...string) error { return s.lockErr }
 
 // GetExistingCopiesForUpdate returns the seeded copy set or error.
 func (s *excessTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {

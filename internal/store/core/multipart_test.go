@@ -61,8 +61,8 @@ type partTxStub struct {
 	deletedIntents []string
 }
 
-func (s *partTxStub) AcquireKeyLock(_ context.Context, key string) error {
-	s.locks = append(s.locks, key)
+func (s *partTxStub) AcquireKeyLock(_ context.Context, keys ...string) error {
+	s.locks = append(s.locks, keys...)
 	return s.lockErr
 }
 

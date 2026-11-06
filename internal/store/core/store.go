@@ -21,17 +21,30 @@ import (
 // PENDING ORCHESTRATION
 // -------------------------------------------------------------------------
 
+// claimTx runs a claim in a transaction holding the lock on every named backend.
+// The room check reads the snapshot its own statement starts with, so two claims
+// checked at once would each miss the other's bytes. The lock taken first, in its
+// own statement, makes the check see every claim committed before it.
+func claimTx[T any](ctx context.Context, o TxOps, backends []string, claim func(context.Context, TxAdapter) (T, error)) (T, error) {
+	if err := o.claimSlots.Acquire(ctx, 1); err != nil {
+		var zero T
+		return zero, fmt.Errorf("wait for a claim slot: %w", err)
+	}
+	defer o.claimSlots.Release(1)
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (T, error) {
+		if err := tx.AcquireBackendLock(ctx, backends...); err != nil {
+			var zero T
+			return zero, err
+		}
+		return claim(ctx, tx)
+	})
+}
+
 // InsertPendingIfFits claims the bytes p will occupy on its backend and records
 // the intent, reporting false when the backend has no room or carries a flag
-// outside accepts. The room check reads the snapshot its own statement starts
-// with, so two claims checked at once would each miss the other's bytes. The
-// backend lock taken first, in its own statement, makes the check see every
-// claim committed before it on a backend with a ceiling.
+// outside accepts.
 func (o TxOps) InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error) {
-	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
-		if err := tx.AcquireBackendLock(ctx, p.BackendName); err != nil {
-			return false, err
-		}
+	return claimTx(ctx, o, []string{p.BackendName}, func(ctx context.Context, tx TxAdapter) (bool, error) {
 		return tx.InsertPendingIfFits(ctx, p, accepts)
 	})
 }
@@ -46,14 +59,11 @@ type CopyClaims struct {
 
 // ClaimPendingCopies claims a distinct backend for each intent in one
 // transaction, walking ranked in order and recording each intent with the
-// conditional insert InsertPendingIfFits uses. Every candidate is locked
-// first, in sorted order, so two claims ranking the same backends differently
-// cannot deadlock. An error rolls back every claim.
+// conditional insert InsertPendingIfFits uses. Every candidate is locked first,
+// since a decline moves the walk to the next one. An error rolls back every
+// claim.
 func (o TxOps) ClaimPendingCopies(ctx context.Context, intents []*PendingObject, ranked []string, accepts BackendFlags) (CopyClaims, error) {
-	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (CopyClaims, error) {
-		if err := lockInOrder(ctx, ranked, tx.AcquireBackendLock); err != nil {
-			return CopyClaims{}, err
-		}
+	return claimTx(ctx, o, ranked, func(ctx context.Context, tx TxAdapter) (CopyClaims, error) {
 		return ClaimInRankOrder(ctx, intents, ranked, accepts, tx.InsertPendingIfFits)
 	})
 }

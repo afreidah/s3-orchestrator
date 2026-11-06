@@ -45,8 +45,9 @@ type stubDBTX struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func (s *stubDBTX) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+func (s *stubDBTX) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	s.calls++
+	s.querySQL, s.queryArgs = sql, args
 	return pgconn.CommandTag{}, s.execErr
 }
 

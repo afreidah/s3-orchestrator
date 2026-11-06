@@ -1140,9 +1140,10 @@ func (q *Queries) ListedPathStates(ctx context.Context, arg ListedPathStatesPara
 	return items, nil
 }
 
-const lockObjectKeyForWrite = `-- name: LockObjectKeyForWrite :exec
+const lockObjectKeysForWrite = `-- name: LockObjectKeysForWrite :exec
 
-SELECT pg_advisory_xact_lock(hashtext($1))
+SELECT pg_advisory_xact_lock(hashtext(locking.k))
+FROM (SELECT k FROM unnest($1::text[]) AS k ORDER BY k COLLATE "C") locking
 `
 
 // -----------------------------------------------------------------------------
@@ -1152,12 +1153,15 @@ SELECT pg_advisory_xact_lock(hashtext($1))
 //
 // sqlc-input definitions for object_locations - the canonical (object_key,
 // backend_name) ledger of which backends hold which objects. Includes the
-// transactional advisory lock primitive (LockObjectKeyForWrite) used by the
+// transactional advisory lock primitive (LockObjectKeysForWrite) used by the
 // write path, the FOR UPDATE locks used by the per-key transactional helpers
 // in core/, and the listing queries the manager and dashboard consume.
 // -----------------------------------------------------------------------------
-func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) error {
-	_, err := q.db.Exec(ctx, lockObjectKeyForWrite, hashtext)
+// Locks every key in one statement and in byte order, so transactions locking
+// overlapping sets cannot deadlock. The sort sits in a subquery because the
+// locks are taken in the order its rows arrive.
+func (q *Queries) LockObjectKeysForWrite(ctx context.Context, objectKeys []string) error {
+	_, err := q.db.Exec(ctx, lockObjectKeysForWrite, objectKeys)
 	return err
 }
 

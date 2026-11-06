@@ -43,10 +43,13 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 		    etag, content_type, user_metadata,
 		    created_at, role, tagging)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-		 FROM backend_capacity c
-		 WHERE c.backend_name = ?
-		   AND (c.flags & ~?) = 0
-		   AND (c.available_bytes IS NULL OR c.available_bytes >= ?)`,
+		 FROM backend_quotas q
+		 LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+		 WHERE q.backend_name = ?
+		   AND (COALESCE(st.flags, 0) & ~?) = 0
+		   AND (q.bytes_limit = 0
+		        OR (SELECT c.available_bytes FROM backend_capacity c
+		            WHERE c.backend_name = q.backend_name) >= ?)`,
 		p.IntentID, p.ObjectKey, core.StoragePath(p.ObjectKey, p.StorageKey), p.BackendName, p.SizeBytes,
 		p.Encrypted, p.EncryptionKey, nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash),
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),

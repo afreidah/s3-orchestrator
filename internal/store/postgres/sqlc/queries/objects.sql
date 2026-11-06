@@ -5,13 +5,17 @@
 --
 -- sqlc-input definitions for object_locations - the canonical (object_key,
 -- backend_name) ledger of which backends hold which objects. Includes the
--- transactional advisory lock primitive (LockObjectKeyForWrite) used by the
+-- transactional advisory lock primitive (LockObjectKeysForWrite) used by the
 -- write path, the FOR UPDATE locks used by the per-key transactional helpers
 -- in core/, and the listing queries the manager and dashboard consume.
 -- -----------------------------------------------------------------------------
 
--- name: LockObjectKeyForWrite :exec
-SELECT pg_advisory_xact_lock(hashtext($1));
+-- name: LockObjectKeysForWrite :exec
+-- Locks every key in one statement and in byte order, so transactions locking
+-- overlapping sets cannot deadlock. The sort sits in a subquery because the
+-- locks are taken in the order its rows arrive.
+SELECT pg_advisory_xact_lock(hashtext(locking.k))
+FROM (SELECT k FROM unnest(@object_keys::text[]) AS k ORDER BY k COLLATE "C") locking;
 
 -- name: GetExistingCopiesForUpdate :many
 -- Every copy of the listed keys, locked so the same transaction can delete the

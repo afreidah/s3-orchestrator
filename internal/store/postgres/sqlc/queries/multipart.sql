@@ -10,10 +10,10 @@
 -- -----------------------------------------------------------------------------
 
 -- name: CreateMultipartUpload :execrows
--- Records the upload only if its backend accepts writes, read from the same view
--- every other admission test uses. Nothing is claimed against the backend's room
--- here: each part is counted by its own row as it lands. Zero rows affected
--- means the backend is being drained and the caller should try the next one.
+-- Records the upload only if its backend accepts writes. Nothing is claimed
+-- against the backend's room here: each part is counted by its own row as it
+-- lands. Zero rows affected means the backend is being drained and the caller
+-- should try the next one.
 --
 -- Every parameter is cast because it appears in a SELECT list, where a bare
 -- parameter takes no type from the INSERT target.
@@ -22,8 +22,9 @@ SELECT @upload_id::text, @object_key::text, @backend_name::text,
        sqlc.narg('content_type')::text, sqlc.narg('metadata')::jsonb,
        sqlc.narg('encryption_key')::bytea, sqlc.narg('key_id')::text,
        sqlc.narg('tagging')::text, NOW()
-FROM backend_capacity c
-WHERE c.backend_name = @backend_name::text AND (c.flags & ~(@accepts::bigint)) = 0;
+FROM backend_quotas q
+LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+WHERE q.backend_name = @backend_name::text AND (COALESCE(st.flags, 0)::bigint & ~(@accepts::bigint)) = 0;
 
 -- name: GetMultipartUpload :one
 -- tagging rides along because CompleteMultipartUpload applies the set the

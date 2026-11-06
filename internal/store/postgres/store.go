@@ -107,7 +107,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 		connStr:    connStr,
 		instanceID: instanceID,
 	}
-	s.TxOps = core.NewTxOps(s)
+	s.TxOps = core.NewTxOps(s, max(1, int(dbCfg.MaxConns)/2))
 	return s, nil
 }
 
