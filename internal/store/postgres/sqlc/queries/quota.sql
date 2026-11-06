@@ -97,14 +97,18 @@ applied AS (
 )
 SELECT backend_name, delta FROM drift;
 
--- name: LockBackendForClaim :exec
--- Serializes the claims on one backend for the rest of the transaction, so
+-- name: LockBackendsForClaim :exec
+-- Serializes the claims on these backends for the rest of the transaction, so
 -- the room check that follows sees every claim committed before it. Only a
 -- backend with a byte ceiling is locked: a claim on an unlimited one cannot
--- overrun anything, and leaving it unlocked keeps its claims concurrent.
-SELECT pg_advisory_xact_lock(@lock_space::int, hashtext(backend_name))
-FROM backend_quotas
-WHERE backend_name = @backend_name AND bytes_limit > 0;
+-- overrun anything, and leaving it unlocked keeps its claims concurrent. The
+-- byte order keeps claims on overlapping sets from deadlocking.
+SELECT pg_advisory_xact_lock(@lock_space::int, hashtext(locking.backend_name))
+FROM (
+    SELECT backend_name FROM backend_quotas
+    WHERE backend_name = ANY(@backend_names::text[]) AND bytes_limit > 0
+    ORDER BY backend_name COLLATE "C"
+) locking;
 
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

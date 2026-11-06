@@ -274,6 +274,7 @@ type quotaTxStub struct {
 	tagClearErr    error
 	tagInsertErr   error
 	keyLockErr     error
+	keyLockCalls   int
 	existingCopies []ExistingCopy
 	existingErr    error
 	pendingCleanup bool
@@ -345,7 +346,10 @@ func (t *quotaTxStub) DeleteObjectTags(_ context.Context, objectKeys ...string) 
 
 // AcquireKeyLock reports the seeded lock error; the tag paths take the lock
 // before they write, and one test makes that fail.
-func (t *quotaTxStub) AcquireKeyLock(context.Context, string) error { return t.keyLockErr }
+func (t *quotaTxStub) AcquireKeyLock(context.Context, ...string) error {
+	t.keyLockCalls++
+	return t.keyLockErr
+}
 
 // GetExistingCopiesForUpdate returns the seeded copy set, which is how a test
 // says whether the key holds anything.

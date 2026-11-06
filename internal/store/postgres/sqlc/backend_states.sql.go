@@ -121,9 +121,8 @@ type ListBackendStatesRow struct {
 // Author: Alex Freidah
 //
 // sqlc-input definitions for backend_states: each backend's state flags and
-// its most recent drain's progress. Admission reads the flags through
-// backend_capacity. Every flag value is a parameter, so which bit means what is
-// defined once, in Go.
+// its most recent drain's progress. Every flag value is a parameter, so which
+// bit means what is defined once, in Go.
 // -----------------------------------------------------------------------------
 func (q *Queries) ListBackendStates(ctx context.Context) ([]ListBackendStatesRow, error) {
 	rows, err := q.db.Query(ctx, listBackendStates)

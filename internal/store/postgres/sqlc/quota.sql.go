@@ -173,23 +173,27 @@ func (q *Queries) LedgerGroups(ctx context.Context) ([]LedgerGroupsRow, error) {
 	return items, nil
 }
 
-const lockBackendForClaim = `-- name: LockBackendForClaim :exec
-SELECT pg_advisory_xact_lock($1::int, hashtext(backend_name))
-FROM backend_quotas
-WHERE backend_name = $2 AND bytes_limit > 0
+const lockBackendsForClaim = `-- name: LockBackendsForClaim :exec
+SELECT pg_advisory_xact_lock($1::int, hashtext(locking.backend_name))
+FROM (
+    SELECT backend_name FROM backend_quotas
+    WHERE backend_name = ANY($2::text[]) AND bytes_limit > 0
+    ORDER BY backend_name COLLATE "C"
+) locking
 `
 
-type LockBackendForClaimParams struct {
-	LockSpace   int32
-	BackendName string
+type LockBackendsForClaimParams struct {
+	LockSpace    int32
+	BackendNames []string
 }
 
-// Serializes the claims on one backend for the rest of the transaction, so
+// Serializes the claims on these backends for the rest of the transaction, so
 // the room check that follows sees every claim committed before it. Only a
 // backend with a byte ceiling is locked: a claim on an unlimited one cannot
-// overrun anything, and leaving it unlocked keeps its claims concurrent.
-func (q *Queries) LockBackendForClaim(ctx context.Context, arg LockBackendForClaimParams) error {
-	_, err := q.db.Exec(ctx, lockBackendForClaim, arg.LockSpace, arg.BackendName)
+// overrun anything, and leaving it unlocked keeps its claims concurrent. The
+// byte order keeps claims on overlapping sets from deadlocking.
+func (q *Queries) LockBackendsForClaim(ctx context.Context, arg LockBackendsForClaimParams) error {
+	_, err := q.db.Exec(ctx, lockBackendsForClaim, arg.LockSpace, arg.BackendNames)
 	return err
 }
 

@@ -167,10 +167,15 @@ SELECT $1, $2, $3, $4::text, $5::bigint,
        $6, $7, $8, $9, $10,
        $11, $12, $13, $14,
        $15, $16, $17, $18, $19::text
-FROM backend_capacity c
-WHERE c.backend_name = $4::text
-  AND (c.flags & ~($20::bigint)) = 0
-  AND (c.available_bytes IS NULL OR c.available_bytes >= $5::bigint)
+FROM backend_quotas q
+LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+WHERE q.backend_name = $4::text
+  AND (COALESCE(st.flags, 0)::bigint & ~($20::bigint)) = 0
+  -- The sums behind available_bytes grow with the cleanup backlog, so a backend
+  -- with no ceiling never reaches them.
+  AND (q.bytes_limit = 0
+       OR (SELECT c.available_bytes FROM backend_capacity c
+           WHERE c.backend_name = $4::text) >= $5::bigint)
 `
 
 type InsertPendingObjectIfFitsParams struct {

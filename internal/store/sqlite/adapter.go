@@ -53,7 +53,7 @@ func (s *Store) direct() *sqliteTxAdapter {
 // writers, so the in-tx existence checks in ClaimPending and
 // GetExistingCopiesForUpdate provide the equivalent guarantee that
 // pg_advisory_xact_lock provides on Postgres.
-func (a *sqliteTxAdapter) AcquireKeyLock(_ context.Context, _ string) error {
+func (a *sqliteTxAdapter) AcquireKeyLock(context.Context, ...string) error {
 	return nil
 }
 
@@ -396,7 +396,7 @@ func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName str
 
 // AcquireBackendLock is a no-op on SQLite: the engine serializes writers, so a
 // claim's room check already sees every claim committed before it.
-func (a *sqliteTxAdapter) AcquireBackendLock(_ context.Context, _ string) error {
+func (a *sqliteTxAdapter) AcquireBackendLock(context.Context, ...string) error {
 	return nil
 }
 

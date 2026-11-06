@@ -35,10 +35,15 @@ SELECT @intent_id, @object_key, @storage_key, @backend_name::text, @size_bytes::
        @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash,
        @compression_algorithm, @compression_level, @compression_format_version, @logical_size,
        @etag, @content_type, @user_metadata, @role, sqlc.narg('tagging')::text
-FROM backend_capacity c
-WHERE c.backend_name = @backend_name::text
-  AND (c.flags & ~(@accepts::bigint)) = 0
-  AND (c.available_bytes IS NULL OR c.available_bytes >= @size_bytes::bigint);
+FROM backend_quotas q
+LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+WHERE q.backend_name = @backend_name::text
+  AND (COALESCE(st.flags, 0)::bigint & ~(@accepts::bigint)) = 0
+  -- The sums behind available_bytes grow with the cleanup backlog, so a backend
+  -- with no ceiling never reaches them.
+  AND (q.bytes_limit = 0
+       OR (SELECT c.available_bytes FROM backend_capacity c
+           WHERE c.backend_name = @backend_name::text) >= @size_bytes::bigint);
 
 -- name: ClearPendingForKey :many
 -- Removes the key's intents apart from the ones the caller is committing, and

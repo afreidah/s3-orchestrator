@@ -58,8 +58,9 @@ SELECT $1::text, $2::text, $3::text,
        $4::text, $5::jsonb,
        $6::bytea, $7::text,
        $8::text, NOW()
-FROM backend_capacity c
-WHERE c.backend_name = $3::text AND (c.flags & ~($9::bigint)) = 0
+FROM backend_quotas q
+LEFT JOIN backend_states st ON st.backend_name = q.backend_name
+WHERE q.backend_name = $3::text AND (COALESCE(st.flags, 0)::bigint & ~($9::bigint)) = 0
 `
 
 type CreateMultipartUploadParams struct {
@@ -84,10 +85,10 @@ type CreateMultipartUploadParams struct {
 // prefix-scoped listing the S3 ListMultipartUploads handler needs, and the
 // stale-upload sweep used by the multipart cleanup background worker.
 // -----------------------------------------------------------------------------
-// Records the upload only if its backend accepts writes, read from the same view
-// every other admission test uses. Nothing is claimed against the backend's room
-// here: each part is counted by its own row as it lands. Zero rows affected
-// means the backend is being drained and the caller should try the next one.
+// Records the upload only if its backend accepts writes. Nothing is claimed
+// against the backend's room here: each part is counted by its own row as it
+// lands. Zero rows affected means the backend is being drained and the caller
+// should try the next one.
 //
 // Every parameter is cast because it appears in a SELECT list, where a bare
 // parameter takes no type from the INSERT target.

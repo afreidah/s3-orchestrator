@@ -4,9 +4,8 @@
 // Author: Alex Freidah
 //
 // Implements the Postgres engine bindings for backend_states: each backend's
-// state flags and its most recent drain's progress. Admission reads the flags
-// through backend_capacity. Every flag value the queries use is passed from
-// core, so the SQL holds no bit numbers.
+// state flags and its most recent drain's progress. Every flag value the
+// queries use is passed from core, so the SQL holds no bit numbers.
 // -------------------------------------------------------------------------------
 
 package postgres

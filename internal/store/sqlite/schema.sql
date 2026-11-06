@@ -391,12 +391,11 @@ CREATE TABLE IF NOT EXISTS backend_states (
 );
 
 -- What occupies each backend and the state flags it carries, defined once for
--- every admission test and the quota tracker's baseline refresh. In-flight is
+-- the room check and the quota tracker's baseline refresh. In-flight is
 -- incomplete multipart parts plus the intents of writes still uploading, and
 -- orphans are the bytes queued or dead-lettered cleanup rows still have to
 -- delete. available_bytes is NULL for a backend with no ceiling
--- (bytes_limit = 0), and flags is 0 for a backend with no state row. Admission
--- tests flags against an accept mask the store passes in.
+-- (bytes_limit = 0), and flags is 0 for a backend with no state row.
 CREATE VIEW IF NOT EXISTS backend_capacity AS
 SELECT q.backend_name,
        q.bytes_limit,

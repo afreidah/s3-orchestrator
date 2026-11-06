@@ -250,6 +250,18 @@ Other mitigations:
 - **Cap concurrent writes per backend** below the serialization rate
   so the wait queue cannot build
 
+### Claim lock contention
+
+A claim on a backend with a ceiling holds that backend's lock until its commit.
+With `write_path.parallel_copies` on, a claim locks every candidate, so a fleet's
+writes claim one at a time and commit latency sets the ceiling on the write rate.
+
+Above that ceiling, write latency climbs while reads stay flat. The diagnosis in
+`pg_stat_activity` is rows waiting on `Lock | advisory` with `LockBackendsForClaim`
+as the blocked query. Claims hold at most half of `database.max_conns` per
+instance, so the waits stop at that count and the rest of the queue is in the
+orchestrator.
+
 ## Recommended configuration per scale tier
 
 After running the suite, fill in:

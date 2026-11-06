@@ -118,7 +118,7 @@ func TestListings_KeepTheirRangeUnderTheGenericPlan(t *testing.T) {
 // generated bindings, which is what a plan test has to measure.
 func generatedStatement(t *testing.T, run func(*db.Queries) error) (string, []any) {
 	t.Helper()
-	stub := &stubDBTX{queryErr: errStatementCaptured}
+	stub := &stubDBTX{queryErr: errStatementCaptured, execErr: errStatementCaptured}
 	if err := run(db.New(stub)); !errors.Is(err, errStatementCaptured) {
 		t.Fatalf("generated query = %v, want it stopped at the stub", err)
 	}

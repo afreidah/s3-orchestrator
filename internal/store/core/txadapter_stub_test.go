@@ -34,9 +34,9 @@ var _ TxAdapter = (*noopTxAdapter)(nil)
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func (*noopTxAdapter) AcquireKeyLock(context.Context, string) error { return nil }
+func (*noopTxAdapter) AcquireKeyLock(context.Context, ...string) error { return nil }
 
-func (*noopTxAdapter) AcquireBackendLock(context.Context, string) error { return nil }
+func (*noopTxAdapter) AcquireBackendLock(context.Context, ...string) error { return nil }
 
 func (*noopTxAdapter) InsertPendingIfFits(context.Context, *PendingObject, BackendFlags) (bool, error) {
 	return true, nil

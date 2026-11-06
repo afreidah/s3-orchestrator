@@ -69,7 +69,7 @@ func (r *stubRunner) WithTx(ctx context.Context, fn func(ctx context.Context, tx
 // stubOps binds the shared transactional methods to a stub runner over tx, so
 // a test drives them the way an engine store does.
 func stubOps(tx TxAdapter) TxOps {
-	return NewTxOps(&stubRunner{tx: tx})
+	return NewTxOps(&stubRunner{tx: tx}, 1)
 }
 
 // -------------------------------------------------------------------------
@@ -145,7 +145,7 @@ type discardTxStub struct {
 	deleted   []string
 }
 
-func (s *discardTxStub) AcquireKeyLock(context.Context, string) error { return s.lockErr }
+func (s *discardTxStub) AcquireKeyLock(context.Context, ...string) error { return s.lockErr }
 
 func (s *discardTxStub) ClaimPending(context.Context, string) (bool, error) {
 	return !s.lost, s.claimErr

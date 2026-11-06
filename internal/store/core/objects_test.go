@@ -332,6 +332,19 @@ func TestDeleteObjectsBatch_ClearsTagsForEveryKey(t *testing.T) {
 	}
 }
 
+// TestDeleteObjectsBatch_LocksEveryKeyAtOnce verifies the batch takes its key
+// locks in one call, so a large delete does not pay a round trip per key.
+func TestDeleteObjectsBatch_LocksEveryKeyAtOnce(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{}
+	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k3", "k1", "k2"}); err != nil {
+		t.Fatalf("DeleteObjectsBatch: %v", err)
+	}
+	if stub.keyLockCalls != 1 {
+		t.Errorf("took key locks in %d calls, want 1", stub.keyLockCalls)
+	}
+}
+
 // TestDeleteObjectsBatch_LockError verifies a failure to take one of the key
 // locks aborts before any row is read, so the batch cannot half-apply.
 func TestDeleteObjectsBatch_LockError(t *testing.T) {

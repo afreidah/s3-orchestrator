@@ -91,7 +91,7 @@ window.s3oDiagram = {
         '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, stripe_id)</p>' +
         '<p>Charged inside the same transaction that writes the <code>object_locations</code> rows it summarizes, so it cannot drift from the ledger. Usage reconciliation is an audit rather than a repair the counter depends on.</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (admission and charging), <a href="../usage-quotas/">quota reporting</a>, <a href="../background-services/">reconcile</a>.</p>' +
-        '<p class="ac-metric">Key queries: AdjustQuotaStripe, ListBackendQuotaUsage, GetAllQuotaStats, ReconcileUsage (one statement that adds each backend\'s drift from the ledger to stripe zero), LockBackendForClaim</p>'
+        '<p class="ac-metric">Key queries: AdjustQuotaStripe, ListBackendQuotaUsage, GetAllQuotaStats, ReconcileUsage (one statement that adds each backend\'s drift from the ledger to stripe zero), LockBackendsForClaim</p>'
     },
     backend_request_usage: {
       title: 'backend_request_usage',

@@ -50,7 +50,7 @@ func (s *promoteTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ i
 	return nil
 }
 
-func (s *promoteTxStub) AcquireKeyLock(context.Context, string) error {
+func (s *promoteTxStub) AcquireKeyLock(context.Context, ...string) error {
 	s.ops = append(s.ops, "key_lock")
 	return s.keyLockErr
 }
@@ -501,7 +501,7 @@ type companionTxStub struct {
 	stripes    []int64
 }
 
-func (s *companionTxStub) AcquireKeyLock(context.Context, string) error { return s.keyLockErr }
+func (s *companionTxStub) AcquireKeyLock(context.Context, ...string) error { return s.keyLockErr }
 
 func (s *companionTxStub) ClaimPending(context.Context, string) (bool, error) {
 	return s.claimed, s.claimErr
@@ -709,10 +709,10 @@ type claimTxStub struct {
 	insertCalls int
 }
 
-func (s *claimTxStub) AcquireBackendLock(_ context.Context, backendName string) error {
+func (s *claimTxStub) AcquireBackendLock(_ context.Context, backendNames ...string) error {
 	s.ops = append(s.ops, "backend_lock")
-	s.locked = append(s.locked, backendName)
-	s.lockedName = backendName
+	s.locked = append(s.locked, backendNames...)
+	s.lockedName = backendNames[0]
 	return s.lockErr
 }
 
@@ -766,6 +766,25 @@ func TestInsertPendingIfFits_LockErrorSkipsInsert(t *testing.T) {
 	}
 }
 
+// TestInsertPendingIfFits_CancelledWaitingForASlot verifies a claim that gives
+// up with every slot taken reports why and never opens a transaction.
+func TestInsertPendingIfFits_CancelledWaitingForASlot(t *testing.T) {
+	t.Parallel()
+	stub := &claimTxStub{fits: true}
+	ops := stubOps(stub)
+	if err := ops.claimSlots.Acquire(context.Background(), 1); err != nil {
+		t.Fatalf("take the slot: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if fits, err := ops.InsertPendingIfFits(ctx, claimIntent(), AcceptForWrite); !errors.Is(err, context.Canceled) || fits {
+		t.Errorf("InsertPendingIfFits = %v, %v; want false and the cancellation", fits, err)
+	}
+	if len(stub.ops) != 0 {
+		t.Errorf("ops = %v, want none", stub.ops)
+	}
+}
+
 // TestInsertPendingIfFits_ReturnsInsertOutcome verifies the insert's answer is
 // what the claim reports: no room is false without an error, and a failed
 // insert surfaces its error.
@@ -802,20 +821,20 @@ func copyIntents(n int) []*PendingObject {
 	return out
 }
 
-// TestClaimPendingCopies_LocksSortedThenClaimsRanked verifies every candidate
-// is locked in name order before any insert, the inserts walk the ranking, and
+// TestClaimPendingCopies_LocksOnceThenClaimsRanked verifies every candidate is
+// locked in one call before any insert, the inserts walk the ranking, and
 // claiming stops once every intent has a backend.
-func TestClaimPendingCopies_LocksSortedThenClaimsRanked(t *testing.T) {
+func TestClaimPendingCopies_LocksOnceThenClaimsRanked(t *testing.T) {
 	t.Parallel()
 	stub := &claimTxStub{fits: true}
 	claims, err := stubOps(stub).ClaimPendingCopies(context.Background(), copyIntents(2), []string{"b3", "b1", "b2"}, AcceptForWrite)
 	if err != nil {
 		t.Fatalf("ClaimPendingCopies: %v", err)
 	}
-	if want := []string{"b1", "b2", "b3"}; !slices.Equal(stub.locked, want) {
+	if want := []string{"b3", "b1", "b2"}; !slices.Equal(stub.locked, want) {
 		t.Errorf("locked %v, want %v", stub.locked, want)
 	}
-	if want := []string{"backend_lock", "backend_lock", "backend_lock", "insert", "insert"}; !slices.Equal(stub.ops, want) {
+	if want := []string{"backend_lock", "insert", "insert"}; !slices.Equal(stub.ops, want) {
 		t.Errorf("ops = %v, want %v", stub.ops, want)
 	}
 	if len(claims.Claimed) != 2 || claims.Claimed[0].BackendName != "b3" || claims.Claimed[1].BackendName != "b1" {

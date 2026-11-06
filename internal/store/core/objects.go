@@ -209,8 +209,7 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
 	// The key locks come before the row read on every path, because tagging
 	// calls touch only object_tags and are excluded by the key lock alone.
-	// Taking them in the same order everywhere prevents deadlock.
-	if err := lockInOrder(ctx, keys, tx.AcquireKeyLock); err != nil {
+	if err := tx.AcquireKeyLock(ctx, keys...); err != nil {
 		return nil, err
 	}
 	rows, err := tx.GetExistingCopiesForUpdate(ctx, keys...)
@@ -257,20 +256,6 @@ func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removed
 		debits.add(r.ObjectKey, r.BackendName, -r.SizeBytes)
 	}
 	return removed, debits
-}
-
-// lockInOrder takes lock on every distinct name in sorted order, so concurrent
-// transactions locking overlapping sets cannot deadlock. The caller's slice is
-// not modified.
-func lockInOrder(ctx context.Context, names []string, lock func(context.Context, string) error) error {
-	ordered := slices.Clone(names)
-	slices.Sort(ordered)
-	for _, name := range slices.Compact(ordered) {
-		if err := lock(ctx, name); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // -------------------------------------------------------------------------

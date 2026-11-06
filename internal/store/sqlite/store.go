@@ -80,7 +80,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 	}
 
 	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb, instanceID: instanceID}
-	s.TxOps = core.NewTxOps(s)
+	s.TxOps = core.NewTxOps(s, 1)
 	return s, nil
 }
 
