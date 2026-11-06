@@ -12,6 +12,7 @@ Step-by-step walkthroughs for common deployments and operations.
 {{< cards >}}
   {{< card link="local-demo/" title="Nomad/k8s Full Stack Demo" icon="play" subtitle="A complete environment on Nomad or Kubernetes with three MinIO backends and full observability." >}}
   {{< card link="maximizing-free-tiers/" title="Maximizing Free Tiers" icon="cash" subtitle="Combine free-tier storage from several providers into one pool without exceeding any provider's limits." >}}
+  {{< card link="cloudflare-edge-proxy/" title="Cloudflare Edge Proxy" icon="cloud" subtitle="Route a backend through a Cloudflare Worker so its reads leave the provider to Cloudflare." >}}
   {{< card link="access-control/" title="Setting Up Access Control" icon="shield-check" subtitle="Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane." >}}
   {{< card link="terraform-provider/" title="Provisioning with Terraform" icon="cube" subtitle="Declare the buckets, users, keypairs and grants a deployment serves." >}}
   {{< card link="replication-guide/" title="Understanding Replication" icon="duplicate" subtitle="How the replicator works, target selection, side effects, over-replication cleanup and monitoring." >}}
