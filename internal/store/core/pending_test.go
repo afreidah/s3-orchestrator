@@ -45,8 +45,10 @@ type promoteTxStub struct {
 	charges  []quotaOp
 }
 
-func (s *promoteTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int16, delta int64) error {
-	s.charges = append(s.charges, quotaOp{backend: backend, delta: delta})
+func (s *promoteTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
+	for _, c := range charges {
+		s.charges = append(s.charges, quotaOp{backend: c.Backend, delta: c.Delta})
+	}
 	return nil
 }
 
@@ -80,7 +82,7 @@ func (s *promoteTxStub) DeletePending(_ context.Context, intentID string) error 
 	return nil
 }
 
-func (s *promoteTxStub) ClearPendingForKey(_ context.Context, _ string, keep []string) ([]SupersededIntent, error) {
+func (s *promoteTxStub) ClearPendingForKey(_ context.Context, keep []string, _ ...string) ([]SupersededIntent, error) {
 	s.cleared = append(s.cleared, keep)
 	return nil, nil
 }
@@ -537,8 +539,10 @@ func (s *companionTxStub) DeleteObjectFromBackend(_ context.Context, _, backend 
 	return nil
 }
 
-func (s *companionTxStub) AdjustQuotaStripe(_ context.Context, _ string, _ int16, delta int64) error {
-	s.stripes = append(s.stripes, delta)
+func (s *companionTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
+	for _, c := range charges {
+		s.stripes = append(s.stripes, c.Delta)
+	}
 	return nil
 }
 

@@ -54,7 +54,7 @@ func TestSqlite_ClearPendingForKey_RemovesAllButTheKept(t *testing.T) {
 	seedPendingIntent(t, s, "other-key", "bucket/other", "backend-a", 30)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		cleared, err := a.ClearPendingForKey(ctx, "bucket/k", []string{"keep-me"})
+		cleared, err := a.ClearPendingForKey(ctx, []string{"keep-me"}, "bucket/k")
 		if err != nil {
 			t.Fatalf("ClearPendingForKey: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestSqlite_ClearPendingForKey_RemovesAllButTheKept(t *testing.T) {
 		}
 		// The seeded intent carries no path of its own, so the insert recorded
 		// the object's key, which is where such an intent's bytes would be.
-		want := core.SupersededIntent{IntentID: "stale-a", BackendName: "backend-b", StorageKey: "bucket/k", SizeBytes: 20}
+		want := core.SupersededIntent{IntentID: "stale-a", ObjectKey: "bucket/k", BackendName: "backend-b", StorageKey: "bucket/k", SizeBytes: 20}
 		if cleared[0] != want {
 			t.Errorf("cleared[0] = %+v, want %+v", cleared[0], want)
 		}
@@ -104,7 +104,7 @@ func TestSqlite_ClearPendingForKey_NoIntents(t *testing.T) {
 	ctx := context.Background()
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		cleared, err := a.ClearPendingForKey(ctx, "bucket/absent", nil)
+		cleared, err := a.ClearPendingForKey(ctx, nil, "bucket/absent")
 		if err != nil {
 			t.Fatalf("ClearPendingForKey: %v", err)
 		}
@@ -473,12 +473,13 @@ func TestAdapter_InsertCleanup_ReturnsStampedClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	before := time.Now()
-	item, err := s.direct().InsertCleanup(ctx, &core.CleanupRequest{
+	items, err := s.direct().InsertCleanup(ctx, &core.CleanupRequest{
 		BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "path-1", Reason: "test", SizeBytes: 9,
 	})
 	if err != nil {
 		t.Fatalf("InsertCleanup: %v", err)
 	}
+	item := items[0]
 	if item.ID == 0 || item.BackendName != "backend-a" || item.ObjectKey != "bucket/k" ||
 		item.StorageKey != "path-1" || item.Reason != "test" || item.SizeBytes != 9 {
 		t.Errorf("item = %+v, want the request's fields", item)
@@ -643,13 +644,13 @@ func TestAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 3, 500); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, Delta: 500}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 3); got != 500 {
 			t.Errorf("stripe 3 = %d, want 500 after the row was created", got)
 		}
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 3, 250); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, Delta: 250}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 3); got != 750 {
@@ -667,7 +668,7 @@ func TestAdapter_AdjustQuotaStripe_StripesAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		for stripe, delta := range map[int16]int64{0: 100, 5: 200, 11: 300} {
-			if err := a.AdjustQuotaStripe(ctx, "backend-a", stripe, delta); err != nil {
+			if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: stripe, Delta: delta}); err != nil {
 				t.Fatalf("AdjustQuotaStripe(%d): %v", stripe, err)
 			}
 		}
@@ -690,10 +691,10 @@ func TestAdapter_AdjustQuotaStripe_NegativeStripeClampsOnlyTheTotal(t *testing.T
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 0, 1000); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Delta: 1000}); err != nil {
 			t.Fatalf("seed stripe 0: %v", err)
 		}
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 6, -400); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 6, Delta: -400}); err != nil {
 			t.Fatalf("credit stripe 6: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 6); got != -400 {
@@ -713,7 +714,7 @@ func TestAdapter_CapacityClampsNegativeTotalAtZero(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 2, -750); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 2, Delta: -750}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := capacityBytesUsed(t, a, "backend-a"); got != 0 {

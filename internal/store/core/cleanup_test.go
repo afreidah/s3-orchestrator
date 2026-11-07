@@ -17,7 +17,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 )
@@ -37,22 +36,18 @@ type queueRecorder struct {
 	err    error
 }
 
-// InsertCleanup records the request and hands back the queued row with its
-// position as the id and the recorder's claim, or fails with the seeded error.
-func (q *queueRecorder) InsertCleanup(_ context.Context, c *CleanupRequest) (CleanupItem, error) {
+// InsertCleanup records the requests and hands back the queued rows with their
+// positions as the ids and the recorder's claim, or fails with the seeded error.
+func (q *queueRecorder) InsertCleanup(_ context.Context, requests ...*CleanupRequest) ([]CleanupItem, error) {
 	if q.err != nil {
-		return CleanupItem{}, q.err
+		return nil, q.err
 	}
-	q.queued = append(q.queued, *c)
-	return CleanupItem{
-		ID:          int64(len(q.queued)),
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  c.StorageKey,
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-		Claim:       q.claim,
-	}, nil
+	items := make([]CleanupItem, len(requests))
+	for i, c := range requests {
+		q.queued = append(q.queued, *c)
+		items[i] = CleanupItem{CleanupRequest: *c, ID: int64(len(q.queued)), Claim: q.claim}
+	}
+	return items, nil
 }
 
 // stubRunner runs the supplied closure synchronously against the TxAdapter it
@@ -114,8 +109,8 @@ func TestEnqueueRemoved_NothingRemoved(t *testing.T) {
 }
 
 // TestEnqueueRemoved_InsertFailure verifies a row that cannot be queued fails
-// the call, naming the backend, so the transaction rolls back rather than
-// committing a removal whose bytes nothing names.
+// the call, so the transaction rolls back rather than committing a removal whose
+// bytes nothing names.
 func TestEnqueueRemoved_InsertFailure(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("insert failed")
@@ -123,9 +118,6 @@ func TestEnqueueRemoved_InsertFailure(t *testing.T) {
 	items, err := enqueueRemoved(context.Background(), queuer, "k", CleanupReasonDeleted, []removedCopy{{BackendName: "b1"}})
 	if !errors.Is(err, sentinel) || items != nil {
 		t.Fatalf("items=%+v err=%v, want the insert failure", items, err)
-	}
-	if !strings.Contains(err.Error(), "b1") {
-		t.Errorf("err = %v, want it to name the backend", err)
 	}
 }
 

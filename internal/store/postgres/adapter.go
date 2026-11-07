@@ -55,14 +55,14 @@ func (a *pgTxAdapter) AcquireKeyLock(ctx context.Context, objectKeys ...string) 
 // PENDING TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// ClearPendingForKey removes the key's intents apart from the ones the caller
+// ClearPendingForKey removes the keys' intents apart from the ones the caller
 // is committing, reporting each so its bytes can be cleaned off the backend
 // after the transaction commits.
-func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
+func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, keep []string, objectKeys ...string) ([]core.SupersededIntent, error) {
 	if keep == nil {
 		keep = []string{}
 	}
-	rows, err := a.q.ClearPendingForKey(ctx, db.ClearPendingForKeyParams{ObjectKey: objectKey, Keep: keep})
+	rows, err := a.q.ClearPendingForKey(ctx, db.ClearPendingForKeyParams{ObjectKeys: objectKeys, Keep: keep})
 	if err != nil {
 		return nil, fmt.Errorf("clear pending intents for key: %w", err)
 	}
@@ -70,6 +70,7 @@ func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, 
 	for i, row := range rows {
 		cleared[i] = core.SupersededIntent{
 			IntentID:    row.IntentID,
+			ObjectKey:   row.ObjectKey,
 			BackendName: row.BackendName,
 			StorageKey:  row.StorageKey,
 			SizeBytes:   row.SizeBytes,
@@ -248,40 +249,53 @@ func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *
 // CLEANUP TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// InsertCleanup queues c's bytes for deletion, claimed by this instance, and
-// returns the row with the claim it was stamped with.
-func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
-	row, err := a.q.InsertCleanup(ctx, db.InsertCleanupParams{
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  c.StorageKey,
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-		ClaimedBy:   strPtr(a.instanceID),
-	})
-	if err != nil {
-		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
+// InsertCleanup queues the requests' bytes for deletion in one statement,
+// claimed by this instance, and returns the rows with the claim they were
+// stamped with.
+func (a *pgTxAdapter) InsertCleanup(ctx context.Context, requests ...*core.CleanupRequest) ([]core.CleanupItem, error) {
+	params := db.InsertCleanupParams{
+		BackendNames: make([]string, len(requests)),
+		ObjectKeys:   make([]string, len(requests)),
+		StorageKeys:  make([]string, len(requests)),
+		Reasons:      make([]string, len(requests)),
+		SizeBytes:    make([]int64, len(requests)),
+		ClaimedBy:    strPtr(a.instanceID),
 	}
-	return core.CleanupItem{
-		CleanupRequest: *c,
-		ID:             row.ID,
-		Claim:          &core.CleanupClaim{At: row.ClaimedAt.Time, By: a.instanceID},
-	}, nil
+	for i, c := range requests {
+		params.BackendNames[i] = c.BackendName
+		params.ObjectKeys[i] = c.ObjectKey
+		params.StorageKeys[i] = c.StorageKey
+		params.Reasons[i] = c.Reason
+		params.SizeBytes[i] = c.SizeBytes
+	}
+	rows, err := a.q.InsertCleanup(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("insert cleanup row: %w", err)
+	}
+	return mapSlice(rows, func(r *db.InsertCleanupRow) core.CleanupItem {
+		return cleanupItemFromRow((*db.GetPendingCleanupsRow)(r))
+	}), nil
 }
 
 // -------------------------------------------------------------------------
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// AdjustQuotaStripe applies a signed delta to one of a backend's byte-counter
-// stripes, materializing the row on first use.
-func (a *pgTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
-	if err := a.q.AdjustQuotaStripe(ctx, db.AdjustQuotaStripeParams{
-		BackendName: backendName,
-		StripeID:    stripe,
-		Delta:       delta,
-	}); err != nil {
-		return fmt.Errorf("adjust quota stripe for %s: %w", backendName, err)
+// AdjustQuotaStripes applies signed deltas to backends' byte-counter stripes in
+// one statement, materializing each row on first use.
+func (a *pgTxAdapter) AdjustQuotaStripes(ctx context.Context, charges ...core.StripeCharge) error {
+	params := db.AdjustQuotaStripesParams{
+		BackendNames: make([]string, len(charges)),
+		StripeIds:    make([]int16, len(charges)),
+		Deltas:       make([]int64, len(charges)),
+	}
+	for i, c := range charges {
+		params.BackendNames[i] = c.Backend
+		params.StripeIds[i] = c.Stripe
+		params.Deltas[i] = c.Delta
+	}
+	if err := a.q.AdjustQuotaStripes(ctx, params); err != nil {
+		return fmt.Errorf("adjust quota stripes: %w", err)
 	}
 	return nil
 }

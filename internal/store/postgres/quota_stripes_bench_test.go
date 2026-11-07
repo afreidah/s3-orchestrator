@@ -115,7 +115,7 @@ func BenchmarkQuotaStripes_ConcurrentCharge(b *testing.B) {
 					stripe := int16(n % stripes)
 					n++
 					err := s.WithTx(ctx, func(ctx context.Context, tx core.TxAdapter) error {
-						return tx.AdjustQuotaStripe(ctx, benchChargeBackend, stripe, benchObjectSize)
+						return tx.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: benchChargeBackend, Stripe: stripe, Delta: benchObjectSize})
 					})
 					if err != nil {
 						b.Errorf("AdjustQuotaStripe: %v", err)

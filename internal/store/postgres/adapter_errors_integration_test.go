@@ -206,7 +206,7 @@ func TestPgAdapterErr_DeleteMultipartUpload(t *testing.T) {
 // TestPgAdapterErr_AdjustQuotaStripe verifies the Exec error is wrapped.
 func TestPgAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
+	if err := a.AdjustQuotaStripes(context.Background(), core.StripeCharge{Backend: "backend-a", Delta: 100}); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

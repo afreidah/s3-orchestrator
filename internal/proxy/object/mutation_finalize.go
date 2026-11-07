@@ -92,15 +92,14 @@ func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key strin
 // finalizeBatchDelete runs the post-fanout success steps for
 // DeleteObjects: operation-completion accounting (empty backend label
 // because the batch spans many), per-key tally span attributes, and
-// completion observability. The batch commits or fails as one transaction, so
-// on this path every key was deleted. Per-key API-call accounting is owned by
-// the cleanup settler.
-func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, start time.Time) {
+// completion observability. failed counts the keys of the groups that did not
+// commit. Per-key API-call accounting is owned by the cleanup settler.
+func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize, failed int, start time.Time) {
 	const operation = s3op.DeleteObjects
 	o.d.Core.Acct().Operation(operation, "", start, nil)
 	span.SetAttributes(
-		attribute.Int("s3o.deleted_count", batchSize),
-		attribute.Int("s3o.error_count", 0),
+		attribute.Int("s3o.deleted_count", batchSize-failed),
+		attribute.Int("s3o.error_count", failed),
 	)
-	pobserve.DeleteBatchCompleted(ctx, span, batchSize, batchSize, 0)
+	pobserve.DeleteBatchCompleted(ctx, span, batchSize, batchSize-failed, failed)
 }

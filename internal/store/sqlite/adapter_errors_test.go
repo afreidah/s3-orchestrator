@@ -235,7 +235,7 @@ func TestAdapterErr_DeleteMultipartUpload(t *testing.T) {
 func TestAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
+	if err := a.AdjustQuotaStripes(context.Background(), core.StripeCharge{Backend: "backend-a", Delta: 100}); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

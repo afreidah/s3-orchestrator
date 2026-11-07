@@ -46,7 +46,7 @@ WHERE q.backend_name = @backend_name::text
            WHERE c.backend_name = @backend_name::text) >= @size_bytes::bigint);
 
 -- name: ClearPendingForKey :many
--- Removes the key's intents apart from the ones the caller is committing, and
+-- Removes the keys' intents apart from the ones the caller is committing, and
 -- reports what it removed so the caller can clean their bytes off the backends
 -- once its own transaction is durable.
 --
@@ -55,9 +55,9 @@ WHERE q.backend_name = @backend_name::text
 -- write just replaced. Whether those bytes are deleted is the caller's decision,
 -- and a different one.
 DELETE FROM pending_objects
-WHERE object_key = @object_key
+WHERE object_key = ANY(@object_keys::text[])
   AND intent_id <> ALL(@keep::text[])
-RETURNING intent_id, backend_name, storage_key, size_bytes;
+RETURNING intent_id, object_key, backend_name, storage_key, size_bytes;
 
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;

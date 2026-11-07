@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // The write side of the byte counter. Every mutation charges what it changed to
-// its keys' quota stripes inside its own transaction, one statement per stripe
-// row it touched, so the counter commits or rolls back with the rows.
+// its keys' quota stripes inside its own transaction, in one statement, so the
+// counter commits or rolls back with the rows.
 // -------------------------------------------------------------------------------
 
 package core
@@ -28,6 +28,13 @@ type stripeRow struct {
 	stripe  int16
 }
 
+// StripeCharge is a signed byte change to one row of a backend's byte counter.
+type StripeCharge struct {
+	Backend string
+	Stripe  int16
+	Delta   int64
+}
+
 // stripeDeltas is the signed byte change a transaction makes to each stripe
 // row, gathered so a row is written once however many keys land on it.
 type stripeDeltas map[stripeRow]int64
@@ -45,13 +52,17 @@ func (d stripeDeltas) charge(ctx context.Context, tx TxAdapter) error {
 	rows := slices.SortedFunc(maps.Keys(d), func(a, b stripeRow) int {
 		return cmp.Or(cmp.Compare(a.backend, b.backend), cmp.Compare(a.stripe, b.stripe))
 	})
+	charges := make([]StripeCharge, 0, len(rows))
 	for _, row := range rows {
-		if d[row] == 0 {
-			continue
+		if d[row] != 0 {
+			charges = append(charges, StripeCharge{Backend: row.backend, Stripe: row.stripe, Delta: d[row]})
 		}
-		if err := tx.AdjustQuotaStripe(ctx, row.backend, row.stripe, d[row]); err != nil {
-			return fmt.Errorf("charge quota stripe for %s: %w", row.backend, err)
-		}
+	}
+	if len(charges) == 0 {
+		return nil
+	}
+	if err := tx.AdjustQuotaStripes(ctx, charges...); err != nil {
+		return fmt.Errorf("charge quota stripes: %w", err)
 	}
 	return nil
 }

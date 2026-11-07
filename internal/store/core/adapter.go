@@ -50,16 +50,17 @@ type TxAdapter interface {
 
 // PendingTxAdapter exposes the transactional operations on the pending_objects
 // table. ClaimPending reports false when another worker already resolved the
-// intent. ClearPendingForKey deletes every intent for the key except keep and
+// intent. ClearPendingForKey deletes every intent for the keys except keep and
 // returns what it removed so the bytes can be cleaned up, including intents on
-// a backend the caller is writing to. InsertPendingIfFits records the intent
+// a backend the caller is writing to; it takes one key or a batch.
+// InsertPendingIfFits records the intent
 // only while the backend has room for it and carries no flag outside accepts,
 // judged in the statement.
 type PendingTxAdapter interface {
 	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 	DeletePending(ctx context.Context, intentID string) error
-	ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]SupersededIntent, error)
+	ClearPendingForKey(ctx context.Context, keep []string, objectKeys ...string) ([]SupersededIntent, error)
 }
 
 // -------------------------------------------------------------------------
@@ -95,10 +96,10 @@ type ObjectsTxAdapter interface {
 
 // CleanupTxAdapter exposes the transactional operations on the cleanup_queue
 // table that core orchestration needs; the settle operations live on
-// CleanupStore. InsertCleanup queues a row claimed by this instance and
-// returns it, claim included.
+// CleanupStore. InsertCleanup queues the rows claimed by this instance and
+// returns them, claims included, in no particular order.
 type CleanupTxAdapter interface {
-	InsertCleanup(ctx context.Context, c *CleanupRequest) (CleanupItem, error)
+	InsertCleanup(ctx context.Context, requests ...*CleanupRequest) ([]CleanupItem, error)
 }
 
 // -------------------------------------------------------------------------
@@ -139,8 +140,8 @@ type TagsTxAdapter interface {
 
 // QuotaTxAdapter exposes the transactional operations on the quota tables.
 // Byte movements carry no limit guard because they record bytes already moved;
-// the ceiling is enforced when a write is admitted. Callers pick the stripe
-// for AdjustQuotaStripe with StripeFor.
+// the ceiling is enforced when a write is admitted. AdjustQuotaStripes writes
+// the charges in the order given, each on its own row.
 type QuotaTxAdapter interface {
-	AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error
+	AdjustQuotaStripes(ctx context.Context, charges ...StripeCharge) error
 }

@@ -618,12 +618,12 @@ func TestStoreInt_CleanupSettle_EmptyInstanceMatches(t *testing.T) {
 	nullBy := make([]core.CleanupItem, 3)
 	ids := make([]int64, 0, len(nullBy)+1)
 	for i := range nullBy {
-		item, err := anon.InsertCleanup(ctx, cleanupOf("backend-a", uniqueKey(t, fmt.Sprintf("anon-%d", i)), "test", 2))
+		items, err := anon.InsertCleanup(ctx, cleanupOf("backend-a", uniqueKey(t, fmt.Sprintf("anon-%d", i)), "test", 2))
 		if err != nil {
 			t.Fatalf("InsertCleanup: %v", err)
 		}
-		nullBy[i] = item
-		ids = append(ids, item.ID)
+		nullBy[i] = items[0]
+		ids = append(ids, items[0].ID)
 	}
 	key := uniqueKey(t, "empty-by")
 	ids = append(ids, queueUnclaimed(t, s, cleanupOf("backend-a", key, "test", 2)))
