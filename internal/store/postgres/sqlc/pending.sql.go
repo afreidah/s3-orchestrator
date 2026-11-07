@@ -13,24 +13,25 @@ import (
 
 const clearPendingForKey = `-- name: ClearPendingForKey :many
 DELETE FROM pending_objects
-WHERE object_key = $1
+WHERE object_key = ANY($1::text[])
   AND intent_id <> ALL($2::text[])
-RETURNING intent_id, backend_name, storage_key, size_bytes
+RETURNING intent_id, object_key, backend_name, storage_key, size_bytes
 `
 
 type ClearPendingForKeyParams struct {
-	ObjectKey string
-	Keep      []string
+	ObjectKeys []string
+	Keep       []string
 }
 
 type ClearPendingForKeyRow struct {
 	IntentID    string
+	ObjectKey   string
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64
 }
 
-// Removes the key's intents apart from the ones the caller is committing, and
+// Removes the keys' intents apart from the ones the caller is committing, and
 // reports what it removed so the caller can clean their bytes off the backends
 // once its own transaction is durable.
 //
@@ -39,7 +40,7 @@ type ClearPendingForKeyRow struct {
 // write just replaced. Whether those bytes are deleted is the caller's decision,
 // and a different one.
 func (q *Queries) ClearPendingForKey(ctx context.Context, arg ClearPendingForKeyParams) ([]ClearPendingForKeyRow, error) {
-	rows, err := q.db.Query(ctx, clearPendingForKey, arg.ObjectKey, arg.Keep)
+	rows, err := q.db.Query(ctx, clearPendingForKey, arg.ObjectKeys, arg.Keep)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +50,7 @@ func (q *Queries) ClearPendingForKey(ctx context.Context, arg ClearPendingForKey
 		var i ClearPendingForKeyRow
 		if err := rows.Scan(
 			&i.IntentID,
+			&i.ObjectKey,
 			&i.BackendName,
 			&i.StorageKey,
 			&i.SizeBytes,

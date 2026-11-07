@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// DeleteObject and DeleteObjects: the metadata delete runs in one transaction
-// that also queues the copies' bytes for deletion, then
-// writepath.Coordinator.Settle deletes them, one batched delete per backend.
-// Success-finalization helpers live in mutation_finalize.go.
+// DeleteObject and DeleteObjects: the metadata delete runs in a transaction
+// that also queues the copies' bytes for deletion, one per group of keys for a
+// batch, then writepath.Coordinator.Settle deletes them, one batched delete per
+// backend. Success-finalization helpers live in mutation_finalize.go.
 // -------------------------------------------------------------------------------
 
 package object
@@ -14,6 +14,7 @@ package object
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -72,13 +73,19 @@ type DeleteObjectResult struct {
 	Err error  `json:"err,omitempty"`
 }
 
+// deleteGroupSize is the most keys one delete transaction holds. Each key keeps
+// a lock until the transaction ends, and every connection shares the database's
+// lock table, so concurrent large batches could otherwise exhaust it.
+const deleteGroupSize = 100
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
 // DeleteObjects deletes multiple objects in a single request. Metadata removal
-// happens in a single transaction via DeleteObjectsBatch; the copies' bytes are
-// then removed one batched delete per backend.
+// runs one transaction per group of keys, and a group that fails reports its
+// own keys and leaves them in place. The bytes of every group that committed are
+// then removed together, one batched delete per backend.
 func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = s3op.DeleteObjects
 	start := time.Now()
@@ -93,23 +100,43 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		results[i].Key = key
 	}
 
-	cleanup, err := o.d.Stores.DeleteObjectsBatch(ctx, keys)
-	if err != nil {
-		// Whole-tx failure: every key surfaces the error. The cache and
-		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.d.Core.ClassifyWriteError(span, operation, err)
-		for i := range results {
-			results[i].Err = classified
+	var cleanup []core.CleanupItem
+	failed := 0
+	for group := range slices.Chunk(results, deleteGroupSize) {
+		queued, err := o.deleteGroup(ctx, group)
+		if err != nil {
+			classified := o.d.Core.ClassifyWriteError(span, operation, err)
+			for i := range group {
+				group[i].Err = classified
+			}
+			failed += len(group)
+			continue
 		}
-		return results
-	}
-	// A key that held no copies was already gone (not-found is silent
-	// success), so its location hint is also stale and worth dropping.
-	for _, key := range keys {
-		o.d.LocationCache.Delete(key)
+		cleanup = append(cleanup, queued...)
 	}
 	o.d.Coord.Settle(ctx, cleanup)
 
-	o.finalizeBatchDelete(ctx, span, len(keys), start)
+	if len(keys) > 0 && failed == len(keys) {
+		return results
+	}
+	o.finalizeBatchDelete(ctx, span, len(keys), failed, start)
 	return results
+}
+
+// deleteGroup removes one group's keys in a transaction and returns the cleanup
+// rows it queued. A key that held no copies was already gone (not-found is
+// silent success), so its location hint is also stale and worth dropping.
+func (o *Manager) deleteGroup(ctx context.Context, group []DeleteObjectResult) ([]core.CleanupItem, error) {
+	keys := make([]string, len(group))
+	for i := range group {
+		keys[i] = group[i].Key
+	}
+	cleanup, err := o.d.Stores.DeleteObjectsBatch(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		o.d.LocationCache.Delete(key)
+	}
+	return cleanup, nil
 }

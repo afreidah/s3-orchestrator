@@ -22,13 +22,15 @@ ON CONFLICT (backend_name) DO UPDATE SET
     bytes_limit = $2,
     updated_at = NOW();
 
--- name: AdjustQuotaStripe :exec
--- Applies a signed delta to one stripe, materializing the row on first use so
+-- name: AdjustQuotaStripes :exec
+-- Applies signed deltas to stripes, materializing each row on first use so
 -- nothing has to seed a backend's stripes up front. No bytes_limit guard: the
 -- ceiling is enforced before the write is admitted, and a counter that declined
 -- to record bytes already on a backend would understate it permanently.
+-- The arrays are zipped by unnesting them side by side, and the rows are written
+-- in array order, which is the order concurrent charges rely on not to deadlock.
 INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-VALUES (@backend_name, @stripe_id, @delta)
+SELECT unnest(@backend_names::text[]), unnest(@stripe_ids::smallint[]), unnest(@deltas::bigint[])
 ON CONFLICT (backend_name, stripe_id) DO UPDATE
 SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used;
 

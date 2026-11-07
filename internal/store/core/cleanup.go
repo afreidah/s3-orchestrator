@@ -29,17 +29,23 @@ import (
 // returns the queued rows for the caller to settle once the transaction
 // commits.
 func enqueueRemoved(ctx context.Context, tx TxAdapter, objectKey, reason string, removed []removedCopy) ([]CleanupItem, error) {
-	if len(removed) == 0 {
+	requests := make([]*CleanupRequest, len(removed))
+	for i, d := range removed {
+		requests[i] = d.request(objectKey, reason)
+	}
+	return queueCleanup(ctx, tx, requests)
+}
+
+// queueCleanup queues every request in one statement and returns the queued
+// rows. A transaction removing many keys or parts builds its requests and calls
+// this once, so its cost does not grow by a round trip per row.
+func queueCleanup(ctx context.Context, tx TxAdapter, requests []*CleanupRequest) ([]CleanupItem, error) {
+	if len(requests) == 0 {
 		return nil, nil
 	}
-	items := make([]CleanupItem, 0, len(removed))
-	for _, d := range removed {
-		c := d.request(objectKey, reason)
-		item, err := tx.InsertCleanup(ctx, c)
-		if err != nil {
-			return nil, fmt.Errorf("queue cleanup on %s: %w", c.BackendName, err)
-		}
-		items = append(items, item)
+	items, err := tx.InsertCleanup(ctx, requests...)
+	if err != nil {
+		return nil, fmt.Errorf("queue cleanup: %w", err)
 	}
 	return items, nil
 }

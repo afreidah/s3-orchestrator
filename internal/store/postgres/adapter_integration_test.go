@@ -192,11 +192,11 @@ func cleanupOf(backend, key, reason string, size int64) *core.CleanupRequest {
 // claim.
 func queueCleanup(t *testing.T, s *Store, c *core.CleanupRequest) core.CleanupItem {
 	t.Helper()
-	item, err := s.direct().InsertCleanup(context.Background(), c)
+	items, err := s.direct().InsertCleanup(context.Background(), c)
 	if err != nil {
 		t.Fatalf("InsertCleanup(%s): %v", c.ObjectKey, err)
 	}
-	return item
+	return items[0]
 }
 
 // dropCleanupRows deletes the queued rows with ids whatever claim holds them,
@@ -647,12 +647,13 @@ func TestPgAdapter_InsertCleanup_ClaimsRowForInstance(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		item, err := a.InsertCleanup(ctx, &core.CleanupRequest{
+		items, err := a.InsertCleanup(ctx, &core.CleanupRequest{
 			BackendName: "backend-a", ObjectKey: key, StorageKey: key + "!w1", Reason: "test", SizeBytes: 256,
 		})
 		if err != nil {
 			t.Fatalf("InsertCleanup: %v", err)
 		}
+		item := items[0]
 		row := txCleanupRow(t, a, item.ID)
 		if row.StorageKey != key+"!w1" || row.ObjectKey != key || row.SizeBytes != 256 || row.Reason != "test" {
 			t.Errorf("row = %+v, want the queued request's fields", row)
@@ -681,10 +682,11 @@ func TestPgAdapter_InsertCleanup_NoInstanceClaimsWithEmptyBy(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
-	item, err := a.InsertCleanup(ctx, cleanupOf("backend-a", uniqueKey(t, "k"), "test", 1))
+	items, err := a.InsertCleanup(ctx, cleanupOf("backend-a", uniqueKey(t, "k"), "test", 1))
 	if err != nil {
 		t.Fatalf("InsertCleanup: %v", err)
 	}
+	item := items[0]
 	row := txCleanupRow(t, a, item.ID)
 	if item.Claim == nil || item.Claim.By != "" || item.Claim.At.IsZero() {
 		t.Fatalf("claim = %+v, want a stamped claim with empty By", item.Claim)
@@ -834,10 +836,10 @@ func TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		before := pgBytesUsed(t, ctx, a, "backend-a")
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 4, 500); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, Delta: 500}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 4, 250); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, Delta: 250}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := pgBytesUsed(t, ctx, a, "backend-a") - before; got != 750 {
@@ -871,11 +873,11 @@ func TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped(t *testing.T)
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 8, 1000); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 8, Delta: 1000}); err != nil {
 			t.Fatalf("seed stripe 8: %v", err)
 		}
 		before := pgBytesUsed(t, ctx, a, "backend-a")
-		if err := a.AdjustQuotaStripe(ctx, "backend-a", 9, -400); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 9, Delta: -400}); err != nil {
 			t.Fatalf("credit stripe 9: %v", err)
 		}
 		// A stripe clamped at zero would leave the total unchanged.

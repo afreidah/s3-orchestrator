@@ -300,21 +300,23 @@ type quotaOp struct {
 	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
 }
 
-// AdjustQuotaStripe records the signed delta into ops and adjustments and
+// AdjustQuotaStripes records each signed delta into ops and adjustments and
 // honours the failure hooks. The stripe is not recorded so tests do not depend
 // on the hash.
-func (t *quotaTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int16, delta int64) error {
+func (t *quotaTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.adjustErr != nil {
 		return t.adjustErr
 	}
-	if backend == t.failOn {
-		return t.failErr
+	for _, c := range charges {
+		if c.Backend == t.failOn {
+			return t.failErr
+		}
+		op := quotaOp{backend: c.Backend, delta: c.Delta}
+		t.ops = append(t.ops, op)
+		t.adjustments = append(t.adjustments, op)
 	}
-	op := quotaOp{backend: backend, delta: delta}
-	t.ops = append(t.ops, op)
-	t.adjustments = append(t.adjustments, op)
 	return nil
 }
 
@@ -541,10 +543,12 @@ type stripeRecordingTxStub struct {
 	total   int64
 }
 
-func (s *stripeRecordingTxStub) AdjustQuotaStripe(_ context.Context, backend string, stripe int16, delta int64) error {
-	s.stripes = append(s.stripes, stripe)
-	s.rows = append(s.rows, stripeRow{backend, stripe})
-	s.total += delta
+func (s *stripeRecordingTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
+	for _, c := range charges {
+		s.stripes = append(s.stripes, c.Stripe)
+		s.rows = append(s.rows, stripeRow{c.Backend, c.Stripe})
+		s.total += c.Delta
+	}
 	return nil
 }
 

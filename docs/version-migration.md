@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Bulk deletes run in groups of 100 keys ([#1877](https://github.com/afreidah/s3-orchestrator/issues/1877), v0.179.18)**
+
+`DeleteObjects`, prefix deletes and lifecycle expiry used to remove a whole batch in one transaction, holding a lock on every key until it ended. Concurrent large batches could exhaust the Postgres lock table and fail with `out of shared memory`, including unrelated writes. Each group of 100 keys is now its own transaction. Queueing cleanup rows, clearing intents and charging quota stripes are one statement per transaction instead of one per row, which also applies to multipart abort and completion cleanup. No migration.
+
+**Operator action items after upgrade:**
+
+- **A bulk delete can now partly succeed.** If a group fails, its keys report errors and stay in place while the other groups' keys are deleted. It used to be all or nothing. Retrying the failed keys is safe.
+
 **Webhooks from api instances, bounded method labels, digests enforced ([#1884](https://github.com/afreidah/s3-orchestrator/issues/1884), v0.179.17)**
 
 Instances in `api` mode never installed the event emitter, so client write events raised there were dropped. They now reach the outbox from every mode, and delivery stays on workers. An unknown HTTP method is counted under `OTHER`, because an unauthenticated client could otherwise create metric series without limit.

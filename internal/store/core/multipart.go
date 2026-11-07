@@ -120,19 +120,12 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 		if err != nil {
 			return nil, err
 		}
-		items := make([]CleanupItem, 0, len(parts))
+		requests := make([]*CleanupRequest, len(parts))
 		for i := range parts {
-			queued, err := enqueueRemoved(ctx, tx, PartPath(uploadID, parts[i].PartNumber), reason, []removedCopy{{
-				BackendName: backendName,
-				StorageKey:  parts[i].Path(uploadID),
-				SizeBytes:   parts[i].SizeBytes,
-			}})
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, queued...)
+			part := removedCopy{BackendName: backendName, StorageKey: parts[i].Path(uploadID), SizeBytes: parts[i].SizeBytes}
+			requests[i] = part.request(PartPath(uploadID, parts[i].PartNumber), reason)
 		}
-		return items, nil
+		return queueCleanup(ctx, tx, requests)
 	})
 }
 

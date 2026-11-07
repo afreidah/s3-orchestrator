@@ -121,11 +121,11 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return nil, err
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, req.Key, intentIDs(req.Placing), committed)
+	superseded, err := clearSupersededIntents(ctx, tx, intentIDs(req.Placing), committed, req.Key)
 	if err != nil {
 		return nil, err
 	}
-	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded...))
+	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded[req.Key]...))
 }
 
 // keyIntentsHeld takes the key's lock, then reports whether every intent still
@@ -223,17 +223,20 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		return nil, err
 	}
 	removed, debits := splitRemovedCopies(rows, len(keys))
-	var cleanup []CleanupItem
-	for _, key := range slices.Sorted(maps.Keys(removed)) {
-		superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
-		if err != nil {
-			return nil, err
+	held := slices.Sorted(maps.Keys(removed))
+	superseded, err := clearSupersededIntents(ctx, tx, nil, nil, held...)
+	if err != nil {
+		return nil, err
+	}
+	requests := make([]*CleanupRequest, 0, len(rows))
+	for _, key := range held {
+		for _, d := range append(removed[key], superseded[key]...) {
+			requests = append(requests, d.request(key, CleanupReasonDeleted))
 		}
-		queued, err := enqueueRemoved(ctx, tx, key, CleanupReasonDeleted, append(removed[key], superseded...))
-		if err != nil {
-			return nil, err
-		}
-		cleanup = append(cleanup, queued...)
+	}
+	cleanup, err := queueCleanup(ctx, tx, requests)
+	if err != nil {
+		return nil, err
 	}
 	if err := debits.charge(ctx, tx); err != nil {
 		return nil, err
@@ -583,7 +586,7 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 			return ImportSkippedExisting, nil
 		}
 		// Charged without a ceiling check because the bytes are already stored.
-		if err := tx.AdjustQuotaStripe(ctx, req.Backend, StripeFor(req.Key), req.Size); err != nil {
+		if err := chargeStripes(ctx, tx, req.Key, quotaDeltas{req.Backend: req.Size}); err != nil {
 			return ImportSkippedExisting, err
 		}
 		return ImportInserted, nil

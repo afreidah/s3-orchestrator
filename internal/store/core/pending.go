@@ -165,25 +165,26 @@ func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (
 	return companionOutcome{result: CompanionCopyUntrusted, cleanup: cleanup}, nil
 }
 
-// clearSupersededIntents removes every intent for the key except keep, and
-// returns the bytes of each cleared intent not in committing for deletion.
+// clearSupersededIntents removes every intent for the keys except keep, and
+// returns the bytes of each cleared intent not in committing for deletion,
+// grouped by the key each belonged to.
 //
 // committing intents are cleared but their bytes are the object being
 // recorded. Every other cleared intent's bytes are stale, even on a backend
 // this write also landed on, since they sit at a different path. keep holds
 // this write's own uploads still in flight; their surviving rows are what
 // their later commit reads as proof that nothing newer touched the key.
-func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep, committing []string) ([]removedCopy, error) {
-	cleared, err := tx.ClearPendingForKey(ctx, key, keep)
+func clearSupersededIntents(ctx context.Context, tx TxAdapter, keep, committing []string, keys ...string) (map[string][]removedCopy, error) {
+	cleared, err := tx.ClearPendingForKey(ctx, keep, keys...)
 	if err != nil {
 		return nil, fmt.Errorf("clear superseded intents: %w", err)
 	}
-	stale := make([]removedCopy, 0, len(cleared))
+	stale := make(map[string][]removedCopy, len(cleared))
 	for _, si := range cleared {
 		if slices.Contains(committing, si.IntentID) {
 			continue
 		}
-		stale = append(stale, removedCopy{
+		stale[si.ObjectKey] = append(stale[si.ObjectKey], removedCopy{
 			BackendName: si.BackendName,
 			StorageKey:  si.StorageKey,
 			SizeBytes:   si.SizeBytes,

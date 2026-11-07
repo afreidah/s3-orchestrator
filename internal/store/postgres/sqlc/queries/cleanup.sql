@@ -9,15 +9,20 @@
 -- bytes are the sum of its rows here, read through backend_capacity.
 -- -----------------------------------------------------------------------------
 
--- name: InsertCleanup :one
+-- name: InsertCleanup :many
 -- Queued inside the transaction that stopped recording the bytes, already
 -- claimed by the instance that will delete them once it commits. A claim that
 -- instance never settles becomes reclaimable after the grace period.
 -- storage_key is what is deleted; object_key rides along so an operator reading
 -- the queue still sees which object the bytes belonged to.
+-- The arrays are zipped by unnesting them side by side, one row each. Every
+-- column comes back, in the shape GetPendingCleanups reads, so a caller never
+-- has to match a returned row to the request it came from.
 INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, claimed_at, claimed_by)
-VALUES (@backend_name, @object_key, @storage_key, @reason, @size_bytes, NOW(), @claimed_by)
-RETURNING id, claimed_at;
+SELECT unnest(@backend_names::text[]), unnest(@object_keys::text[]), unnest(@storage_keys::text[]),
+       unnest(@reasons::text[]), unnest(@size_bytes::bigint[]), NOW(), sqlc.narg(claimed_by)::text
+RETURNING id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
+          claimed_at, claimed_by, FALSE::boolean AS reclaimed;
 
 -- name: GetPendingCleanups :many
 -- Read-only listing for the admin endpoint and operator visibility. The

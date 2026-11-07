@@ -82,21 +82,22 @@ func (a *sqliteTxAdapter) exists(ctx context.Context, what, query string, args .
 	return true, nil
 }
 
-// ClearPendingForKey removes the key's intents apart from the ones the caller
+// ClearPendingForKey removes the keys' intents apart from the ones the caller
 // is committing, reporting each so its bytes can be cleaned off the backend
 // after the transaction commits.
-func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
+func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, keep []string, objectKeys ...string) ([]core.SupersededIntent, error) {
 	rows, err := a.q.QueryContext(ctx,
 		`DELETE FROM pending_objects
-		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))
-		 RETURNING intent_id, backend_name, storage_key, size_bytes`,
-		objectKey, jsonList(keep))
+		  WHERE object_key IN (SELECT value FROM json_each(?))
+		    AND intent_id NOT IN (SELECT value FROM json_each(?))
+		 RETURNING intent_id, object_key, backend_name, storage_key, size_bytes`,
+		jsonList(objectKeys), jsonList(keep))
 	if err != nil {
 		return nil, fmt.Errorf("clear pending intents for key: %w", err)
 	}
 	return collectRows(rows, "superseded intents", func(rows *sql.Rows) (core.SupersededIntent, error) {
 		var si core.SupersededIntent
-		if err := rows.Scan(&si.IntentID, &si.BackendName, &si.StorageKey, &si.SizeBytes); err != nil {
+		if err := rows.Scan(&si.IntentID, &si.ObjectKey, &si.BackendName, &si.StorageKey, &si.SizeBytes); err != nil {
 			return core.SupersededIntent{}, fmt.Errorf("scan superseded intent: %w", err)
 		}
 		return si, nil
@@ -322,29 +323,34 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 // CLEANUP TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// InsertCleanup queues c's bytes for deletion, claimed by this instance, and
-// returns the row with the claim it was stamped with. Times are written in the
-// canonical fixed-width format, so the claim a settle matches is exactly the
-// text stored.
-func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
+// InsertCleanup queues the requests' bytes for deletion, claimed by this
+// instance, and returns the rows with the claim they were stamped with. Times
+// are written in the canonical fixed-width format, so the claim a settle
+// matches is exactly the text stored. Each row is its own statement, since
+// SQLite runs in-process and a statement costs no round trip.
+func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, requests ...*core.CleanupRequest) ([]core.CleanupItem, error) {
 	claimedAt := time.Now()
 	stamp := formatTime(claimedAt)
-	var id int64
-	if err := a.q.QueryRowContext(ctx,
-		`INSERT INTO cleanup_queue
-		   (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry, claimed_at, claimed_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 RETURNING id`,
-		c.BackendName, c.ObjectKey, c.StorageKey, c.Reason, c.SizeBytes,
-		stamp, stamp, stamp, nullableString(a.instanceID),
-	).Scan(&id); err != nil {
-		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
+	items := make([]core.CleanupItem, len(requests))
+	for i, c := range requests {
+		var id int64
+		if err := a.q.QueryRowContext(ctx,
+			`INSERT INTO cleanup_queue
+			   (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry, claimed_at, claimed_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 RETURNING id`,
+			c.BackendName, c.ObjectKey, c.StorageKey, c.Reason, c.SizeBytes,
+			stamp, stamp, stamp, nullableString(a.instanceID),
+		).Scan(&id); err != nil {
+			return nil, fmt.Errorf("insert cleanup row: %w", err)
+		}
+		items[i] = core.CleanupItem{
+			CleanupRequest: *c,
+			ID:             id,
+			Claim:          &core.CleanupClaim{At: claimedAt, By: a.instanceID},
+		}
 	}
-	return core.CleanupItem{
-		CleanupRequest: *c,
-		ID:             id,
-		Claim:          &core.CleanupClaim{At: claimedAt, By: a.instanceID},
-	}, nil
+	return items, nil
 }
 
 // execRows runs a write and reports how many rows it changed. what prefixes
@@ -381,17 +387,22 @@ func (a *sqliteTxAdapter) exec(ctx context.Context, what, query string, args ...
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// AdjustQuotaStripe applies a signed delta to one of a backend's byte-counter
-// stripes, materializing the row on first use so nothing has to seed a
-// backend's stripes up front. No clamp: a stripe is signed, and the total it
-// contributes to is what gets clamped when read.
-func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
-	return a.exec(ctx, "adjust quota stripe for "+backendName, `
-		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-		VALUES (?, ?, ?)
-		ON CONFLICT (backend_name, stripe_id) DO UPDATE
-		SET bytes_used = bytes_used + excluded.bytes_used`,
-		backendName, stripe, delta)
+// AdjustQuotaStripes applies signed deltas to a backend's byte-counter stripes,
+// materializing each row on first use so nothing has to seed a backend's
+// stripes up front. No clamp: a stripe is signed, and the total it contributes
+// to is what gets clamped when read.
+func (a *sqliteTxAdapter) AdjustQuotaStripes(ctx context.Context, charges ...core.StripeCharge) error {
+	for _, c := range charges {
+		if err := a.exec(ctx, "adjust quota stripe for "+c.Backend, `
+			INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+			VALUES (?, ?, ?)
+			ON CONFLICT (backend_name, stripe_id) DO UPDATE
+			SET bytes_used = bytes_used + excluded.bytes_used`,
+			c.Backend, c.Stripe, c.Delta); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AcquireBackendLock is a no-op on SQLite: the engine serializes writers, so a

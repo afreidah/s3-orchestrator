@@ -94,10 +94,12 @@ func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 		if err != nil {
 			return nil, err
 		}
+		charges := make([]core.StripeCharge, 0, len(drift))
 		for backend, delta := range drift {
-			if err := a.AdjustQuotaStripe(ctx, backend, 0, delta); err != nil {
-				return nil, err
-			}
+			charges = append(charges, core.StripeCharge{Backend: backend, Delta: delta})
+		}
+		if err := a.AdjustQuotaStripes(ctx, charges...); err != nil {
+			return nil, err
 		}
 		return drift, nil
 	})

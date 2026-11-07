@@ -203,6 +203,7 @@ const (
 // needs; the intent itself is already gone by the time a caller sees this.
 type SupersededIntent struct {
 	IntentID    string
+	ObjectKey   string
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64

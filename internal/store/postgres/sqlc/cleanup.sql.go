@@ -275,25 +275,35 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, arg GetPendingCleanups
 	return items, nil
 }
 
-const insertCleanup = `-- name: InsertCleanup :one
+const insertCleanup = `-- name: InsertCleanup :many
 
 INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, claimed_at, claimed_by)
-VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-RETURNING id, claimed_at
+SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]),
+       unnest($4::text[]), unnest($5::bigint[]), NOW(), $6::text
+RETURNING id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
+          claimed_at, claimed_by, FALSE::boolean AS reclaimed
 `
 
 type InsertCleanupParams struct {
+	BackendNames []string
+	ObjectKeys   []string
+	StorageKeys  []string
+	Reasons      []string
+	SizeBytes    []int64
+	ClaimedBy    *string
+}
+
+type InsertCleanupRow struct {
+	ID          int64
 	BackendName string
 	ObjectKey   string
 	StorageKey  string
 	Reason      string
+	Attempts    int32
 	SizeBytes   int64
+	ClaimedAt   pgtype.Timestamptz
 	ClaimedBy   *string
-}
-
-type InsertCleanupRow struct {
-	ID        int64
-	ClaimedAt pgtype.Timestamptz
+	Reclaimed   bool
 }
 
 // -----------------------------------------------------------------------------
@@ -311,18 +321,45 @@ type InsertCleanupRow struct {
 // instance never settles becomes reclaimable after the grace period.
 // storage_key is what is deleted; object_key rides along so an operator reading
 // the queue still sees which object the bytes belonged to.
-func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) (InsertCleanupRow, error) {
-	row := q.db.QueryRow(ctx, insertCleanup,
-		arg.BackendName,
-		arg.ObjectKey,
-		arg.StorageKey,
-		arg.Reason,
+// The arrays are zipped by unnesting them side by side, one row each. Every
+// column comes back, in the shape GetPendingCleanups reads, so a caller never
+// has to match a returned row to the request it came from.
+func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) ([]InsertCleanupRow, error) {
+	rows, err := q.db.Query(ctx, insertCleanup,
+		arg.BackendNames,
+		arg.ObjectKeys,
+		arg.StorageKeys,
+		arg.Reasons,
 		arg.SizeBytes,
 		arg.ClaimedBy,
 	)
-	var i InsertCleanupRow
-	err := row.Scan(&i.ID, &i.ClaimedAt)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InsertCleanupRow{}
+	for rows.Next() {
+		var i InsertCleanupRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BackendName,
+			&i.ObjectKey,
+			&i.StorageKey,
+			&i.Reason,
+			&i.Attempts,
+			&i.SizeBytes,
+			&i.ClaimedAt,
+			&i.ClaimedBy,
+			&i.Reclaimed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCleanupDLQ = `-- name: ListCleanupDLQ :many

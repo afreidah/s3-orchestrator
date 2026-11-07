@@ -30,8 +30,11 @@ type intentClearingTxStub struct {
 	cleared  bool
 }
 
-func (s *intentClearingTxStub) ClearPendingForKey(_ context.Context, _ string, _ []string) ([]SupersededIntent, error) {
+func (s *intentClearingTxStub) ClearPendingForKey(_ context.Context, _ []string, keys ...string) ([]SupersededIntent, error) {
 	s.cleared = true
+	for i := range s.pending {
+		s.pending[i].ObjectKey = keys[0]
+	}
 	return s.pending, s.clearErr
 }
 
@@ -190,8 +193,8 @@ func (s *multiCopyTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLoc
 
 // ClearPendingForKey captures the intents the commit resolves. A write clears
 // the key's intents as a set, its own among them, rather than one at a time.
-func (s *multiCopyTxStub) ClearPendingForKey(_ context.Context, objectKey string, keep []string) ([]SupersededIntent, error) {
-	s.cleared = append(s.cleared, objectKey)
+func (s *multiCopyTxStub) ClearPendingForKey(_ context.Context, keep []string, keys ...string) ([]SupersededIntent, error) {
+	s.cleared = append(s.cleared, keys...)
 	s.kept = append(s.kept, keep...)
 	return nil, nil
 }
@@ -382,12 +385,16 @@ type batchIntentStub struct {
 
 // ClearPendingForKey reports one stale intent per key, on b9 at the key's own
 // intent path.
-func (s *batchIntentStub) ClearPendingForKey(_ context.Context, key string, _ []string) ([]SupersededIntent, error) {
+func (s *batchIntentStub) ClearPendingForKey(_ context.Context, _ []string, keys ...string) ([]SupersededIntent, error) {
 	if s.clearErr != nil {
 		return nil, s.clearErr
 	}
-	s.cleared = append(s.cleared, key)
-	return []SupersededIntent{{IntentID: "i-" + key, BackendName: "b9", StorageKey: key + "!inflight", SizeBytes: 5}}, nil
+	s.cleared = append(s.cleared, keys...)
+	intents := make([]SupersededIntent, len(keys))
+	for i, key := range keys {
+		intents[i] = SupersededIntent{IntentID: "i-" + key, ObjectKey: key, BackendName: "b9", StorageKey: key + "!inflight", SizeBytes: 5}
+	}
+	return intents, nil
 }
 
 // TestDeleteObjectsBatch_ClearsIntentsAndQueues verifies the batch clears each

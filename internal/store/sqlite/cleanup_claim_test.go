@@ -41,11 +41,14 @@ func queueCleanup(t *testing.T, s *Store, backend, key string, size int64) core.
 	t.Helper()
 	var item core.CleanupItem
 	if err := s.WithTx(context.Background(), func(ctx context.Context, tx core.TxAdapter) error {
-		var err error
-		item, err = tx.InsertCleanup(ctx, &core.CleanupRequest{
+		items, err := tx.InsertCleanup(ctx, &core.CleanupRequest{
 			BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "test", SizeBytes: size,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		item = items[0]
+		return nil
 	}); err != nil {
 		t.Fatalf("InsertCleanup(%s): %v", key, err)
 	}
@@ -223,12 +226,13 @@ func TestSqlite_InsertCleanup_NoInstanceLeavesClaimantNull(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	a := &sqliteTxAdapter{q: s.db}
-	item, err := a.InsertCleanup(ctx, &core.CleanupRequest{
+	items, err := a.InsertCleanup(ctx, &core.CleanupRequest{
 		BackendName: cleanupBackend, ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: 1,
 	})
 	if err != nil {
 		t.Fatalf("InsertCleanup: %v", err)
 	}
+	item := items[0]
 	if item.Claim == nil || item.Claim.By != "" {
 		t.Fatalf("Claim = %+v, want one with an empty claimant", item.Claim)
 	}

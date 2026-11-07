@@ -11,25 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const adjustQuotaStripe = `-- name: AdjustQuotaStripe :exec
+const adjustQuotaStripes = `-- name: AdjustQuotaStripes :exec
 INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-VALUES ($1, $2, $3)
+SELECT unnest($1::text[]), unnest($2::smallint[]), unnest($3::bigint[])
 ON CONFLICT (backend_name, stripe_id) DO UPDATE
 SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
 `
 
-type AdjustQuotaStripeParams struct {
-	BackendName string
-	StripeID    int16
-	Delta       int64
+type AdjustQuotaStripesParams struct {
+	BackendNames []string
+	StripeIds    []int16
+	Deltas       []int64
 }
 
-// Applies a signed delta to one stripe, materializing the row on first use so
+// Applies signed deltas to stripes, materializing each row on first use so
 // nothing has to seed a backend's stripes up front. No bytes_limit guard: the
 // ceiling is enforced before the write is admitted, and a counter that declined
 // to record bytes already on a backend would understate it permanently.
-func (q *Queries) AdjustQuotaStripe(ctx context.Context, arg AdjustQuotaStripeParams) error {
-	_, err := q.db.Exec(ctx, adjustQuotaStripe, arg.BackendName, arg.StripeID, arg.Delta)
+// The arrays are zipped by unnesting them side by side, and the rows are written
+// in array order, which is the order concurrent charges rely on not to deadlock.
+func (q *Queries) AdjustQuotaStripes(ctx context.Context, arg AdjustQuotaStripesParams) error {
+	_, err := q.db.Exec(ctx, adjustQuotaStripes, arg.BackendNames, arg.StripeIds, arg.Deltas)
 	return err
 }
 

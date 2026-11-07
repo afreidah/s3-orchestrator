@@ -46,7 +46,7 @@ func (*noopTxAdapter) ClaimPending(context.Context, string) (bool, error) { retu
 
 func (*noopTxAdapter) DeletePending(context.Context, string) error { return nil }
 
-func (*noopTxAdapter) ClearPendingForKey(context.Context, string, []string) ([]SupersededIntent, error) {
+func (*noopTxAdapter) ClearPendingForKey(context.Context, []string, ...string) ([]SupersededIntent, error) {
 	return nil, nil
 }
 
@@ -76,8 +76,12 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) InsertCleanup(_ context.Context, c *CleanupRequest) (CleanupItem, error) {
-	return CleanupItem{CleanupRequest: *c}, nil
+func (*noopTxAdapter) InsertCleanup(_ context.Context, requests ...*CleanupRequest) ([]CleanupItem, error) {
+	items := make([]CleanupItem, len(requests))
+	for i, c := range requests {
+		items[i] = CleanupItem{CleanupRequest: *c}
+	}
+	return items, nil
 }
 
 func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*MultipartPart, error) {
@@ -96,4 +100,4 @@ func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) e
 
 func (*noopTxAdapter) DeleteObjectTags(context.Context, ...string) error { return nil }
 
-func (*noopTxAdapter) AdjustQuotaStripe(context.Context, string, int16, int64) error { return nil }
+func (*noopTxAdapter) AdjustQuotaStripes(context.Context, ...StripeCharge) error { return nil }
