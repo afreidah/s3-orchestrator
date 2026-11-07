@@ -51,15 +51,20 @@ type Config struct {
 // belong here, see docs/style-guide.md "Where new methods live". states is
 // wired after construction by SetStateChecker.
 type BackendRuntime struct {
-	cfg      Config
-	states   StateChecker
-	recorder *accounting.Recorder
+	cfg        Config
+	states     StateChecker
+	recorder   *accounting.Recorder
+	workerTurn chan struct{}
 }
 
 // New constructs a *BackendRuntime from cfg. The accounting Recorder is built
 // here so every consumer shares one instance over the same usage tracker.
 func New(cfg *Config) *BackendRuntime {
-	return &BackendRuntime{cfg: *cfg, recorder: accounting.New(cfg.Usage, telemetry.ManagerOps.Record)}
+	return &BackendRuntime{
+		cfg:        *cfg,
+		recorder:   accounting.New(cfg.Usage, telemetry.ManagerOps.Record),
+		workerTurn: make(chan struct{}, 1),
+	}
 }
 
 // -------------------------------------------------------------------------

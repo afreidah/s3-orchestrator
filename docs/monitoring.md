@@ -280,6 +280,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_replication_write_copies_total` | Counter | `outcome` | Further copies placed during the write (`committed`, `untrusted`, `failed`) |
 | `s3o_replication_write_copies_committed` | Histogram | - | Copies committed per fan-out write, including the one that answered the client. Sitting at `replication.factor` means writes reach it unaided; drifting toward 1 means they are degrading to a single copy |
 | `s3o_detached_uploads_depth` | Gauge | - | Writes whose further copies are still uploading after the response |
+| `s3o_detached_settles_depth` | Gauge | - | Client requests whose backend deletes are still running after the response |
 | `s3o_replication_write_fanout_skipped_total` | Counter | - | Writes that fell back to a single copy because no detached-upload slot was free |
 | `s3o_replication_errors_total` | Counter | - | Replication errors |
 | `s3o_replication_health_copies_total` | Counter | - | Copies created to replace copies on backends refusing reads |

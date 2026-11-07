@@ -35,7 +35,7 @@ Lifecycle is the one where this matters most in practice. Its tick is hourly and
 
 ## Concurrency
 
-Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations.
+Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations. A worker takes a free slot while the pool is under half full. Past that, one worker at a time waits on it and keeps that turn until its item finishes, so background work holds one slot however busy clients are and the rest go to them. Replication, drain and cleanup slow down while the pool stays at least half full.
 
 ## Multi-instance behavior
 

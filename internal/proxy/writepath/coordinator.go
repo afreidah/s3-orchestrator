@@ -59,15 +59,19 @@ type CoordinatorStores interface {
 // methods on one value every consumer shares, with no post-construction wiring
 // step.
 type Coordinator struct {
-	core    WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, deletes
-	stores  CoordinatorStores
-	settler *cleanup.Settler
-	log     *slog.Logger
+	core     WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, deletes
+	stores   CoordinatorStores
+	settler  *cleanup.Settler
+	settling *DetachedUploads
+	log      *slog.Logger
 }
 
 // settleConcurrency bounds how many backends a request deletes from at once,
 // and how many of its cleanup rows it settles at once.
 const settleConcurrency = 8
+
+// SettleCeiling caps the requests settling behind their responses at once.
+const SettleCeiling = 256
 
 // New constructs a Coordinator. The supplied core must observe the same
 // admission, usage, drain, and backend state every other collaborator sees;
@@ -78,11 +82,18 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{
-		core:    core,
-		stores:  stores,
-		settler: cleanup.New(cleanup.Deps{Deleter: core, Store: stores, Concurrency: settleConcurrency}),
-		log:     logfmt.Logger("writepath"),
+		core:     core,
+		stores:   stores,
+		settler:  cleanup.New(cleanup.Deps{Deleter: core, Store: stores, Concurrency: settleConcurrency}),
+		settling: newDetached(SettleCeiling, telemetry.DetachedSettlesDepth),
+		log:      logfmt.Logger("writepath"),
 	}
+}
+
+// Settling returns the registry of settles running behind their responses, for
+// shutdown to wait on.
+func (w *Coordinator) Settling() *DetachedUploads {
+	return w.settling
 }
 
 // -------------------------------------------------------------------------
@@ -220,6 +231,26 @@ func (w *Coordinator) Settle(ctx context.Context, items []core.CleanupItem) {
 		telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(items[i].Reason).Inc()
 	}
 	w.settler.Settle(ctx, items)
+}
+
+// SettleAfterResponse runs a client's settle behind its response, where a hang-up
+// cannot cancel the deletes. Work with no client waiting, or a request past
+// SettleCeiling, settles before returning.
+func (w *Coordinator) SettleAfterResponse(ctx context.Context, items []core.CleanupItem) {
+	if audit.WorkloadOf(ctx) != audit.WorkloadClient || len(items) == 0 {
+		w.Settle(ctx, items)
+		return
+	}
+	release, admitted := w.settling.Begin()
+	if !admitted {
+		w.Settle(ctx, items)
+		return
+	}
+	detached := context.WithoutCancel(ctx)
+	go func() {
+		defer release()
+		w.Settle(detached, items)
+	}()
 }
 
 // DropCopy removes one copy's row, keeping at least keepAtLeast copies of the
@@ -373,7 +404,7 @@ const (
 // settleDisplaced settles the cleanup an overwrite queued for the copies it
 // displaced, and audits the overwrite.
 func (w *Coordinator) settleDisplaced(ctx context.Context, key, newBackend string, displaced []core.CleanupItem) {
-	w.Settle(ctx, displaced)
+	w.SettleAfterResponse(ctx, displaced)
 	if len(displaced) > 0 {
 		audit.Log(ctx, "storage.overwrite_displaced",
 			slog.String("key", key),

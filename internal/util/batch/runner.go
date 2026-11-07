@@ -31,7 +31,7 @@ import (
 // progress label, and Observer, when set, receives the per-item steps.
 type Runner[T any] struct {
 	Concurrency int
-	Admission   Admission
+	Admission   Admitter
 	Observer    progress.Observer
 	Key         func(T) string
 }

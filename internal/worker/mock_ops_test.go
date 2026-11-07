@@ -63,11 +63,12 @@ func (mr *MockOpsMockRecorder) Acct() *gomock.Call {
 }
 
 // AcquireAdmission mocks base method.
-func (m *MockOps) AcquireAdmission(ctx context.Context) bool {
+func (m *MockOps) AcquireAdmission(ctx context.Context) (func(), bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AcquireAdmission", ctx)
-	ret0, _ := ret[0].(bool)
-	return ret0
+	ret0, _ := ret[0].(func())
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
 }
 
 // AcquireAdmission indicates an expected call of AcquireAdmission.
@@ -204,18 +205,6 @@ func (m *MockOps) RefusedFor(name string, required core.BackendCalls) time.Durat
 func (mr *MockOpsMockRecorder) RefusedFor(name, required any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefusedFor", reflect.TypeOf((*MockOps)(nil).RefusedFor), name, required)
-}
-
-// ReleaseAdmission mocks base method.
-func (m *MockOps) ReleaseAdmission() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ReleaseAdmission")
-}
-
-// ReleaseAdmission indicates an expected call of ReleaseAdmission.
-func (mr *MockOpsMockRecorder) ReleaseAdmission() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseAdmission", reflect.TypeOf((*MockOps)(nil).ReleaseAdmission))
 }
 
 // ServedCalls mocks base method.

@@ -31,13 +31,14 @@ type Slow struct {
 
 	delay time.Duration
 
-	DelayPuts  bool
-	DelayGets  bool
-	DelayHeads bool
+	DelayPuts    bool
+	DelayGets    bool
+	DelayHeads   bool
+	DelayDeletes bool
 }
 
-// NewSlow wraps inner so PutObject waits for d. Set DelayGets or DelayHeads on
-// the result to slow the read side too.
+// NewSlow wraps inner so PutObject waits for d. Set DelayGets, DelayHeads or
+// DelayDeletes on the result to slow those operations too.
 func NewSlow(inner backend.ObjectBackend, d time.Duration) *Slow {
 	return &Slow{ObjectBackend: inner, delay: d, DelayPuts: true}
 }
@@ -75,4 +76,12 @@ func (s *Slow) HeadObject(ctx context.Context, key string) (*backend.HeadObjectR
 		return nil, err
 	}
 	return s.ObjectBackend.HeadObject(ctx, key)
+}
+
+// DeleteObject delays when DelayDeletes is set, then forwards.
+func (s *Slow) DeleteObject(ctx context.Context, key string) error {
+	if err := s.wait(ctx, s.DelayDeletes); err != nil {
+		return err
+	}
+	return s.ObjectBackend.DeleteObject(ctx, key)
 }

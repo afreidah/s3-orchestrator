@@ -92,8 +92,7 @@ func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 	r, ops, _, _, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "gone")}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 
 	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
@@ -114,8 +113,7 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
@@ -138,8 +136,7 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
@@ -165,8 +162,7 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCommitted
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -191,8 +187,7 @@ func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCompanionKept
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -217,8 +212,7 @@ func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
 	ms.promoteCleanup = []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "bucket/k", SizeBytes: 100, Reason: core.CleanupReasonCompanionDiscarded},
 	}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -243,8 +237,7 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	ms.promoteCleanup = []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "bucket/k", SizeBytes: 100, Reason: core.CleanupReasonSupersededIntent},
 	}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -267,8 +260,7 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAlreadyResolved
 	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -291,8 +283,7 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAmbiguous
 	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -316,8 +307,7 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteErr = errors.New("db blip")
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -338,7 +328,7 @@ func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 	r, ops, _, _, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(nil, false)
 
 	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -360,8 +350,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedSettles(t *testing.T) {
 		{ID: 1, BackendName: "b2", ObjectKey: "bucket/k", SizeBytes: 200, Reason: core.CleanupReasonOverwritten},
 	}
 
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true)
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Head(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
@@ -411,8 +400,7 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 		pendingFixture("i1", "bucket/k1", "broken"),
 		pendingFixture("i2", "bucket/k2", "broken"),
 	}
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).Times(2)
-	ops.EXPECT().ReleaseAdmission().Times(2)
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true).Times(2)
 	ops.EXPECT().GetBackend("broken").Return(cb, nil).Times(2)
 
 	pendSum := passOf(t)(r.ProcessPendingQueue(context.Background()))

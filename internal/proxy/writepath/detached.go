@@ -12,6 +12,9 @@
 // on and what the ceiling counts, and both of those are properties of the
 // write's tail as a whole - the payload it holds open, the goroutine reading
 // it - rather than of the individual copies underneath.
+//
+// Client deletes get a registry of their own: a write holds its slot through
+// its claim, so a stalled claim must not refuse them.
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -20,6 +23,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
@@ -46,6 +51,7 @@ type DetachedUploads struct {
 	cond   *sync.Cond
 	limit  int
 	active int
+	depth  prometheus.Gauge
 }
 
 // -------------------------------------------------------------------------
@@ -56,7 +62,13 @@ type DetachedUploads struct {
 // limit of zero or less admits none, which turns every write back into one that
 // places a single copy.
 func NewDetachedUploads(limit int) *DetachedUploads {
-	d := &DetachedUploads{limit: limit}
+	return newDetached(limit, telemetry.DetachedUploadsDepth)
+}
+
+// newDetached builds a registry admitting at most limit tails, reporting how
+// many are running on depth.
+func newDetached(limit int, depth prometheus.Gauge) *DetachedUploads {
+	d := &DetachedUploads{limit: limit, depth: depth}
 	d.cond = sync.NewCond(&d.mu)
 	return d
 }
@@ -76,7 +88,7 @@ func (d *DetachedUploads) Begin() (release func(), admitted bool) {
 		return nil, false
 	}
 	d.active++
-	telemetry.DetachedUploadsDepth.Set(float64(d.active))
+	d.depth.Set(float64(d.active))
 	return sync.OnceFunc(d.done), true
 }
 
@@ -118,6 +130,6 @@ func (d *DetachedUploads) done() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.active--
-	telemetry.DetachedUploadsDepth.Set(float64(d.active))
+	d.depth.Set(float64(d.active))
 	d.cond.Broadcast()
 }

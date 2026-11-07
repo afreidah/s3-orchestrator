@@ -50,6 +50,7 @@ type bootstrapped struct {
 	usage     *usage.Service
 	metrics   *metrics.Collector
 	detached  *writepath.DetachedUploads
+	coord     *writepath.Coordinator
 	lifecyc   *lifecycle.Manager
 }
 
@@ -73,6 +74,7 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 		multipart: r.Resolve[*multipart.Manager](),
 		usage:     r.Resolve[*usage.Service](),
 		detached:  r.Resolve[*writepath.DetachedUploads](),
+		coord:     r.Resolve[*writepath.Coordinator](),
 	}
 	if err := r.Err(); err != nil {
 		return b, err

@@ -387,7 +387,7 @@ func TestMain(m *testing.M) {
 	proxyAddr = listener.Addr().String()
 
 	httpServer := &http.Server{
-		Handler:      srv,
+		Handler:      settledHandler(stack, srv),
 		ReadTimeout:  5 * time.Minute,
 		WriteTimeout: 5 * time.Minute,
 	}
@@ -419,6 +419,15 @@ func TestMain(m *testing.M) {
 	redisContainer.Terminate(ctx)
 
 	os.Exit(code)
+}
+
+// settledHandler answers once a request's deletes have finished, so a test can
+// inspect rows and bytes straight after it.
+func settledHandler(stack *proxytest.Stack, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		stack.Coord.Settling().Wait(context.Background())
+	})
 }
 
 // newS3Client returns an AWS SDK v2 S3 client pointed at the in-process proxy.

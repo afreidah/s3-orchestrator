@@ -5,8 +5,9 @@
 //
 // DeleteObject and DeleteObjects: the metadata delete runs in a transaction
 // that also queues the copies' bytes for deletion, one per group of keys for a
-// batch, then writepath.Coordinator.Settle deletes them, one batched delete per
-// backend. Success-finalization helpers live in mutation_finalize.go.
+// batch, then writepath.Coordinator.SettleAfterResponse deletes them, one
+// batched delete per backend. Success-finalization helpers live in
+// mutation_finalize.go.
 // -------------------------------------------------------------------------------
 
 package object
@@ -57,7 +58,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	// Drop the location cache entry first so concurrent readers are not sent
 	// to a backend mid-delete during the fan-out.
 	o.d.LocationCache.Delete(key)
-	o.d.Coord.Settle(ctx, copies)
+	o.d.Coord.SettleAfterResponse(ctx, copies)
 
 	o.finalizeDelete(ctx, span, key, copies, start)
 	return nil
@@ -114,7 +115,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		}
 		cleanup = append(cleanup, queued...)
 	}
-	o.d.Coord.Settle(ctx, cleanup)
+	o.d.Coord.SettleAfterResponse(ctx, cleanup)
 
 	if len(keys) > 0 && failed == len(keys) {
 		return results
