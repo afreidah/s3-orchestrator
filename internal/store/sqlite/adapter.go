@@ -417,9 +417,9 @@ func (a *sqliteTxAdapter) AcquireBackendLock(context.Context, ...string) error {
 
 // LockMultipartUpload reads the upload's backend and when a running
 // completion last renewed its mark. SQLite serializes writers, so the row
-// cannot change before the transaction ends. An upload already gone returns
-// an empty backend.
-func (a *sqliteTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string) (string, time.Time, error) {
+// cannot change before the transaction ends, whatever the mode. An upload
+// already gone returns an empty backend.
+func (a *sqliteTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string, _ core.UploadLock) (string, time.Time, error) {
 	var (
 		backendName string
 		heartbeat   sql.NullString

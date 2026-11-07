@@ -1554,7 +1554,7 @@ func TestDeleteMultipartUpload_LegacyPartAtFixedPath(t *testing.T) {
 	}
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID)
+		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID, core.UploadExclusive)
 		if err != nil || backend != "backend-b" || !heartbeat.IsZero() {
 			t.Fatalf("LockMultipartUpload = %s, %v, %v; want backend-b with no mark", backend, heartbeat, err)
 		}

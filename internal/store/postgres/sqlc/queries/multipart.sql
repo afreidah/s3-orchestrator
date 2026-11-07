@@ -57,11 +57,18 @@ ORDER BY part_number
 LIMIT @row_limit;
 
 -- name: LockMultipartUpload :one
--- Taken before a part is recorded or the parts are removed, so each waits for
--- the other and for a completion setting its mark, then sees what they wrote.
+-- Taken before the parts are removed, so the removal waits for part records
+-- and for a completion setting its mark, then sees what they wrote.
 SELECT backend_name, completion_heartbeat_at FROM multipart_uploads
 WHERE upload_id = $1
 FOR UPDATE;
+
+-- name: ShareMultipartUpload :one
+-- Taken before a part is recorded. Part records of one upload hold it together,
+-- while a removal or a completion setting its mark waits for them.
+SELECT backend_name, completion_heartbeat_at FROM multipart_uploads
+WHERE upload_id = $1
+FOR SHARE;
 
 -- name: BeginMultipartCompletion :execrows
 -- Marks the upload as being completed unless a completion that renewed its

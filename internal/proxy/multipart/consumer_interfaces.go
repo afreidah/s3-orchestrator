@@ -32,7 +32,7 @@ type Codec interface {
 // Runtime is the subset of *infra.BackendRuntime the multipart Manager needs.
 type Runtime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
-	Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	OpenGet(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.GetObjectResult, func(), context.CancelFunc, error)
 	Put(ctx context.Context, op s3op.Operation, req *backend.PutRequest) (string, error)
 	ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error
 	Acct() *accounting.Recorder

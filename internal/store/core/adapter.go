@@ -107,15 +107,14 @@ type CleanupTxAdapter interface {
 // -------------------------------------------------------------------------
 
 // MultipartTxAdapter exposes the transactional writes on multipart parts.
-// LockMultipartUpload locks the upload row for the rest of the transaction and
-// returns its backend and when a running completion last renewed its mark,
-// zero when none is running; an upload already gone returns an empty backend.
-// UpsertPart records a
-// part at the path its intent names and returns the part of that number it
-// replaced, or nil. DeleteMultipartUpload removes the upload and its parts and
-// returns the parts it removed.
+// LockMultipartUpload locks the upload row in mode for the rest of the
+// transaction and returns its backend and when a running completion last
+// renewed its mark, zero when none is running; an upload already gone returns
+// an empty backend. UpsertPart records a part at the path its intent names and
+// returns the part of that number it replaced, or nil. DeleteMultipartUpload
+// removes the upload and its parts and returns the parts it removed.
 type MultipartTxAdapter interface {
-	LockMultipartUpload(ctx context.Context, uploadID string) (backendName string, completionHeartbeat time.Time, err error)
+	LockMultipartUpload(ctx context.Context, uploadID string, mode UploadLock) (backendName string, completionHeartbeat time.Time, err error)
 	UpsertPart(ctx context.Context, p *RecordPartParams) (replaced *MultipartPart, err error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) (parts []MultipartPart, err error)
 }
