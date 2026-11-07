@@ -106,8 +106,7 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 		}
 		return be, nil
 	}).AnyTimes()
-	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
-	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
+	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true).AnyTimes()
 	f.ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	placeThroughStore(f.pl, store)
 
@@ -242,7 +241,7 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	expectFleet(ops, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),
 	})
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false).AnyTimes()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(nil, false).AnyTimes()
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
 	r := newTestReplicator(fleetOf(ops, NewMockPlacement(ctrl)), store)
@@ -346,8 +345,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 		}
 		return be, nil
 	}).AnyTimes()
-	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
-	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
+	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true).AnyTimes()
 	f.pl.EXPECT().Settle(gomock.Any(), gomock.Any()).AnyTimes()
 	dropThroughStore(f.pl, store.DeleteObjectLocation)
 	return f
@@ -518,8 +516,7 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 		"b1": backendtest.NewMockObjectBackend(ctrl),
 		"b2": backendtest.NewMockObjectBackend(ctrl),
 	})
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
-	ops.EXPECT().ReleaseAdmission().AnyTimes()
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(func() {}, true).AnyTimes()
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), moveErr).AnyTimes()
 	return NewRebalancer(RebalancerDeps{Fleet: fleetOf(ops, pl), Store: store, Config: defaultRebalance})
 }

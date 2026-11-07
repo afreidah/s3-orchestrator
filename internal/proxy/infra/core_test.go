@@ -722,18 +722,20 @@ func TestCore_AdmissionForwarders(t *testing.T) {
 	if c.AdmissionSem() == nil {
 		t.Error("AdmissionSem() returned nil despite sem wired in config")
 	}
-	if !c.AcquireAdmission(context.Background()) {
+	first, ok := c.AcquireAdmission(context.Background())
+	if !ok {
 		t.Fatal("first AcquireAdmission failed")
 	}
-	if !c.AcquireAdmission(context.Background()) {
+	second, ok := c.AcquireAdmission(context.Background())
+	if !ok {
 		t.Fatal("second AcquireAdmission (sem cap 2) failed")
 	}
 	// Third should fail under a cancelled ctx.
 	cctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if c.AcquireAdmission(cctx) {
+	if _, ok := c.AcquireAdmission(cctx); ok {
 		t.Error("third AcquireAdmission succeeded against full sem with cancelled ctx")
 	}
-	c.ReleaseAdmission()
-	c.ReleaseAdmission()
+	first()
+	second()
 }

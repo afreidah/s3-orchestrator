@@ -64,6 +64,16 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Client deletes settle after the response, and workers wait on a full pool one at a time ([#1881](https://github.com/afreidah/s3-orchestrator/issues/1881), v0.179.20)**
+
+Client deletes, overwrites and multipart cleanup used to wait for the slowest backend delete, holding their admission slot. They are now answered once the transaction commits, and the deletes run after the response. Background workers used to queue on a full admission pool, which handed each freed slot to a worker before any client.
+
+**Operator action items after upgrade:**
+
+- **A successful response no longer means the bytes are gone.** The object is already unreachable, and its bytes stay counted as orphan bytes until the delete finishes.
+- **New gauge `s3o_detached_settles_depth`** counts requests whose deletes are running after the response. Past 256 per instance a request settles before it answers.
+- **Workers slow down while the admission pool is at least half full.** Replication, drain and cleanup run one item at a time until it drops below half, and clients get the rest.
+
 **Bulk deletes run in groups of 100 keys ([#1877](https://github.com/afreidah/s3-orchestrator/issues/1877), v0.179.18)**
 
 `DeleteObjects`, prefix deletes and lifecycle expiry used to remove a whole batch in one transaction, holding a lock on every key until it ended. Concurrent large batches could exhaust the Postgres lock table and fail with `out of shared memory`, including unrelated writes. Each group of 100 keys is now its own transaction. Queueing cleanup rows, clearing intents and charging quota stripes are one statement per transaction instead of one per row, which also applies to multipart abort and completion cleanup. No migration.

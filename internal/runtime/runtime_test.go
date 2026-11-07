@@ -396,10 +396,10 @@ func TestShutdown_WaitsForCopiesStillUploading(t *testing.T) {
 		t.Fatal("Run did not exit within 10 seconds")
 	}
 
-	if !strings.Contains(stdout.String(), "waiting for copies still uploading after their response") {
+	if !strings.Contains(stdout.String(), "waiting for copies and deletes still running after their response") {
 		t.Errorf("shutdown did not wait for the copy still uploading, logs:\n%s", stdout.String())
 	}
-	if strings.Contains(stdout.String(), "shutdown deadline reached with copies still uploading") {
+	if strings.Contains(stdout.String(), "shutdown deadline reached with copies or deletes still running") {
 		t.Error("shutdown reported a timeout for a copy that finished well inside it")
 	}
 	if got := detached.Depth(); got != 0 {

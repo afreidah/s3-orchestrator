@@ -320,24 +320,32 @@ func (r *Runtime) shutdown() {
 	}
 }
 
-// drainDetachedUploads waits for the copies a fan-out write left running after
-// answering its client, which the HTTP drain does not cover. It must run
-// before the final usage flush, which carries their accounting. Copies still
-// running at the deadline leave their intents for the reaper.
+// drainDetachedUploads waits for the copies and deletes requests left running
+// after answering their clients, which the HTTP drain does not cover. It must
+// run before the final usage flush, which carries their accounting. Copies
+// still running at the deadline leave their intents for the reaper, and deletes
+// their claimed rows for the cleanup worker.
 func (r *Runtime) drainDetachedUploads(ctx context.Context) {
-	detached := r.svc.detached
-	depth := detached.Depth()
+	tails := []*writepath.DetachedUploads{r.svc.detached, r.svc.coord.Settling()}
+	depth := 0
+	for _, d := range tails {
+		depth += d.Depth()
+	}
 	if depth == 0 {
 		return
 	}
-	r.log.InfoContext(ctx, "waiting for copies still uploading after their response",
+	r.log.InfoContext(ctx, "waiting for copies and deletes still running after their response",
 		"in_flight", depth, "timeout", writepath.DetachedDrainTimeout)
 
 	drainCtx, cancel := context.WithTimeout(ctx, writepath.DetachedDrainTimeout)
 	defer cancel()
 
-	if remaining := detached.Wait(drainCtx); remaining > 0 {
-		r.log.WarnContext(ctx, "shutdown deadline reached with copies still uploading; leaving them to the reaper",
+	remaining := 0
+	for _, d := range tails {
+		remaining += d.Wait(drainCtx)
+	}
+	if remaining > 0 {
+		r.log.WarnContext(ctx, "shutdown deadline reached with copies or deletes still running; leaving them to the reaper and cleanup worker",
 			"in_flight", remaining)
 	}
 }

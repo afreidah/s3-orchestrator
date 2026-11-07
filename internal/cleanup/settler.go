@@ -61,7 +61,7 @@ type Deps struct {
 	Deleter     Deleter
 	Store       Store
 	Concurrency int
-	Admission   batch.Admission
+	Admission   batch.Admitter
 }
 
 // Settler deletes queued bytes and settles their cleanup rows.

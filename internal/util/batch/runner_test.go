@@ -142,16 +142,13 @@ type fakeAdmission struct {
 }
 
 // AcquireAdmission takes a slot while one is free.
-func (f *fakeAdmission) AcquireAdmission(context.Context) bool {
+func (f *fakeAdmission) AcquireAdmission(context.Context) (func(), bool) {
 	if f.free == 0 {
-		return false
+		return nil, false
 	}
 	f.free--
-	return true
+	return func() { f.released++ }, true
 }
-
-// ReleaseAdmission counts a slot given back.
-func (f *fakeAdmission) ReleaseAdmission() { f.released++ }
 
 // TestSummary_ReportedAndChanged pins what makes a cycle worth a completion
 // entry and what makes it refresh the quota gauges.

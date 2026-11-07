@@ -554,17 +554,14 @@ type slots struct {
 }
 
 // AcquireAdmission grants a slot while the admission is open.
-func (s *slots) AcquireAdmission(context.Context) bool {
+func (s *slots) AcquireAdmission(context.Context) (func(), bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.open {
 		s.acquired++
 	}
-	return s.open
+	return func() {}, s.open
 }
-
-// ReleaseAdmission gives a slot back.
-func (s *slots) ReleaseAdmission() {}
 
 // TestSettle_AdmissionWrapsEachBackend verifies each backend's delete takes
 // one admission slot and every row is settled.

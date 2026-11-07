@@ -331,7 +331,7 @@ func TestOrphanBytes_DeleteSettlesItsCleanupRows(t *testing.T) {
 	}
 
 	if got := queryCleanupQueueCount(t, backend); got != 0 {
-		t.Errorf("cleanup_queue rows after delete = %d, want 0 (settled on the request)", got)
+		t.Errorf("cleanup_queue rows after delete = %d, want 0 (settled behind the response)", got)
 	}
 	if got := queryOrphanBytes(t, backend); got != 0 {
 		t.Errorf("orphan_bytes after delete = %d, want 0", got)

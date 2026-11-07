@@ -261,7 +261,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	})
 	// A part replaced by this one, or this one when its intent was lost, was
 	// queued by the record's transaction.
-	mp.d.Coord.Settle(ctx, replaced)
+	mp.d.Coord.SettleAfterResponse(ctx, replaced)
 	if err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, discarding part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
@@ -506,7 +506,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 		observe.RecordSpanError(span, err)
 		return err
 	}
-	mp.d.Coord.Settle(ctx, parts)
+	mp.d.Coord.SettleAfterResponse(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 
 	// The abort itself sends no request: parts are plain objects, so the only
@@ -841,7 +841,7 @@ func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, 
 	if err != nil {
 		span.RecordError(err)
 	}
-	mp.d.Coord.Settle(ctx, parts)
+	mp.d.Coord.SettleAfterResponse(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 }
 

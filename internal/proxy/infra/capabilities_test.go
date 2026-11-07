@@ -325,27 +325,29 @@ func TestErrorClassifier_PassesThroughUnknownErrors(t *testing.T) {
 func TestAdmissionGate_NoSemAcquireAlwaysSucceeds(t *testing.T) {
 	t.Parallel()
 	g := &BackendRuntime{}
-	if !g.AcquireAdmission(context.Background()) {
-		t.Error("AcquireAdmission returned false with no sem wired")
+	release, ok := g.AcquireAdmission(context.Background())
+	if !ok {
+		t.Fatal("AcquireAdmission returned false with no sem wired")
 	}
-	g.ReleaseAdmission() // must not panic
+	release() // must not panic
 }
 
 func TestAdmissionGate_BoundedSemBlocksWhenFull(t *testing.T) {
 	t.Parallel()
-	g := &BackendRuntime{cfg: Config{AdmissionSem: make(chan struct{}, 1)}}
-	if !g.AcquireAdmission(context.Background()) {
+	g := New(&Config{AdmissionSem: make(chan struct{}, 1)})
+	release, ok := g.AcquireAdmission(context.Background())
+	if !ok {
 		t.Fatal("first AcquireAdmission failed")
 	}
 	// A second acquire fails when ctx is already cancelled.
 	cctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if g.AcquireAdmission(cctx) {
+	if _, ok := g.AcquireAdmission(cctx); ok {
 		t.Error("AcquireAdmission succeeded against a full sem with cancelled ctx")
 	}
-	g.ReleaseAdmission()
+	release()
 	// After a release the slot is reusable.
-	if !g.AcquireAdmission(context.Background()) {
-		t.Error("AcquireAdmission after ReleaseAdmission failed")
+	if _, ok := g.AcquireAdmission(context.Background()); !ok {
+		t.Error("AcquireAdmission after a release failed")
 	}
 }

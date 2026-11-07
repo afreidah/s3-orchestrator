@@ -41,6 +41,11 @@ var (
 	DetachedUploadsDepth = gauge("s3o_detached_uploads_depth",
 		"Writes whose further copies are still uploading after the response")
 
+	// DetachedSettlesDepth tracks the client requests whose backend deletes are
+	// still running after their client was answered.
+	DetachedSettlesDepth = gauge("s3o_detached_settles_depth",
+		"Client requests whose backend deletes are still running after the response")
+
 	// ReplicationWriteCopiesCommitted is how many copies each fan-out write
 	// ended up committing, counting the one that answered the client.
 	//

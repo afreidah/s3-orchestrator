@@ -38,8 +38,7 @@ type Ops interface {
 	ServedCalls(name string) core.BackendCalls
 	RefusedFor(name string, required core.BackendCalls) time.Duration
 	WriteTargets() []string
-	AcquireAdmission(ctx context.Context) bool
-	ReleaseAdmission()
+	AcquireAdmission(ctx context.Context) (release func(), admitted bool)
 	GetBackend(name string) (backend.ObjectBackend, error)
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
