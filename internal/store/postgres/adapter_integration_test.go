@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -763,7 +764,7 @@ func TestPgAdapter_DeleteMultipartUpload_ReturnsParts(t *testing.T) {
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		upsertSizedParts(t, a, uploadID)
-		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID)
+		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID, core.UploadExclusive)
 		if err != nil || backend != "backend-a" || !heartbeat.IsZero() {
 			t.Fatalf("LockMultipartUpload = %q, %v, %v; want backend-a with no mark", backend, heartbeat, err)
 		}
@@ -772,7 +773,7 @@ func TestPgAdapter_DeleteMultipartUpload_ReturnsParts(t *testing.T) {
 			t.Fatalf("DeleteMultipartUpload: %v", err)
 		}
 		assertRemovedParts(t, parts)
-		if again, _, err := a.LockMultipartUpload(ctx, uploadID); err != nil || again != "" {
+		if again, _, err := a.LockMultipartUpload(ctx, uploadID, core.UploadExclusive); err != nil || again != "" {
 			t.Errorf("LockMultipartUpload after delete = %q, %v; want the upload gone", again, err)
 		}
 		if left, err := a.DeleteMultipartUpload(ctx, uploadID); err != nil || len(left) != 0 {
@@ -812,12 +813,71 @@ func assertRemovedParts(t *testing.T, parts []core.MultipartPart) {
 	}
 }
 
+// TestPgAdapter_LockMultipartUpload_PartsShareTheUpload verifies a part record
+// holding the upload row lets another part record take it, while an abort's
+// lock and a completion's mark each wait for it.
+func TestPgAdapter_LockMultipartUpload_PartsShareTheUpload(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := t.Context()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	lock := func(mode core.UploadLock) func(*pgTxAdapter) error {
+		return func(a *pgTxAdapter) error {
+			_, _, err := a.LockMultipartUpload(ctx, uploadID, mode)
+			return err
+		}
+	}
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := lock(core.UploadShared)(a); err != nil {
+			t.Fatalf("LockMultipartUpload: %v", err)
+		}
+		if waitsOnLock(t, s, lock(core.UploadShared)) {
+			t.Error("a second part record waited on the first")
+		}
+		if !waitsOnLock(t, s, lock(core.UploadExclusive)) {
+			t.Error("an abort did not wait on a part record")
+		}
+		mark := func(b *pgTxAdapter) error {
+			_, err := b.q.BeginMultipartCompletion(ctx, db.BeginMultipartCompletionParams{UploadID: uploadID, StaleBefore: pgTimestamptz(time.Now())})
+			return err
+		}
+		if !waitsOnLock(t, s, mark) {
+			t.Error("a completion's mark did not wait on a part record")
+		}
+	})
+}
+
+// lockNotAvailable is the SQLSTATE of a statement that gave up on a lock.
+const lockNotAvailable = "55P03"
+
+// waitsOnLock runs fn in a transaction that gives up on a row lock after a
+// short wait, and reports whether fn gave up.
+func waitsOnLock(t *testing.T, s *Store, fn func(*pgTxAdapter) error) bool {
+	t.Helper()
+	ctx := t.Context()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '200ms'"); err != nil {
+		t.Fatalf("set lock_timeout: %v", err)
+	}
+	err = fn(&pgTxAdapter{q: s.queries.WithTx(tx), instanceID: s.instanceID})
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == lockNotAvailable {
+		return true
+	}
+	if err != nil {
+		t.Fatalf("locked transaction: %v", err)
+	}
+	return false
+}
+
 // TestPgAdapter_LockMultipartUpload_MissingUploadReturnsNothing verifies an
 // upload already gone locks as no backend and no mark.
 func TestPgAdapter_LockMultipartUpload_MissingUploadReturnsNothing(t *testing.T) {
 	s := adapterPgStore(t)
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		backend, heartbeat, err := a.LockMultipartUpload(context.Background(), uniqueKey(t, "missing"))
+		backend, heartbeat, err := a.LockMultipartUpload(context.Background(), uniqueKey(t, "missing"), core.UploadShared)
 		if err != nil || backend != "" || !heartbeat.IsZero() {
 			t.Errorf("LockMultipartUpload = %q, %v, %v; want empty", backend, heartbeat, err)
 		}

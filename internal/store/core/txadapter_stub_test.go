@@ -88,7 +88,7 @@ func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*Multipart
 	return nil, nil
 }
 
-func (*noopTxAdapter) LockMultipartUpload(context.Context, string) (string, time.Time, error) {
+func (*noopTxAdapter) LockMultipartUpload(context.Context, string, UploadLock) (string, time.Time, error) {
 	return "", time.Time{}, nil
 }
 

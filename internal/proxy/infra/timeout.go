@@ -55,6 +55,41 @@ func (c *BackendRuntime) Get(ctx context.Context, name string, be backend.Object
 	return result, gcancel, nil
 }
 
+// OpenGet issues a GET for a body the caller reads later. The timeout covers
+// the wait for the response, and start gives the body a full timeout from when
+// the caller begins reading it. release frees the call as Get's cancel does.
+func (c *BackendRuntime) OpenGet(ctx context.Context, name string, be backend.ObjectBackend, key string) (result *backend.GetObjectResult, start func(), release context.CancelFunc, err error) {
+	gctx, gcancel := context.WithCancel(ctx)
+	timeout := c.cfg.BackendTimeout
+	var timer *time.Timer
+	if timeout > 0 {
+		timer = time.AfterFunc(timeout, gcancel)
+	}
+	stop := func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+	result, err = be.GetObject(gctx, key, "")
+	if err != nil {
+		stop()
+		gcancel()
+		c.Acct().APICall(ctx, s3op.GetObject, name)
+		return nil, nil, nil, err
+	}
+	stop()
+	start = func() {
+		if timer != nil {
+			timer.Reset(timeout)
+		}
+	}
+	release = func() {
+		stop()
+		gcancel()
+	}
+	return result, start, release, nil
+}
+
 // Head issues a HEAD against the named backend under the configured timeout
 // and charges it whatever the outcome. HEAD carries no body, so the timeout
 // context is fully released before returning.

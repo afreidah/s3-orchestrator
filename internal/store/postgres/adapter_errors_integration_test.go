@@ -185,7 +185,7 @@ func TestPgAdapterErr_UpsertPart(t *testing.T) {
 // wrapped rather than read as an upload already gone.
 func TestPgAdapterErr_LockMultipartUpload(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if backend, _, err := a.LockMultipartUpload(context.Background(), "u"); err == nil || backend != "" {
+	if backend, _, err := a.LockMultipartUpload(context.Background(), "u", core.UploadExclusive); err == nil || backend != "" {
 		t.Errorf("LockMultipartUpload = %q, %v; want an error from the closed tx", backend, err)
 	}
 }

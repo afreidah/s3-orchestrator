@@ -71,6 +71,25 @@ func TestCompleteMultipartUpload_RemovesUploadWhileHoldingMark(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_ReadsTheUploadOnce asserts a completion reads the
+// upload row only for its scope check, since the row cannot change or go while
+// the mark is held.
+func TestCompleteMultipartUpload_ReadsTheUploadOnce(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+	parts := putParts(t, be, 2)
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().GetMultipartUpload(gomock.Any(), "upload-1").Return(markUpload(), nil).Times(1)
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	multipartStubs(t, store).seed("upload-1", "b1", parts)
+	storetest.Permissive(store)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+}
+
 // TestCompleteMultipartUpload_GoneUploadIsNotFound asserts a mark that cannot
 // be taken because the upload was removed since the fetch reports NoSuchUpload
 // rather than a completion in progress.

@@ -581,7 +581,8 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	)
 	defer span.End()
 
-	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
+	if err != nil {
 		return "", err
 	}
 	started, err := mp.d.Stores.BeginMultipartCompletion(ctx, uploadID, completionStaleBefore())
@@ -599,7 +600,7 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	}
 
 	return mp.withCompletionMark(ctx, uploadID, func(ctx context.Context) (string, error) {
-		return mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, manifest, start)
+		return mp.completeMultipartUploadLocked(ctx, span, operation, mu, manifest, start)
 	})
 }
 
@@ -649,7 +650,7 @@ func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, comp
 // errCompletionMarkLost reports a renewal that found the completion mark gone.
 var errCompletionMarkLost = errors.New("completion mark is gone")
 
-// completeMultipartUploadLocked runs the assembly while CompleteMultipartUpload
+// completeMultipartUploadLocked assembles mu while CompleteMultipartUpload
 // holds the completion mark. The order is validate, assemble, commit, then drop
 // the parts: any failure before the commit leaves the parts and the upload row
 // intact so the client can retry, and the stale-multipart sweep reaps an
@@ -658,14 +659,11 @@ func (mp *Manager) completeMultipartUploadLocked(
 	ctx context.Context,
 	span trace.Span,
 	operation s3op.Operation,
-	uploadID string,
+	mu *core.MultipartUpload,
 	manifest []core.CompletePart,
 	start time.Time,
 ) (string, error) {
-	mu, err := mp.d.Stores.GetMultipartUpload(ctx, uploadID)
-	if err != nil {
-		return "", mp.d.Core.ClassifyWriteError(span, operation, err)
-	}
+	uploadID := mu.UploadID
 	be, err := mp.d.Core.GetBackend(mu.BackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -941,11 +939,10 @@ func (mp *Manager) buildAssembledUpload(
 // PART STREAMING
 // -------------------------------------------------------------------------
 
-// streamPartsThroughPipe spawns a goroutine that reads each part in order
-// from src, decrypts encrypted parts inline so the pipe carries plaintext, and
-// writes the concatenated stream to the returned reader. The caller must
-// invoke the returned cancel func to stop in-flight backend reads when
-// assembly fails downstream (e.g. the final PutObject errors out).
+// streamPartsThroughPipe spawns a goroutine that streams the parts from src
+// in order, as plaintext, into the returned reader. The caller must invoke the
+// returned cancel func to stop in-flight backend reads when assembly fails
+// downstream (e.g. the final PutObject errors out).
 func (mp *Manager) streamPartsThroughPipe(
 	ctx context.Context,
 	src s3be.Endpoint,
@@ -964,11 +961,9 @@ func (mp *Manager) streamPartsThroughPipe(
 			bufpool.PutWriter(bw)
 			_ = pw.Close()
 		}()
-		for i := range parts {
-			if err := mp.streamOnePart(pipeCtx, src, bw, uploadID, &parts[i]); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
+		if err := mp.streamParts(pipeCtx, src, bw, uploadID, parts); err != nil {
+			pw.CloseWithError(err)
+			return
 		}
 		if err := bw.Flush(); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to flush multipart stream: %w", err))
@@ -978,30 +973,103 @@ func (mp *Manager) streamPartsThroughPipe(
 	return pr, pipeCancel
 }
 
-// streamOnePart fetches one part from src, decrypts it when the part was
-// stored encrypted, and copies the plaintext into bw, charging the part's
-// egress once all of it has been read. Closes the backend response body and
-// the per-call timeout context before returning. Errors are wrapped with the
-// part number so the assembly failure message identifies which part failed.
-func (mp *Manager) streamOnePart(
-	ctx context.Context,
-	src s3be.Endpoint,
-	bw io.Writer,
-	uploadID string,
-	part *core.MultipartPart,
-) error {
-	result, cancel, err := mp.d.Core.Get(ctx, src.Name, src.Backend, part.Path(uploadID), "")
-	if err != nil {
-		return fmt.Errorf("failed to read part %d: %w", part.PartNumber, err)
-	}
-	defer cancel()
-	defer func() { _ = result.Body.Close() }()
+// partsAhead is how many part GETs a completion keeps open past the part it is
+// copying.
+const partsAhead = 4
 
-	if err := copyPart(ctx, mp.d.Encryptor, bw, result.Body, part); err != nil {
-		mp.d.Core.Acct().APICall(ctx, s3op.GetObject, src.Name)
+// openedPart is a part whose GET has been answered, waiting for its turn to be
+// copied.
+type openedPart struct {
+	part    *core.MultipartPart
+	result  *s3be.GetObjectResult
+	start   func()
+	release context.CancelFunc
+	err     error
+}
+
+// close closes the part's body and frees its GET.
+func (o openedPart) close() {
+	if o.err == nil {
+		_ = o.result.Body.Close()
+		o.release()
+	}
+}
+
+// streamParts copies each part from src into bw in order while the GETs of the
+// next partsAhead parts wait for their responses, so a backend's wait for a
+// first byte overlaps the copies instead of adding to them.
+func (mp *Manager) streamParts(ctx context.Context, src s3be.Endpoint, bw io.Writer, uploadID string, parts []core.MultipartPart) error {
+	ahead := make([]<-chan openedPart, 0, partsAhead)
+	next := 0
+	openMore := func() {
+		for ; len(ahead) < partsAhead && next < len(parts); next++ {
+			ahead = append(ahead, mp.openAhead(ctx, src, uploadID, &parts[next]))
+		}
+	}
+	defer func() {
+		for _, opening := range ahead {
+			go mp.discardPart(ctx, src.Name, opening)
+		}
+	}()
+	openMore()
+	for len(ahead) > 0 {
+		opened := <-ahead[0]
+		ahead = ahead[1:]
+		openMore()
+		if err := mp.streamOnePart(ctx, src.Name, bw, opened); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// openPart sends one part's GET and returns it once answered. The part's body
+// is timed from when it is copied, not from when it was opened.
+func (mp *Manager) openPart(ctx context.Context, src s3be.Endpoint, uploadID string, part *core.MultipartPart) openedPart {
+	result, start, release, err := mp.d.Core.OpenGet(ctx, src.Name, src.Backend, part.Path(uploadID))
+	return openedPart{part: part, result: result, start: start, release: release, err: err}
+}
+
+// openAhead runs openPart in the background and delivers the part when its GET
+// is answered. A GET that panics is delivered as the part's error.
+func (mp *Manager) openAhead(ctx context.Context, src s3be.Endpoint, uploadID string, part *core.MultipartPart) <-chan openedPart {
+	opening := make(chan openedPart, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				opening <- openedPart{part: part, err: fmt.Errorf("multipart assembly panic: %v", r)}
+			}
+		}()
+		opening <- mp.openPart(ctx, src, uploadID, part)
+	}()
+	return opening
+}
+
+// discardPart frees a part opened for an assembly that failed before reaching
+// it, charging the call its GET made.
+func (mp *Manager) discardPart(ctx context.Context, srcName string, opening <-chan openedPart) {
+	opened := <-opening
+	if opened.err == nil {
+		mp.d.Core.Acct().APICall(ctx, s3op.GetObject, srcName)
+		opened.close()
+	}
+}
+
+// streamOnePart copies an opened part into bw, decrypting it when it was
+// stored encrypted, and charges its egress once all of it has been read. The
+// part's GET is freed before returning, and errors name the part.
+func (mp *Manager) streamOnePart(ctx context.Context, srcName string, bw io.Writer, opened openedPart) error {
+	part := opened.part
+	if opened.err != nil {
+		return fmt.Errorf("failed to read part %d: %w", part.PartNumber, opened.err)
+	}
+	defer opened.close()
+	opened.start()
+	if err := copyPart(ctx, mp.d.Encryptor, bw, opened.result.Body, part); err != nil {
+		mp.d.Core.Acct().APICall(ctx, s3op.GetObject, srcName)
 		return err
 	}
-	mp.d.Core.Acct().Egress(ctx, s3op.GetObject, src.Name, part.SizeBytes)
+	mp.d.Core.Acct().Egress(ctx, s3op.GetObject, srcName, part.SizeBytes)
 	return nil
 }
 

@@ -86,8 +86,8 @@ func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]Cl
 }
 
 // recordObjectTx is the shared transactional body. The bytes each copy adds or
-// displaces are charged to the key's quota stripe inside the transaction, so
-// the counter commits or rolls back with the rows.
+// displaces are charged to the key's quota stripe last, so the counter commits
+// with the rows and the stripe is held only until the commit.
 func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
 	committed := intentIDs(req.Copies)
 	held, err := keyIntentsHeld(ctx, tx, req.Key, committed...)
@@ -118,14 +118,15 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		}
 		deltas.add(c.Backend, req.Size)
 	}
-	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
-		return nil, err
-	}
 	superseded, err := clearSupersededIntents(ctx, tx, intentIDs(req.Placing), committed, req.Key)
 	if err != nil {
 		return nil, err
 	}
-	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded[req.Key]...))
+	cleanup, err := enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded[req.Key]...))
+	if err != nil {
+		return nil, err
+	}
+	return cleanup, chargeStripes(ctx, tx, req.Key, deltas)
 }
 
 // keyIntentsHeld takes the key's lock, then reports whether every intent still

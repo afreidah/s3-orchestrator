@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Parts of one upload record together, and completion reads parts ahead ([#1882](https://github.com/afreidah/s3-orchestrator/issues/1882), v0.179.21)**
+
+Recording a part used to lock its upload row exclusively, so parallel part uploads to one upload recorded one at a time. Part records now share the row, while an abort and a completion still wait for them. `CompleteMultipartUpload` used to wait for each part's first byte only after the part before it had been copied. It now keeps the GETs of the next four parts open while it copies, and reads the upload row once instead of twice. A PUT and the commit of a second copy now charge the quota stripes as their last statement, so the stripe row is held for less time.
+
+**Operator action items after upgrade:**
+
+- **A completion sends up to five part GETs to the upload's backend at once.** `backend_timeout` covers each GET's wait for a response, and then its body from when the part is copied, so a part waiting its turn is not timed.
+
 **Client deletes settle after the response, and workers wait on a full pool one at a time ([#1881](https://github.com/afreidah/s3-orchestrator/issues/1881), v0.179.20)**
 
 Client deletes, overwrites and multipart cleanup used to wait for the slowest backend delete, holding their admission slot. They are now answered once the transaction commits, and the deletes run after the response. Background workers used to queue on a full admission pool, which handed each freed slot to a worker before any client.

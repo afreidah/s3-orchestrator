@@ -26,6 +26,17 @@ const (
 	MaxPartNumber = 10000
 )
 
+// UploadLock is how a transaction holds an upload row. Part records share it,
+// so parts of one upload record together; an abort takes it exclusive. Either
+// way a completion's mark waits for the holder.
+type UploadLock int
+
+// UploadShared is held by part records and UploadExclusive by an abort.
+const (
+	UploadShared UploadLock = iota
+	UploadExclusive
+)
+
 // ValidPartNumber reports whether n is a part number S3 allows. Every layer
 // that accepts a part number checks it here.
 func ValidPartNumber(n int) bool {
@@ -63,14 +74,14 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 
 // recordPartTx is the transactional body of RecordPart. The lock on the part's
 // fixed path serializes uploads of one part number, so the row a record
-// replaces is the one whose bytes it queues. The upload row lock keeps the
-// record from replacing a part a running completion is reading.
+// replaces is the one whose bytes it queues. The shared upload row lock keeps
+// the record from replacing a part a running completion is reading.
 func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partOutcome, error) {
 	partPath := PartPath(p.UploadID, p.PartNumber)
 	if err := tx.AcquireKeyLock(ctx, partPath); err != nil {
 		return partOutcome{}, err
 	}
-	backendName, err := lockUploadIdle(ctx, tx, p.UploadID, p.CompletionStaleBefore)
+	backendName, err := lockUploadIdle(ctx, tx, p.UploadID, UploadShared, p.CompletionStaleBefore)
 	if err != nil {
 		return partOutcome{}, err
 	}
@@ -112,7 +123,7 @@ func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partO
 // completion renewed its mark after staleBefore is refused.
 func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error) {
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		backendName, err := lockUploadIdle(ctx, tx, uploadID, staleBefore)
+		backendName, err := lockUploadIdle(ctx, tx, uploadID, UploadExclusive, staleBefore)
 		if err != nil || backendName == "" {
 			return nil, err
 		}
@@ -129,12 +140,12 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 	})
 }
 
-// lockUploadIdle locks the upload row and returns its backend, or an empty
-// backend when the upload is gone. A completion that renewed its mark after
-// staleBefore is still reading the parts, so the upload is refused with
+// lockUploadIdle locks the upload row in mode and returns its backend, or an
+// empty backend when the upload is gone. A completion that renewed its mark
+// after staleBefore is still reading the parts, so the upload is refused with
 // ErrCompletionInProgress; an older mark belongs to a completion that died.
-func lockUploadIdle(ctx context.Context, tx TxAdapter, uploadID string, staleBefore time.Time) (string, error) {
-	backendName, heartbeat, err := tx.LockMultipartUpload(ctx, uploadID)
+func lockUploadIdle(ctx context.Context, tx TxAdapter, uploadID string, mode UploadLock, staleBefore time.Time) (string, error) {
+	backendName, heartbeat, err := tx.LockMultipartUpload(ctx, uploadID, mode)
 	if err != nil {
 		return "", err
 	}

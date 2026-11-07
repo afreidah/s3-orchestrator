@@ -212,7 +212,7 @@ func TestAdapterErr_UpsertPartWithoutUpload(t *testing.T) {
 func TestAdapterErr_LockMultipartUpload(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, _, err := a.LockMultipartUpload(context.Background(), "u"); err == nil {
+	if _, _, err := a.LockMultipartUpload(context.Background(), "u", core.UploadShared); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

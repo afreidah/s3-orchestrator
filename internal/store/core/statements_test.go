@@ -5,6 +5,8 @@
 //
 // A transaction's cost is mostly its round trips to the database, so the steps
 // that touch many rows must each stay one statement however many rows there are.
+// The stripe charge locks rows every write to those stripes waits on, so it is
+// a transaction's last statement.
 // -------------------------------------------------------------------------------
 
 package core
@@ -12,12 +14,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 )
 
 // statementCountTx counts the calls a transaction makes for the steps that touch
-// many rows, over the copies and parts it is seeded with.
+// many rows, over the copies and parts it is seeded with, and the order of the
+// writes that follow its inserts.
 type statementCountTx struct {
 	noopTxAdapter
 
@@ -26,13 +30,22 @@ type statementCountTx struct {
 	inserts int
 	clears  int
 	charges int
+	order   []string
 }
+
+// The writes statementCountTx records the order of.
+const (
+	stmtQueue         = "queue cleanup"
+	stmtClear         = "clear intents"
+	stmtCharge        = "charge stripes"
+	stmtDeletePending = "delete intent"
+)
 
 func (s *statementCountTx) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	return s.copies, nil
 }
 
-func (s *statementCountTx) LockMultipartUpload(context.Context, string) (string, time.Time, error) {
+func (s *statementCountTx) LockMultipartUpload(context.Context, string, UploadLock) (string, time.Time, error) {
 	return partBackend, time.Time{}, nil
 }
 
@@ -42,17 +55,53 @@ func (s *statementCountTx) DeleteMultipartUpload(context.Context, string) ([]Mul
 
 func (s *statementCountTx) InsertCleanup(ctx context.Context, requests ...*CleanupRequest) ([]CleanupItem, error) {
 	s.inserts++
+	s.order = append(s.order, stmtQueue)
 	return s.noopTxAdapter.InsertCleanup(ctx, requests...)
 }
 
 func (s *statementCountTx) ClearPendingForKey(context.Context, []string, ...string) ([]SupersededIntent, error) {
 	s.clears++
+	s.order = append(s.order, stmtClear)
 	return nil, nil
 }
 
 func (s *statementCountTx) AdjustQuotaStripes(context.Context, ...StripeCharge) error {
 	s.charges++
+	s.order = append(s.order, stmtCharge)
 	return nil
+}
+
+func (s *statementCountTx) DeletePending(context.Context, string) error {
+	s.order = append(s.order, stmtDeletePending)
+	return nil
+}
+
+// TestRecordObject_ChargesStripesLast verifies an overwrite clears the key's
+// intents and queues the displaced bytes before it charges the stripes.
+func TestRecordObject_ChargesStripesLast(t *testing.T) {
+	t.Parallel()
+	stub := &statementCountTx{copies: []ExistingCopy{{ObjectKey: "key", BackendName: "b1", SizeBytes: 1}}}
+	req := &RecordObjectRequest{Key: "key", Size: 2, Copies: []ObjectCopy{{Backend: "b1", IntentID: "i1"}}}
+	if _, err := stubOps(stub).RecordObject(context.Background(), req); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if want := []string{stmtClear, stmtQueue, stmtCharge}; !slices.Equal(stub.order, want) {
+		t.Errorf("writes = %v, want %v", stub.order, want)
+	}
+}
+
+// TestCommitCompanionCopy_ChargesStripesLast verifies a companion commit deletes
+// its intent before it charges the stripes.
+func TestCommitCompanionCopy_ChargesStripesLast(t *testing.T) {
+	t.Parallel()
+	stub := &statementCountTx{}
+	p := &PendingObject{IntentID: "i1", ObjectKey: "key", BackendName: "b1", StorageKey: "key!i1", SizeBytes: 2, Role: PendingRoleCompanion}
+	if _, _, err := stubOps(stub).CommitCompanionCopy(context.Background(), p); err != nil {
+		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if want := []string{stmtDeletePending, stmtCharge}; !slices.Equal(stub.order, want) {
+		t.Errorf("writes = %v, want %v", stub.order, want)
+	}
 }
 
 // TestDeleteObjectsBatch_StatementsDoNotGrowWithKeys verifies a batch clears its

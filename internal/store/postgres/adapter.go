@@ -330,11 +330,19 @@ func (a *pgTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.PendingOb
 // MULTIPART TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// LockMultipartUpload locks the upload row and returns its backend and when a
-// running completion last renewed its mark. An upload already gone returns an
-// empty backend.
-func (a *pgTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string) (string, time.Time, error) {
-	row, err := a.q.LockMultipartUpload(ctx, uploadID)
+// LockMultipartUpload locks the upload row in mode and returns its backend and
+// when a running completion last renewed its mark. An upload already gone
+// returns an empty backend.
+func (a *pgTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string, mode core.UploadLock) (string, time.Time, error) {
+	var row db.LockMultipartUploadRow
+	var err error
+	if mode == core.UploadShared {
+		var shared db.ShareMultipartUploadRow
+		shared, err = a.q.ShareMultipartUpload(ctx, uploadID)
+		row = db.LockMultipartUploadRow(shared)
+	} else {
+		row, err = a.q.LockMultipartUpload(ctx, uploadID)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", time.Time{}, nil
 	}

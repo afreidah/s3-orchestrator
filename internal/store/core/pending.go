@@ -137,21 +137,18 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 }
 
 // recordIntent records the claimed intent's upload as a copy of its key,
-// charges deltas plus its bytes, and deletes the intent row, all in the
+// deletes the intent row, and then charges deltas plus its bytes, all in the
 // transaction that claimed it.
 func recordIntent(ctx context.Context, tx TxAdapter, p *PendingObject, deltas quotaDeltas) error {
 	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return fmt.Errorf("insert %s location: %w", p.RoleOrDefault(), err)
 	}
-	deltas.add(p.BackendName, p.SizeBytes)
-	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
-		return err
-	}
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return fmt.Errorf("delete %s pending row: %w", p.RoleOrDefault(), err)
 	}
-	return nil
+	deltas.add(p.BackendName, p.SizeBytes)
+	return chargeStripes(ctx, tx, p.ObjectKey, deltas)
 }
 
 // discardUntrustedCopy resolves an upload overtaken by a newer write by queueing

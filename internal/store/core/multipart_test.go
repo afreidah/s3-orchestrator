@@ -56,6 +56,7 @@ type partTxStub struct {
 	uploadErr     error
 
 	locks          []string
+	uploadModes    []UploadLock
 	upserted       []RecordPartParams
 	removed        []string
 	deletedIntents []string
@@ -66,8 +67,9 @@ func (s *partTxStub) AcquireKeyLock(_ context.Context, keys ...string) error {
 	return s.lockErr
 }
 
-func (s *partTxStub) LockMultipartUpload(_ context.Context, uploadID string) (string, time.Time, error) {
+func (s *partTxStub) LockMultipartUpload(_ context.Context, uploadID string, mode UploadLock) (string, time.Time, error) {
 	s.locks = append(s.locks, uploadID)
+	s.uploadModes = append(s.uploadModes, mode)
 	if s.uploadLockErr != nil || s.gone {
 		return "", time.Time{}, s.uploadLockErr
 	}
@@ -146,8 +148,8 @@ func TestRecordPart_RejectsPartNumberOutOfRange(t *testing.T) {
 }
 
 // TestRecordPart_FreshPartQueuesNothing verifies a part number recorded for
-// the first time takes the part path's lock, records the part, clears its
-// intent, and queues nothing.
+// the first time takes the part path's lock and shares the upload row, records
+// the part, clears its intent, and queues nothing.
 func TestRecordPart_FreshPartQueuesNothing(t *testing.T) {
 	t.Parallel()
 	stub := &partTxStub{}
@@ -160,6 +162,9 @@ func TestRecordPart_FreshPartQueuesNothing(t *testing.T) {
 	}
 	if !slices.Equal(stub.locks, []string{PartPath(partUploadID, 2), partUploadID}) {
 		t.Errorf("locks = %v, want the part's fixed path and then the upload", stub.locks)
+	}
+	if !slices.Equal(stub.uploadModes, []UploadLock{UploadShared}) {
+		t.Errorf("upload lock = %v, want shared so parts of one upload record together", stub.uploadModes)
 	}
 	if len(stub.upserted) != 1 || !slices.Equal(stub.deletedIntents, []string{partIntentID}) {
 		t.Errorf("upserted=%d intents=%v, want the part recorded and its intent cleared", len(stub.upserted), stub.deletedIntents)
@@ -342,6 +347,9 @@ func TestDeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
 			}
 			if !slices.Equal(stub.locks, []string{partUploadID}) {
 				t.Errorf("locks = %v, want the upload locked before its removal", stub.locks)
+			}
+			if !slices.Equal(stub.uploadModes, []UploadLock{UploadExclusive}) {
+				t.Errorf("upload lock = %v, want exclusive", stub.uploadModes)
 			}
 		})
 	}

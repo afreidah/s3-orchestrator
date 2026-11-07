@@ -353,8 +353,8 @@ type LockMultipartUploadRow struct {
 	CompletionHeartbeatAt pgtype.Timestamptz
 }
 
-// Taken before a part is recorded or the parts are removed, so each waits for
-// the other and for a completion setting its mark, then sees what they wrote.
+// Taken before the parts are removed, so the removal waits for part records
+// and for a completion setting its mark, then sees what they wrote.
 func (q *Queries) LockMultipartUpload(ctx context.Context, uploadID string) (LockMultipartUploadRow, error) {
 	row := q.db.QueryRow(ctx, lockMultipartUpload, uploadID)
 	var i LockMultipartUploadRow
@@ -437,6 +437,26 @@ func (q *Queries) ScanMultipartUploads(ctx context.Context, arg ScanMultipartUpl
 		return nil, err
 	}
 	return items, nil
+}
+
+const shareMultipartUpload = `-- name: ShareMultipartUpload :one
+SELECT backend_name, completion_heartbeat_at FROM multipart_uploads
+WHERE upload_id = $1
+FOR SHARE
+`
+
+type ShareMultipartUploadRow struct {
+	BackendName           string
+	CompletionHeartbeatAt pgtype.Timestamptz
+}
+
+// Taken before a part is recorded. Part records of one upload hold it together,
+// while a removal or a completion setting its mark waits for them.
+func (q *Queries) ShareMultipartUpload(ctx context.Context, uploadID string) (ShareMultipartUploadRow, error) {
+	row := q.db.QueryRow(ctx, shareMultipartUpload, uploadID)
+	var i ShareMultipartUploadRow
+	err := row.Scan(&i.BackendName, &i.CompletionHeartbeatAt)
+	return i, err
 }
 
 const upsertPart = `-- name: UpsertPart :exec
