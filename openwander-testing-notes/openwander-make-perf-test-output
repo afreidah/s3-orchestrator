@@ -1,0 +1,446 @@
+$ make perf
+cd loadtest && go build -buildvcs=false -o s3-loadtest .
+profile=smoke results=perf-results/20261108T040440Z endpoint=http://localhost:9000 bucket=photos access_key=2TCVFMYSWPMZH6ADV7RA
+
+=== put-sweep ===
+
+=== size=1024 bytes ===
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [put, size=1024]
+
+Requests      [total, rate, throughput]         12000, 200.02, 200.00
+Duration      [total, attack, wait]             1m0s, 59.995s, 6.056ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  4.727ms, 7.611ms, 5.936ms, 7.743ms, 8.843ms, 44.365ms, 208.286ms
+Bytes In      [total, mean]                     0, 0.00
+Bytes Out     [total, mean]                     12288000, 1024.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+=== size=65536 bytes ===
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [put, size=65536]
+
+Requests      [total, rate, throughput]         12000, 200.02, 199.99
+Duration      [total, attack, wait]             1m0s, 59.995s, 8.165ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  6.428ms, 18.775ms, 9.02ms, 16.388ms, 32.863ms, 322.365ms, 391.494ms
+Bytes In      [total, mean]                     0, 0.00
+Bytes Out     [total, mean]                     786432000, 65536.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+## put scenario [size-sweep mode] - duration 1m0s, 10 workers
+
+| Size (B) | Requests | RPS | MB/s | P50 ms | P95 ms | P99 ms | Max ms | Err % |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 12000 | 200.0 | 0.20 | 5.94 | 8.84 | 44.36 | 208.29 | 0.00 |
+| 65536 | 12000 | 200.0 | 12.50 | 9.02 | 32.86 | 322.36 | 391.49 | 0.00 |
+
+Results written to perf-results/20261108T040440Z/put-sweep.json
+
+=== get-warm ===
+
+=== size=1024 bytes ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [get, size=1024]
+
+Requests      [total, rate, throughput]         12000, 200.01, 200.01
+Duration      [total, attack, wait]             59.997s, 59.996s, 999.582µs
+Latencies     [min, mean, 50, 90, 95, 99, max]  575.36µs, 1.058ms, 906.116µs, 1.939ms, 2.103ms, 2.347ms, 3.954ms
+Bytes In      [total, mean]                     12288000, 1024.00
+Bytes Out     [total, mean]                     0, 0.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+=== size=65536 bytes ===
+Seeding 500 objects (65536 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [get, size=65536]
+
+Requests      [total, rate, throughput]         12000, 200.02, 200.01
+Duration      [total, attack, wait]             59.996s, 59.995s, 981.424µs
+Latencies     [min, mean, 50, 90, 95, 99, max]  633.47µs, 1.157ms, 995.807µs, 2.098ms, 2.273ms, 2.517ms, 9.264ms
+Bytes In      [total, mean]                     786432000, 65536.00
+Bytes Out     [total, mean]                     0, 0.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+## get scenario [size-sweep mode] - duration 1m0s, 10 workers
+
+| Size (B) | Requests | RPS | MB/s | P50 ms | P95 ms | P99 ms | Max ms | Err % |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 12000 | 200.0 | 0.20 | 0.91 | 2.10 | 2.35 | 3.95 | 0.00 |
+| 65536 | 12000 | 200.0 | 12.50 | 1.00 | 2.27 | 2.52 | 9.26 | 0.00 |
+
+Results written to perf-results/20261108T040440Z/get-warm.json
+
+=== mixed-ramp ===
+
+=== rate=100 req/s ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 100 req/s for 1m0s [mixed, size=1024]
+
+Requests      [total, rate, throughput]         6000, 100.02, 100.01
+Duration      [total, attack, wait]             59.997s, 59.99s, 6.399ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  805.912µs, 3.888ms, 4.35ms, 6.6ms, 6.963ms, 8.117ms, 16.931ms
+Bytes In      [total, mean]                     3072000, 512.00
+Bytes Out     [total, mean]                     3072000, 512.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:6000
+Error Set:
+
+=== rate=200 req/s ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [mixed, size=1024]
+
+Requests      [total, rate, throughput]         12000, 200.02, 200.00
+Duration      [total, attack, wait]             1m0s, 59.995s, 6.035ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  733.555µs, 3.899ms, 4.028ms, 7.043ms, 7.586ms, 9.296ms, 50.186ms
+Bytes In      [total, mean]                     6144000, 512.00
+Bytes Out     [total, mean]                     6144000, 512.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+=== rate=300 req/s ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 300 req/s for 1m0s [mixed, size=1024]
+
+Requests      [total, rate, throughput]         18000, 300.02, 299.99
+Duration      [total, attack, wait]             1m0s, 59.996s, 6.29ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  681.105µs, 4.637ms, 4.55ms, 7.547ms, 8.68ms, 16.4ms, 194.255ms
+Bytes In      [total, mean]                     9216000, 512.00
+Bytes Out     [total, mean]                     9216000, 512.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:18000
+Error Set:
+
+=== rate=400 req/s ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 400 req/s for 1m0s [mixed, size=1024]
+
+Requests      [total, rate, throughput]         24000, 400.02, 399.97
+Duration      [total, attack, wait]             1m0s, 59.998s, 6.803ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  724.409µs, 10.581ms, 5.645ms, 10.834ms, 16.006ms, 257.76ms, 388.685ms
+Bytes In      [total, mean]                     12288000, 512.00
+Bytes Out     [total, mean]                     12288000, 512.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:24000
+Error Set:
+
+=== rate=500 req/s ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 500 req/s for 1m0s [mixed, size=1024]
+
+Requests      [total, rate, throughput]         30000, 500.01, 499.95
+Duration      [total, attack, wait]             1m0s, 59.998s, 7.615ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  696.821µs, 42.497ms, 6.176ms, 124.895ms, 279.558ms, 650.269ms, 726.981ms
+Bytes In      [total, mean]                     15360000, 512.00
+Bytes Out     [total, mean]                     15360000, 512.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:30000
+Error Set:
+
+## mixed scenario [ramp mode] - duration 1m0s, 10 workers
+
+| Requested RPS | Achieved RPS | Requests | P50 ms | P95 ms | P99 ms | Max ms | Err % |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 100.0 | 6000 | 4.35 | 6.96 | 8.12 | 16.93 | 0.00 |
+| 200 | 200.0 | 12000 | 4.03 | 7.59 | 9.30 | 50.19 | 0.00 |
+| 300 | 300.0 | 18000 | 4.55 | 8.68 | 16.40 | 194.25 | 0.00 |
+| 400 | 400.0 | 24000 | 5.65 | 16.01 | 257.76 | 388.68 | 0.00 |
+| 500 | 500.0 | 30000 | 6.18 | 279.56 | 650.27 | 726.98 | 0.00 |
+
+Results written to perf-results/20261108T040440Z/mixed-ramp.json
+
+=== overwrite ===
+
+=== size=1024 bytes ===
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [overwrite, size=1024]
+
+Requests      [total, rate, throughput]         12000, 200.02, 199.98
+Duration      [total, attack, wait]             1m0s, 59.995s, 12.179ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  5.595ms, 14.301ms, 7.942ms, 13.765ms, 25.669ms, 216.262ms, 315.256ms
+Bytes In      [total, mean]                     0, 0.00
+Bytes Out     [total, mean]                     12288000, 1024.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+=== size=65536 bytes ===
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [overwrite, size=65536]
+
+Requests      [total, rate, throughput]         12000, 200.02, 199.97
+Duration      [total, attack, wait]             1m0s, 59.995s, 12.549ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  6.861ms, 22.249ms, 9.692ms, 31.624ms, 73.242ms, 311.973ms, 405.697ms
+Bytes In      [total, mean]                     0, 0.00
+Bytes Out     [total, mean]                     786432000, 65536.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+## overwrite scenario [size-sweep mode] - duration 1m0s, 10 workers
+
+| Size (B) | Requests | RPS | MB/s | P50 ms | P95 ms | P99 ms | Max ms | Err % |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 12000 | 200.0 | 0.20 | 7.94 | 25.67 | 216.26 | 315.26 | 0.00 |
+| 65536 | 12000 | 200.0 | 12.50 | 9.69 | 73.24 | 311.97 | 405.70 | 0.00 |
+
+Results written to perf-results/20261108T040440Z/overwrite.json
+
+=== list ===
+Seeding 500 objects (1024 B each)...
+Seeded 500 objects
+Attacking http://localhost:9000/photos at 200 req/s for 1m0s [listobjects, size=1024]
+
+Requests      [total, rate, throughput]         12000, 200.02, 200.00
+Duration      [total, attack, wait]             1m0s, 59.995s, 4.663ms
+Latencies     [min, mean, 50, 90, 95, 99, max]  2.756ms, 3.652ms, 3.544ms, 4.197ms, 4.578ms, 5.717ms, 11.977ms
+Bytes In      [total, mean]                     2727972000, 227331.00
+Bytes Out     [total, mean]                     0, 0.00
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:12000
+Error Set:
+
+## listobjects scenario [single mode] - duration 1m0s, 10 workers
+
+| Size (B) | Requests | RPS | MB/s | P50 ms | P95 ms | P99 ms | Max ms | Err % |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 12000 | 200.0 | 0.20 | 3.54 | 4.58 | 5.72 | 11.98 | 0.00 |
+
+Results written to perf-results/20261108T040440Z/list.json
+
+=== multipart ===
+
+         /\      Grafana   /‾‾/
+    /\  /  \     |\  __   /  /
+   /  \/    \    | |/ /  /   ‾‾\
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/
+
+
+     execution: local
+        script: loadtest/k6/multipart.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 5 max VUs, 1m20s max duration (incl. graceful stop):
+              * default: Up to 5 looping VUs for 50s over 3 stages (gracefulRampDown: 30s, gracefulStop: 30s)
+
+
+running (0m01.0s), 1/5 VUs, 9 complete and 0 interrupted iterations
+default   [   2% ] 1/5 VUs  01.0s/50.0s
+
+running (0m02.0s), 1/5 VUs, 19 complete and 0 interrupted iterations
+default   [   4% ] 1/5 VUs  02.0s/50.0s
+
+running (0m03.0s), 2/5 VUs, 31 complete and 0 interrupted iterations
+default   [   6% ] 2/5 VUs  03.0s/50.0s
+
+running (0m04.0s), 2/5 VUs, 47 complete and 0 interrupted iterations
+default   [   8% ] 2/5 VUs  04.0s/50.0s
+
+running (0m05.0s), 2/5 VUs, 65 complete and 0 interrupted iterations
+default   [  10% ] 2/5 VUs  05.0s/50.0s
+
+running (0m06.0s), 3/5 VUs, 86 complete and 0 interrupted iterations
+default   [  12% ] 3/5 VUs  06.0s/50.0s
+
+running (0m07.0s), 3/5 VUs, 107 complete and 0 interrupted iterations
+default   [  14% ] 3/5 VUs  07.0s/50.0s
+
+running (0m08.0s), 4/5 VUs, 132 complete and 0 interrupted iterations
+default   [  16% ] 4/5 VUs  08.0s/50.0s
+
+running (0m09.0s), 4/5 VUs, 158 complete and 0 interrupted iterations
+default   [  18% ] 4/5 VUs  09.0s/50.0s
+
+running (0m10.0s), 4/5 VUs, 182 complete and 0 interrupted iterations
+default   [  20% ] 4/5 VUs  10.0s/50.0s
+
+running (0m11.0s), 5/5 VUs, 209 complete and 0 interrupted iterations
+default   [  22% ] 5/5 VUs  11.0s/50.0s
+
+running (0m12.0s), 5/5 VUs, 236 complete and 0 interrupted iterations
+default   [  24% ] 5/5 VUs  12.0s/50.0s
+
+running (0m13.0s), 5/5 VUs, 262 complete and 0 interrupted iterations
+default   [  26% ] 5/5 VUs  13.0s/50.0s
+
+running (0m14.0s), 5/5 VUs, 286 complete and 0 interrupted iterations
+default   [  28% ] 5/5 VUs  14.0s/50.0s
+
+running (0m15.0s), 5/5 VUs, 313 complete and 0 interrupted iterations
+default   [  30% ] 5/5 VUs  15.0s/50.0s
+
+running (0m16.0s), 5/5 VUs, 338 complete and 0 interrupted iterations
+default   [  32% ] 5/5 VUs  16.0s/50.0s
+
+running (0m17.0s), 5/5 VUs, 366 complete and 0 interrupted iterations
+default   [  34% ] 5/5 VUs  17.0s/50.0s
+
+running (0m18.0s), 5/5 VUs, 392 complete and 0 interrupted iterations
+default   [  36% ] 5/5 VUs  18.0s/50.0s
+
+running (0m19.0s), 5/5 VUs, 419 complete and 0 interrupted iterations
+default   [  38% ] 5/5 VUs  19.0s/50.0s
+
+running (0m20.0s), 5/5 VUs, 446 complete and 0 interrupted iterations
+default   [  40% ] 5/5 VUs  20.0s/50.0s
+
+running (0m21.0s), 5/5 VUs, 471 complete and 0 interrupted iterations
+default   [  42% ] 5/5 VUs  21.0s/50.0s
+
+running (0m22.0s), 5/5 VUs, 501 complete and 0 interrupted iterations
+default   [  44% ] 5/5 VUs  22.0s/50.0s
+
+running (0m23.0s), 5/5 VUs, 526 complete and 0 interrupted iterations
+default   [  46% ] 5/5 VUs  23.0s/50.0s
+
+running (0m24.0s), 5/5 VUs, 552 complete and 0 interrupted iterations
+default   [  48% ] 5/5 VUs  24.0s/50.0s
+
+running (0m25.0s), 5/5 VUs, 581 complete and 0 interrupted iterations
+default   [  50% ] 5/5 VUs  25.0s/50.0s
+
+running (0m26.0s), 5/5 VUs, 606 complete and 0 interrupted iterations
+default   [  52% ] 5/5 VUs  26.0s/50.0s
+
+running (0m27.0s), 5/5 VUs, 632 complete and 0 interrupted iterations
+default   [  54% ] 5/5 VUs  27.0s/50.0s
+
+running (0m28.0s), 5/5 VUs, 658 complete and 0 interrupted iterations
+default   [  56% ] 5/5 VUs  28.0s/50.0s
+
+running (0m29.0s), 5/5 VUs, 684 complete and 0 interrupted iterations
+default   [  58% ] 5/5 VUs  29.0s/50.0s
+
+running (0m30.0s), 5/5 VUs, 713 complete and 0 interrupted iterations
+default   [  60% ] 5/5 VUs  30.0s/50.0s
+
+running (0m31.0s), 5/5 VUs, 728 complete and 0 interrupted iterations
+default   [  62% ] 5/5 VUs  31.0s/50.0s
+
+running (0m32.0s), 5/5 VUs, 743 complete and 0 interrupted iterations
+default   [  64% ] 5/5 VUs  32.0s/50.0s
+
+running (0m33.0s), 5/5 VUs, 758 complete and 0 interrupted iterations
+default   [  66% ] 5/5 VUs  33.0s/50.0s
+
+running (0m34.0s), 5/5 VUs, 768 complete and 0 interrupted iterations
+default   [  68% ] 5/5 VUs  34.0s/50.0s
+
+running (0m35.0s), 5/5 VUs, 782 complete and 0 interrupted iterations
+default   [  70% ] 5/5 VUs  35.0s/50.0s
+
+running (0m36.0s), 5/5 VUs, 797 complete and 0 interrupted iterations
+default   [  72% ] 5/5 VUs  36.0s/50.0s
+
+running (0m37.0s), 5/5 VUs, 804 complete and 0 interrupted iterations
+default   [  74% ] 5/5 VUs  37.0s/50.0s
+
+running (0m38.0s), 5/5 VUs, 820 complete and 0 interrupted iterations
+default   [  76% ] 5/5 VUs  38.0s/50.0s
+
+running (0m39.0s), 5/5 VUs, 835 complete and 0 interrupted iterations
+default   [  78% ] 5/5 VUs  39.0s/50.0s
+
+running (0m40.0s), 5/5 VUs, 848 complete and 0 interrupted iterations
+default   [  80% ] 5/5 VUs  40.0s/50.0s
+
+running (0m41.0s), 5/5 VUs, 863 complete and 0 interrupted iterations
+default   [  82% ] 5/5 VUs  41.0s/50.0s
+
+running (0m42.0s), 5/5 VUs, 878 complete and 0 interrupted iterations
+default   [  84% ] 5/5 VUs  42.0s/50.0s
+
+running (0m43.0s), 4/5 VUs, 887 complete and 0 interrupted iterations
+default   [  86% ] 4/5 VUs  43.0s/50.0s
+
+running (0m44.0s), 4/5 VUs, 903 complete and 0 interrupted iterations
+default   [  88% ] 4/5 VUs  44.0s/50.0s
+
+running (0m45.0s), 3/5 VUs, 917 complete and 0 interrupted iterations
+default   [  90% ] 3/5 VUs  45.0s/50.0s
+
+running (0m46.0s), 3/5 VUs, 926 complete and 0 interrupted iterations
+default   [  92% ] 3/5 VUs  46.0s/50.0s
+
+running (0m47.0s), 2/5 VUs, 938 complete and 0 interrupted iterations
+default   [  94% ] 2/5 VUs  47.0s/50.0s
+
+running (0m48.0s), 2/5 VUs, 950 complete and 0 interrupted iterations
+default   [  96% ] 2/5 VUs  48.0s/50.0s
+
+running (0m49.0s), 1/5 VUs, 959 complete and 0 interrupted iterations
+default   [  98% ] 1/5 VUs  49.0s/50.0s
+
+running (0m50.0s), 1/5 VUs, 966 complete and 0 interrupted iterations
+default   [ 100% ] 1/5 VUs  50.0s/50.0s
+
+
+  █ THRESHOLDS
+
+    http_req_failed
+    ✓ 'rate<0.05' rate=0.00%
+
+    iterations
+    ✓ 'count>0' count=968
+
+
+  █ TOTAL RESULTS
+
+    checks_total.......: 4840    95.985689/s
+    checks_succeeded...: 100.00% 4840 out of 4840
+    checks_failed......: 0.00%   0 out of 4840
+
+    ✓ create 200
+    ✓ part 200
+    ✓ complete 200
+
+    CUSTOM
+    complete_mpu_latency...........: avg=57.16ms  min=27.08ms med=53.51ms max=457.31ms p(90)=77.94ms  p(95)=86.08ms
+    complete_mpu_success...........: 100.00% 968 out of 968
+    completed_uploads..............: 968     19.197138/s
+    create_mpu_latency.............: avg=3.97ms   min=1.2ms   med=2.84ms  max=402.65ms p(90)=6.57ms   p(95)=7.8ms
+    create_mpu_success.............: 100.00% 968 out of 968
+    part_upload_latency............: avg=46.94ms  min=18.48ms med=38.49ms max=438.96ms p(90)=79.33ms  p(95)=89.38ms
+    part_upload_success............: 100.00% 2904 out of 2904
+
+    HTTP
+    http_req_duration..............: avg=40.39ms  min=1.2ms   med=37.62ms max=457.31ms p(90)=73.93ms  p(95)=86.38ms
+      { expected_response:true }...: avg=40.39ms  min=1.2ms   med=37.62ms max=457.31ms p(90)=73.93ms  p(95)=86.38ms
+    http_req_failed................: 0.00%   0 out of 4840
+    http_reqs......................: 4840    95.985689/s
+
+    EXECUTION
+    iteration_duration.............: avg=212.74ms min=90.44ms med=185.3ms max=763.51ms p(90)=330.91ms p(95)=349.8ms
+    iterations.....................: 968     19.197138/s
+    vus............................: 1       min=1            max=5
+    vus_max........................: 5       min=5            max=5
+
+    NETWORK
+    data_received..................: 1.3 MB  27 kB/s
+    data_sent......................: 15 GB   302 MB/s
+
+
+
+
+running (0m50.4s), 0/5 VUs, 968 complete and 0 interrupted iterations
+default ✓ [ 100% ] 0/5 VUs  50s
+
+============================================================
+Summary [smoke profile, perf-results/20261108T040440Z]
+============================================================
+  put-sweep    PASS
+  get-warm     PASS
+  mixed-ramp   PASS
+  overwrite    PASS
+  list         PASS
+  multipart    PASS

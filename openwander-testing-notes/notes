@@ -1,0 +1,10 @@
+looks amazing, I love it so far!  I took my https://github.com/afreidah/s3-orchestrator repo which has a "nomad-demo" Makefile task that stands up support infra and then three instances of s3-orchestrator and swapped it over to open wander from nomad.  Changed nothing else and it stood up clean.  Took some screenshots of different pages, everything looks good. 
+
+ran full "make nomad-demo" and "make perf" with openwander and my standard performance testing that slams it with requests worked perfectly, no issues noticed.  
+
+* The exec functionality right there in the browser is wonderful and is working flawlessly so far.  Super userful.  
+* the jobs page visually differentiates between a raw .hcl job and a nomad-pack job
+* the only web ui thing I miss from Nomad (lets be honest, the web ui is the worst part of nomad by far) is the topology page having the chart of all the nodes and their jobs and resources vs the full node...you know what I mean, I'm not describing it well, the only thing nomad puts on that page haha
+
+only issues I've noticed so far:
+* the live resources on a running allocation doesn't seem to update in the browser, requires a refresh to get updated resource usage.

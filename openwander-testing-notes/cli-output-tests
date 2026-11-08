@@ -1,0 +1,162 @@
+afreidah ~/tools/s3-orchestrator on  main^* ❯ env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION NOMAD_ADDR=http://127.0.0.1:4646 ~/.local/bin/openwander status
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+ID                  Type     Priority  Status   Submit Date
+demo-minio-setup    batch    50        dead     2026-11-07T19:55:03-08:00
+demo-observability  service  50        running  2026-11-07T19:54:48-08:00
+demo-services       service  50        running  2026-11-07T19:54:48-08:00
+s3-orchestrator     service  50        running  2026-11-07T19:55:12-08:00
+traefik             service  50        running  2026-11-07T19:55:12-08:00
+afreidah ~/tools/s3-orchestrator on  main^* ❯ env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION NOMAD_ADDR=http://127.0.0.1:4646 ~/.local/bin/openwander job status s3-orchestrator
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+ID            = s3-orchestrator
+Name          = s3-orchestrator
+Submit Date   = 2026-11-07T19:55:12-08:00
+Type          = service
+Priority      = 50
+Datacenters   = *
+Namespace     = default
+Node Pool     = default
+Status        = running
+Periodic      = false
+Parameterized = false
+
+Summary
+Task Group       Queued  Starting  Running  Failed  Complete  Lost  Unknown
+s3-orchestrator  0       0         3        0       0         0     0
+
+Latest Deployment
+ID          = 26cdc66c
+Status      = successful
+Description = Deployment completed successfully
+
+Deployed
+Task Group       Auto Revert  Desired  Placed  Healthy  Unhealthy  Progress Deadline
+s3-orchestrator  true         3        3       3        0          2026-11-07T20:05:57-08:00
+
+Allocations
+ID        Node ID   Task Group       Version  Desired  Status   Created    Modified
+2f5dc207  c725db40  s3-orchestrator  0        run      running  7m25s ago  6m49s ago
+c89034d0  c725db40  s3-orchestrator  0        run      running  7m25s ago  6m40s ago
+f0fc7427  c725db40  s3-orchestrator  0        run      running  7m25s ago  6m40s ago
+afreidah ~/tools/s3-orchestrator on  main^* ❯ env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION NOMAD_ADDR=http://127.0.0.1:4646 ~/.local/bin/openwander service list
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+Service Name             Tags
+demo-grafana             []
+demo-loki                []
+demo-minio-1             []
+demo-minio-2             []
+demo-minio-3             []
+demo-postgres            []
+demo-prometheus          []
+demo-redis               []
+demo-tempo               []
+s3-orchestrator          [traefik.enable=true,traefik.http.routers.s3-orchestrator.entrypoints=s3,traefik.http.routers.s3-orchestrator.rule=PathPrefix(`/`)]
+s3-orchestrator-metrics  [metrics]
+afreidah ~/tools/s3-orchestrator on  main^* ❯ env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION NOMAD_ADDR=http://127.0.0.1:4646 ~/.local/bin/openwander node status -self -verbose
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+ID              = c725db40-83bc-cde9-765d-56d956c2b0e7
+Name            = stinkbook
+Node Pool       = default
+Class           = <none>
+DC              = dc1
+Drain           = false
+Eligibility     = eligible
+Status          = ready
+CSI Controllers = <none>
+CSI Drivers     = <none>
+Uptime          = 80h54m48s
+
+Drivers
+Driver    Detected  Healthy  Message  Time
+docker    true      true     Healthy  2026-11-07T19:54:47-08:00
+exec      true      true     Healthy  2026-11-07T19:54:47-08:00
+java      false     false    <none>   2026-11-07T19:54:47-08:00
+qemu      true      true     Healthy  2026-11-07T19:54:47-08:00
+raw_exec  true      true     Healthy  2026-11-07T19:54:47-08:00
+
+Node Events
+Time                       Subsystem  Message          Details
+2026-11-07T19:54:48-08:00  Cluster    Node registered  <none>
+
+Allocated Resources
+CPU             Memory          Disk
+7800/55560 MHz  8.0 GiB/30 GiB  4.1 GiB/8.8 GiB
+
+Allocation Resource Utilization
+CPU             Memory
+1031/55560 MHz  2.3 GiB/30 GiB
+
+Host Resource Utilization
+CPU              Memory         Disk
+19758/55560 MHz  12 GiB/30 GiB  (tmpfs)
+
+Allocations
+ID                                    Eval ID                               Node ID                               Task Group       Version  Desired  Status    Created                    Modified
+f0fc7427-09f1-1d1e-de88-2ec9feaaf467  7e305e8f-880f-fe08-0807-fd406b1fff34  c725db40-83bc-cde9-765d-56d956c2b0e7  s3-orchestrator  0        run      running   2026-11-07T19:55:12-08:00  2026-11-07T19:55:57-08:00
+c89034d0-6e7d-de1c-0281-145fa08350db  7e305e8f-880f-fe08-0807-fd406b1fff34  c725db40-83bc-cde9-765d-56d956c2b0e7  s3-orchestrator  0        run      running   2026-11-07T19:55:12-08:00  2026-11-07T19:55:57-08:00
+2f5dc207-55c4-c4aa-f516-e08321a6a965  7e305e8f-880f-fe08-0807-fd406b1fff34  c725db40-83bc-cde9-765d-56d956c2b0e7  s3-orchestrator  0        run      running   2026-11-07T19:55:12-08:00  2026-11-07T19:55:48-08:00
+c7702fe5-1e7e-ba48-9820-b8dd47f19d17  d81e4b3c-ec51-0061-ec36-2d366205d1b5  c725db40-83bc-cde9-765d-56d956c2b0e7  traefik          0        run      running   2026-11-07T19:55:12-08:00  2026-11-07T19:55:23-08:00
+94069ccf-710a-7c39-d836-d28f3c40cb8e  84cad531-0701-ddee-289e-8265490a2318  c725db40-83bc-cde9-765d-56d956c2b0e7  minio-setup      0        run      complete  2026-11-07T19:55:03-08:00  2026-11-07T19:55:11-08:00
+407255d9-79ea-9461-1fa8-d2b031ef1183  b318135c-82f0-9b01-08d2-a80a13b832ec  c725db40-83bc-cde9-765d-56d956c2b0e7  alloy            0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:54:59-08:00
+0cb81ab3-d678-4b48-9794-2a6a980d2ee3  b318135c-82f0-9b01-08d2-a80a13b832ec  c725db40-83bc-cde9-765d-56d956c2b0e7  tempo            0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:24-08:00
+33bb10dc-ecfb-6025-fc55-fb344fcdd5a4  b318135c-82f0-9b01-08d2-a80a13b832ec  c725db40-83bc-cde9-765d-56d956c2b0e7  grafana          0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:04-08:00
+235ac3b5-d966-dd6e-0e18-484c015b9ac4  b318135c-82f0-9b01-08d2-a80a13b832ec  c725db40-83bc-cde9-765d-56d956c2b0e7  prometheus       0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:04-08:00
+1ab94d45-acbe-7e92-2500-ad8a0035c65d  b318135c-82f0-9b01-08d2-a80a13b832ec  c725db40-83bc-cde9-765d-56d956c2b0e7  loki             0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:24-08:00
+5d6af737-a984-2d29-97cd-e2b4caf81658  807b4df7-ea26-1b67-8904-811af3f80d04  c725db40-83bc-cde9-765d-56d956c2b0e7  minio-1          0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:02-08:00
+6bf136b3-983c-a0e0-0804-c32c8d2b7d72  807b4df7-ea26-1b67-8904-811af3f80d04  c725db40-83bc-cde9-765d-56d956c2b0e7  minio-2          0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:02-08:00
+b67821e5-eb0a-4488-a2e5-7888412cb8db  807b4df7-ea26-1b67-8904-811af3f80d04  c725db40-83bc-cde9-765d-56d956c2b0e7  postgres         0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:02-08:00
+e2f3280e-98d9-849c-5b49-ff35990eb75f  807b4df7-ea26-1b67-8904-811af3f80d04  c725db40-83bc-cde9-765d-56d956c2b0e7  minio-3          0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:02-08:00
+1e74bb8b-ad5d-cde7-fa51-b1fb19777749  807b4df7-ea26-1b67-8904-811af3f80d04  c725db40-83bc-cde9-765d-56d956c2b0e7  redis            0        run      running   2026-11-07T19:54:48-08:00  2026-11-07T19:55:02-08:00
+
+Attributes
+cpu.arch                      = amd64
+cpu.frequency                 = 4630
+cpu.modelname                 = AMD Ryzen 5 7535U with Radeon Graphics
+cpu.numcores                  = 12
+cpu.reservablecores           = 12
+cpu.totalcompute              = 55560
+driver.docker                 = 1
+driver.docker.bridge_ip       = 172.17.0.1
+driver.docker.os_type         = linux
+driver.docker.runtimes        = io.containerd.runc.v2,runc
+driver.docker.version         = 29.9.2
+driver.docker.volumes.enabled = true
+driver.exec                   = 1
+driver.qemu                   = 1
+driver.qemu.version           = 10.0.13
+driver.raw_exec               = 1
+kernel.arch                   = x86_64
+kernel.landlock               = v9
+kernel.name                   = linux
+kernel.version                = 7.1.8+deb13-amd64
+memory.totalbytes             = 32344440832
+nomad.advertise.address       = 127.0.0.1:4646
+nomad.bridge.hairpin_mode     = false
+nomad.revision                = 171040d011081e9a76d274bca0356ccf748acbff
+nomad.service_discovery       = true
+nomad.version                 = 1.6.5
+os.name                       = debian
+os.signals                    = SIGXFSZ,SIGABRT,SIGALRM,SIGBUS,SIGKILL,SIGTRAP,SIGUSR1,SIGUSR2,SIGWINCH,SIGHUP,SIGPIPE,SIGPROF,SIGSEGV,SIGSYS,SIGTERM,SIGTTIN,SIGXCPU,SIGILL,SIGINT,SIGIOT,SIGSTOP,SIGTTOU,SIGNULL,SIGCONT,SIGFPE,SIGIO,SIGQUIT,SIGTSTP
+os.version                    = 13.7
+unique.cgroup.mountpoint      = /sys/fs/cgroup
+unique.cgroup.version         = v2
+unique.hostname               = stinkbook
+unique.network.ip-address     = 127.0.0.1
+unique.storage.bytesfree      = 9501339648
+unique.storage.bytestotal     = 16172220416
+unique.storage.volume         = tmpfs
+
+Meta
+connect.gateway_image     = docker.io/envoyproxy/envoy:v${NOMAD_envoy_version}
+connect.log_level         = info
+connect.proxy_concurrency = 1
+connect.sidecar_image     = docker.io/envoyproxy/envoy:v${NOMAD_envoy_version}
+afreidah ~/tools/s3-orchestrator on  main^* ❯ env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION NOMAD_ADDR=http://127.0.0.1:4646 ~/.local/bin/openwander deployment list
+Warning: NOMAD_ADDR is deprecated, use WANDER_ADDR instead
+ID        Job ID              Job Version  Status      Description
+26cdc66c  s3-orchestrator     0            successful  Deployment completed successfully
+00503fe1  traefik             0            successful  Deployment completed successfully
+e37ede0b  demo-observability  0            successful  Deployment completed successfully
+0a6b7133  demo-services       0            successful  Deployment completed successfully
+

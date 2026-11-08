@@ -35,7 +35,9 @@ unset NOMAD_TOKEN NOMAD_CACERT NOMAD_CLIENT_CERT NOMAD_CLIENT_KEY NOMAD_TLS_SERV
 unset CONSUL_HTTP_TOKEN CONSUL_CACERT CONSUL_CLIENT_CERT CONSUL_CLIENT_KEY CONSUL_TLS_SERVER_NAME CONSUL_HTTP_SSL CONSUL_HTTP_SSL_VERIFY CONSUL_NAMESPACE
 export NOMAD_ADDR="http://127.0.0.1:4646"
 export CONSUL_HTTP_ADDR="http://127.0.0.1:8500"
-nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command nomad "$@"; }
+NOMAD_BIN="${NOMAD_BIN:-nomad}"
+NOMAD_NAME="$(basename "$NOMAD_BIN")"
+nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command "$NOMAD_BIN" "$@"; }
 
 cd "$REPO_ROOT"
 
@@ -160,7 +162,7 @@ remove_leftovers() {
         | while read -r container; do
             docker rm -f "$container" >/dev/null 2>&1 || true
         done
-    pkill -f '[n]omad (logmon|docker_logger)' 2>/dev/null || true
+    pkill -f "$NOMAD_NAME (logmon|docker_logger)" 2>/dev/null || true
     docker volume rm -f "${DEMO_VOLUMES[@]}" >/dev/null 2>&1 || true
     rm -f /tmp/nomad-demo.pid "$CREDENTIALS_FILE"
 }
@@ -192,9 +194,9 @@ if [[ "${1:-}" == "down" ]]; then
         fi
         sleep 1
     done
-    pkill -f '[n]omad agent -dev' 2>/dev/null || true
+    pkill -f "$NOMAD_NAME agent -dev" 2>/dev/null || true
     for _ in $(seq 1 60); do
-        if ! pgrep -f '[n]omad agent -dev' >/dev/null 2>&1; then
+        if ! pgrep -f "$NOMAD_NAME agent -dev" >/dev/null 2>&1; then
             break
         fi
         sleep 1
@@ -204,7 +206,7 @@ if [[ "${1:-}" == "down" ]]; then
     exit 0
 fi
 
-require_commands docker nomad nomad-pack jq curl
+require_commands docker "$NOMAD_BIN" nomad-pack jq curl
 refuse_running_dev_deps
 
 # --- Start Nomad dev agent ---

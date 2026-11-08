@@ -640,6 +640,10 @@ loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
 kubernetes-demo: ## Run the s3-orchestrator in k3d with the Helm chart (requires docker, k3d, kubectl, helm)
 	./deploy/kubernetes/local/demo.sh
 
+# Binary the Nomad demo runs as its agent and CLI.
+NOMAD_BIN ?= /home/afreidah/.local/bin/openwander
+export NOMAD_BIN
+
 nomad-demo: ## Run the s3-orchestrator in Nomad dev mode with the pack (requires docker, nomad, nomad-pack)
 	./deploy/nomad/local/demo.sh
 
