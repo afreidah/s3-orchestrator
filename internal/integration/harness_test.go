@@ -76,18 +76,21 @@ type harnessSpec struct {
 }
 
 // harness is one isolated orchestrator and everything a test needs to reach
-// into it: the client that drives it, the stack and workers behind it, and a
-// direct handle on its own database.
+// into it: the client that drives it, the stack and workers behind it, a direct
+// handle on its own database, and the faults it can inject into its store and
+// backends.
 type harness struct {
 	t        *testing.T
 	client   *s3.Client
 	stack    *proxytest.Stack
 	workers  *proxytest.Workers
 	store    *postgres.Store
+	faults   *FailableStore
 	db       *sql.DB
 	enc      *encryption.Encryptor
 	codec    *compression.Codec
 	backends map[string]s3be.ObjectBackend
+	proxies  map[string]*backendProxy
 	order    []string
 }
 
@@ -126,12 +129,12 @@ func newHarness(t *testing.T, spec harnessSpec) *harness {
 		t.Fatalf("migrate harness database: %v", err)
 	}
 
-	backendCfgs := harnessBackendConfigs(t, ctx, id, spec)
+	backendCfgs, proxies := harnessBackendConfigs(t, ctx, id, spec)
 	if err := st.SyncQuotaLimits(ctx, backendCfgs); err != nil {
 		t.Fatalf("sync harness quota limits: %v", err)
 	}
 
-	h := &harness{t: t, store: st, backends: map[string]s3be.ObjectBackend{}}
+	h := &harness{t: t, store: st, faults: newFailableStore(st), backends: map[string]s3be.ObjectBackend{}, proxies: proxies}
 	for i := range backendCfgs {
 		be, err := s3be.NewS3Backend(ctx, &backendCfgs[i])
 		if err != nil {
@@ -169,10 +172,10 @@ func newHarness(t *testing.T, spec harnessSpec) *harness {
 }
 
 // harnessBackendConfigs turns the declared fleet into backend configs, creating
-// a fresh bucket for each so no two harnesses share a keyspace. Backends are
-// spread across the available MinIO containers so a fleet larger than one still
-// exercises distinct endpoints.
-func harnessBackendConfigs(t *testing.T, ctx context.Context, id int64, spec harnessSpec) []config.BackendConfig {
+// a fresh bucket for each so no two harnesses share a keyspace, and the proxy
+// each backend is reached through. Backends are spread across the available
+// MinIO containers so a fleet larger than one still exercises distinct endpoints.
+func harnessBackendConfigs(t *testing.T, ctx context.Context, id int64, spec harnessSpec) ([]config.BackendConfig, map[string]*backendProxy) {
 	t.Helper()
 	declared := spec.Backends
 	if len(declared) == 0 {
@@ -184,16 +187,16 @@ func harnessBackendConfigs(t *testing.T, ctx context.Context, id int64, spec har
 	}
 
 	out := make([]config.BackendConfig, len(declared))
+	proxies := make(map[string]*backendProxy, len(declared))
 	for i, be := range declared {
 		endpoint := minioEndpoints[i%len(minioEndpoints)]
 		bucket := fmt.Sprintf("harness-%d-%d", id, i)
 		mustCreateHarnessBucket(t, ctx, endpoint, bucket)
-		if be.IgnoreRange {
-			endpoint = rangeIgnoringProxy(t, endpoint)
-		}
+		proxy, proxyURL := newBackendProxy(t, endpoint, be.IgnoreRange)
+		proxies[be.Name] = proxy
 		out[i] = config.BackendConfig{
 			Name:            be.Name,
-			Endpoint:        endpoint,
+			Endpoint:        proxyURL,
 			Region:          "us-east-1",
 			Bucket:          bucket,
 			AccessKeyID:     "minioadmin",
@@ -202,7 +205,7 @@ func harnessBackendConfigs(t *testing.T, ctx context.Context, id int64, spec har
 			QuotaBytes:      be.Quota,
 		}
 	}
-	return out
+	return out, proxies
 }
 
 // mustCreateHarnessBucket creates one harness-owned bucket on a MinIO container.
@@ -254,7 +257,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		routing = config.RoutingPack
 	}
 
-	stores := newStores(h.store)
+	stores := newStores(h.faults)
 	opts.Runtime = proxytest.NewRuntime(&proxytest.RuntimeOptions{
 		Backends:        h.backends,
 		Order:           h.order,

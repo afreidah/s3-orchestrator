@@ -14,15 +14,8 @@ package integration
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"testing"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -31,40 +24,6 @@ import (
 // noRangeBackend names the one backend in each fleet below, so every read is
 // served by the backend that ignores Range.
 const noRangeBackend = "h-no-range"
-
-// rangeIgnoringProxy fronts a MinIO endpoint with a proxy that drops the Range
-// header from every request, so MinIO answers each ranged GET with the whole
-// object. SigV4 signs Range, so a request that loses it is signed again with
-// the harness credentials. Returns the proxy's endpoint.
-func rangeIgnoringProxy(t *testing.T, endpoint string) string {
-	t.Helper()
-	target, err := url.Parse(endpoint)
-	if err != nil {
-		t.Fatalf("parse MinIO endpoint %s: %v", endpoint, err)
-	}
-	// S3 signs the path as sent, without the second escaping SigV4 applies to
-	// other services; the stored keys carry "!" and would not match otherwise.
-	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
-	creds := aws.Credentials{AccessKeyID: "minioadmin", SecretAccessKey: "minioadmin"}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	direct := proxy.Director
-	proxy.Director = func(r *http.Request) {
-		direct(r)
-		if r.Header.Get("Range") == "" {
-			return
-		}
-		r.Header.Del("Range")
-		r.Header.Del("Authorization")
-		payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-		if err := signer.SignHTTP(r.Context(), creds, r, payloadHash, "s3", "us-east-1", time.Now()); err != nil {
-			t.Errorf("re-sign request without Range: %v", err)
-		}
-	}
-	srv := httptest.NewServer(proxy)
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
 
 // TestIgnoredRange_EveryStoredFormReadsCorrectly reads plaintext, encrypted,
 // and compressed-and-encrypted objects whole and by range from a backend that

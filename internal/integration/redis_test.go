@@ -183,4 +183,3 @@ func TestRedis_Backends(t *testing.T) {
 		t.Fatalf("Backends() returned %d, want 3", len(got))
 	}
 }
-
