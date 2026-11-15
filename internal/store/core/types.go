@@ -12,7 +12,6 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"slices"
 	"strings"
@@ -152,30 +151,6 @@ type ExistingCopy struct {
 	SizeBytes   int64
 	CreatedAt   time.Time
 	Form        StoredFlags
-}
-
-// removedCopy describes bytes a transaction stopped recording: a copy displaced
-// by an overwrite or delete, or the upload of an intent it cleared. StorageKey
-// is the exact path to delete; never derive it from the object key, or a late
-// cleanup could remove a newer write's bytes. Reason overrides the label the
-// transaction queues the bytes under; empty means its default.
-type removedCopy struct {
-	BackendName string
-	StorageKey  string
-	SizeBytes   int64
-	Reason      string
-}
-
-// request is the cleanup that deletes this copy of objectKey, labelled with the
-// copy's own reason or defaultReason when it has none.
-func (d removedCopy) request(objectKey, defaultReason string) *CleanupRequest {
-	return &CleanupRequest{
-		BackendName: d.BackendName,
-		ObjectKey:   objectKey,
-		StorageKey:  StoragePath(objectKey, d.StorageKey),
-		Reason:      cmp.Or(d.Reason, defaultReason),
-		SizeBytes:   d.SizeBytes,
-	}
 }
 
 // The labels the store queues bytes under when the caller does not name one.
@@ -334,15 +309,6 @@ func (q QuotaStat) Occupied() int64 {
 // the backend, but it takes room a move onto the backend would need.
 func (q QuotaStat) Unrecorded() int64 {
 	return q.OrphanBytes + q.InflightBytes
-}
-
-// quotaDeltas is the signed per-backend byte change a mutation makes, keyed by
-// backend name, gathered so chargeStripes can write each backend once.
-type quotaDeltas map[string]int64
-
-// add accumulates a signed delta for one backend.
-func (q quotaDeltas) add(backendName string, delta int64) {
-	q[backendName] += delta
 }
 
 // BackendStateRecord is one backend's state record. ObjectsMoved, LastError,

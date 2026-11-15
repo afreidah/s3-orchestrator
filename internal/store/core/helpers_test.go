@@ -18,7 +18,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 )
@@ -139,75 +138,6 @@ func TestStoredFormDescribed_CopiesEveryField(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// removedFromExisting
-// -------------------------------------------------------------------------
-
-// TestRemovedFromExisting_EmptyInput verifies the empty-slice case
-// returns nil rather than an allocated zero-length slice.
-func TestRemovedFromExisting_EmptyInput(t *testing.T) {
-	t.Parallel()
-	got := removedFromExisting(nil)
-	if got != nil {
-		t.Errorf("expected nil for empty input, got %+v", got)
-	}
-	got = removedFromExisting([]ExistingCopy{})
-	if got != nil {
-		t.Errorf("expected nil for empty slice, got %+v", got)
-	}
-}
-
-// TestRemovedFromExisting_SameBackendStillRemoved verifies that a copy on a
-// backend the new write also lands on is removed. The new write stores its
-// bytes at a path of its own, so the old copy stays at its old path and leaving
-// it would leak the bytes.
-func TestRemovedFromExisting_SameBackendStillRemoved(t *testing.T) {
-	t.Parallel()
-	existing := []ExistingCopy{
-		{BackendName: "b1", StorageKey: "k!old", SizeBytes: 100},
-	}
-	got := removedFromExisting(existing)
-	if len(got) != 1 {
-		t.Fatalf("expected the prior copy to be displaced, got %+v", got)
-	}
-	if got[0].BackendName != "b1" || got[0].StorageKey != "k!old" || got[0].SizeBytes != 100 {
-		t.Errorf("displaced copy wrong: %+v", got[0])
-	}
-}
-
-// TestRemovedFromExisting_CarriesEveryPath verifies that every copy comes
-// back naming its own path, which is what the cleanup deletes.
-func TestRemovedFromExisting_CarriesEveryPath(t *testing.T) {
-	t.Parallel()
-	existing := []ExistingCopy{
-		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 100},
-		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
-		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
-	}
-	got := removedFromExisting(existing)
-	if len(got) != 3 {
-		t.Fatalf("expected 3 removed copies, got %d", len(got))
-	}
-	seen := map[string]removedCopy{}
-	for _, dc := range got {
-		seen[dc.BackendName] = dc
-	}
-	for _, want := range []struct {
-		backend    string
-		storageKey string
-		size       int64
-	}{{"b1", "k!a", 100}, {"b2", "k!b", 200}, {"b3", "k!c", 300}} {
-		dc, ok := seen[want.backend]
-		if !ok {
-			t.Fatalf("%s missing from displaced set: %+v", want.backend, got)
-		}
-		if dc.StorageKey != want.storageKey || dc.SizeBytes != want.size {
-			t.Errorf("%s displaced as %+v, want path %q size %d",
-				want.backend, dc, want.storageKey, want.size)
-		}
-	}
-}
-
-// -------------------------------------------------------------------------
 // GroupByKey
 // -------------------------------------------------------------------------
 
@@ -253,7 +183,7 @@ func TestGroupByKey_MultipleKeysAndReplicas(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// chargeStripes - lock ordering
+// QUOTA AND TAG STUB
 // -------------------------------------------------------------------------
 
 // quotaTxStub is the TxAdapter implementation the quota and tag
@@ -355,8 +285,8 @@ func (t *quotaTxStub) AcquireKeyLock(context.Context, ...string) error {
 
 // GetExistingCopiesForUpdate returns the seeded copy set, which is how a test
 // says whether the key holds anything.
-func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
-	return t.existingCopies, t.existingErr
+func (t *quotaTxStub) GetExistingCopiesForUpdate(_ context.Context, keys ...string) ([]ExistingCopy, error) {
+	return keyedCopies(t.existingCopies, keys), t.existingErr
 }
 
 // ListedPathStates reports every path as pending cleanup when the fixture was
@@ -384,172 +314,6 @@ func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *Ob
 	captured := *loc
 	s.importedLoc = &captured
 	return true, nil
-}
-
-// TestChargeStripes_StableOrderAcrossInputs charges the same backend set with
-// two different map insertion orders (Go map iteration is non-deterministic)
-// and asserts both produce the same sorted-by-backend-name sequence. This is
-// the invariant that prevents the #687 deadlock: any two transactions touching
-// the same backend set request the rows in identical order.
-func TestChargeStripes_StableOrderAcrossInputs(t *testing.T) {
-	t.Parallel()
-	deltasA := quotaDeltas{"minio-3": -100, "minio-1": -50, "minio-2": -75}
-	deltasB := quotaDeltas{"minio-2": -75, "minio-3": -100, "minio-1": -50}
-
-	txA := &quotaTxStub{}
-	txB := &quotaTxStub{}
-	if err := chargeStripes(context.Background(), txA, "bucket/key", deltasA); err != nil {
-		t.Fatalf("chargeStripes A: %v", err)
-	}
-	if err := chargeStripes(context.Background(), txB, "bucket/key", deltasB); err != nil {
-		t.Fatalf("chargeStripes B: %v", err)
-	}
-	if len(txA.adjustments) != 3 || len(txB.adjustments) != 3 {
-		t.Fatalf("expected 3 ops each, got A=%d B=%d", len(txA.adjustments), len(txB.adjustments))
-	}
-	for i := range txA.adjustments {
-		if txA.adjustments[i] != txB.adjustments[i] {
-			t.Errorf("op %d diverged: A=%+v B=%+v", i, txA.adjustments[i], txB.adjustments[i])
-		}
-	}
-	want := []string{"minio-1", "minio-2", "minio-3"}
-	for i, w := range want {
-		if txA.adjustments[i].backend != w {
-			t.Errorf("op[%d].backend = %q, want %q (sorted backend_name)", i, txA.adjustments[i].backend, w)
-		}
-	}
-}
-
-// TestChargeStripes_SignedAndZero verifies the deltas reach the store with
-// their sign intact and that a zero delta produces no statement, so a backend
-// whose credits and debits cancelled out costs no row lock.
-func TestChargeStripes_SignedAndZero(t *testing.T) {
-	t.Parallel()
-	tx := &quotaTxStub{}
-	deltas := quotaDeltas{
-		"a": -100,
-		"b": 200,
-		"c": 0,
-		"d": -50,
-	}
-	if err := chargeStripes(context.Background(), tx, "bucket/key", deltas); err != nil {
-		t.Fatalf("chargeStripes: %v", err)
-	}
-	want := []quotaOp{
-		{backend: "a", delta: -100},
-		{backend: "b", delta: 200},
-		{backend: "d", delta: -50},
-	}
-	if len(tx.adjustments) != len(want) {
-		t.Fatalf("ops = %d, want %d (zero delta should be skipped)", len(tx.adjustments), len(want))
-	}
-	for i, w := range want {
-		if tx.adjustments[i] != w {
-			t.Errorf("op[%d] = %+v, want %+v", i, tx.adjustments[i], w)
-		}
-	}
-}
-
-// TestChargeStripes_PropagatesError verifies the charge short-circuits on the
-// first SQL error and surfaces it, which is what rolls the whole transaction
-// back rather than committing the rows without the bytes.
-func TestChargeStripes_PropagatesError(t *testing.T) {
-	t.Parallel()
-	want := errors.New("simulated DB error")
-	tx := &quotaTxStub{failOn: "b", failErr: want}
-	deltas := quotaDeltas{"a": 10, "b": 20, "c": 30}
-	err := chargeStripes(context.Background(), tx, "bucket/key", deltas)
-	if !errors.Is(err, want) {
-		t.Errorf("err = %v, want wrap of %v", err, want)
-	}
-	if len(tx.adjustments) != 1 || tx.adjustments[0].backend != "a" {
-		t.Errorf("expected single op on 'a' before failure, got %+v", tx.adjustments)
-	}
-}
-
-// TestChargeStripes_EmptyMap verifies the no-op path: an empty map and a nil
-// map both issue no statement, so a mutation that moved no bytes costs nothing.
-func TestChargeStripes_EmptyMap(t *testing.T) {
-	t.Parallel()
-	tx := &quotaTxStub{}
-	if err := chargeStripes(context.Background(), tx, "bucket/key", nil); err != nil {
-		t.Errorf("nil map err = %v, want nil", err)
-	}
-	if err := chargeStripes(context.Background(), tx, "bucket/key", quotaDeltas{}); err != nil {
-		t.Errorf("empty map err = %v, want nil", err)
-	}
-	if len(tx.adjustments) != 0 {
-		t.Errorf("expected no ops, got %+v", tx.adjustments)
-	}
-}
-
-// TestChargeStripes_KeySelectsTheStripe asserts every backend in one mutation
-// is charged on the same stripe - the one the key selects - and that a
-// different key selects a different row. Charges for one object meeting on one
-// row is what lets its later credit cancel them exactly.
-func TestChargeStripes_KeySelectsTheStripe(t *testing.T) {
-	t.Parallel()
-	tx := &stripeRecordingTxStub{}
-	deltas := quotaDeltas{"a": 100, "b": 100}
-	if err := chargeStripes(context.Background(), tx, "bucket/one", deltas); err != nil {
-		t.Fatalf("chargeStripes: %v", err)
-	}
-	if len(tx.stripes) != 2 || tx.stripes[0] != tx.stripes[1] {
-		t.Errorf("stripes = %v, want both backends on the key's single stripe", tx.stripes)
-	}
-	if want := StripeFor("bucket/one"); tx.stripes[0] != want {
-		t.Errorf("stripe = %d, want %d from the key", tx.stripes[0], want)
-	}
-}
-
-// TestStripeDeltas_ChargeWritesEachRowOnceInOrder spreads keys across every
-// stripe of two backends and asserts each row is written once, in one global
-// order, carrying the whole batch's bytes. That order is what stops two batches
-// holding the same rows from deadlocking.
-func TestStripeDeltas_ChargeWritesEachRowOnceInOrder(t *testing.T) {
-	t.Parallel()
-	const keys = 1000
-	deltas := stripeDeltas{}
-	for i := range keys {
-		key := "bucket/key-" + strconv.Itoa(i)
-		deltas.add(key, "b", -1)
-		deltas.add(key, "a", -1)
-	}
-
-	tx := &stripeRecordingTxStub{}
-	if err := deltas.charge(context.Background(), tx); err != nil {
-		t.Fatalf("charge: %v", err)
-	}
-	if len(tx.rows) != 2*QuotaStripeCount {
-		t.Fatalf("wrote %d rows, want %d: one per stripe of each backend", len(tx.rows), 2*QuotaStripeCount)
-	}
-	for i := 1; i < len(tx.rows); i++ {
-		prev, cur := tx.rows[i-1], tx.rows[i]
-		if prev.backend > cur.backend || (prev.backend == cur.backend && prev.stripe >= cur.stripe) {
-			t.Errorf("row %d out of order: %+v after %+v", i, cur, prev)
-		}
-	}
-	if tx.total != -2*keys {
-		t.Errorf("total = %d, want %d", tx.total, -2*keys)
-	}
-}
-
-// stripeRecordingTxStub captures which rows the charges landed on and what they
-// added up to, which the shared quotaTxStub deliberately discards.
-type stripeRecordingTxStub struct {
-	noopTxAdapter
-	stripes []int16
-	rows    []stripeRow
-	total   int64
-}
-
-func (s *stripeRecordingTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
-	for _, c := range charges {
-		s.stripes = append(s.stripes, c.Stripe)
-		s.rows = append(s.rows, stripeRow{c.Backend, c.Stripe})
-		s.total += c.Delta
-	}
-	return nil
 }
 
 // TestValidateEncryptionMetadata covers every self-consistency rule the read
@@ -652,30 +416,6 @@ func TestStoredForm_Unreadable(t *testing.T) {
 				t.Errorf("Unreadable() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-// TestRemovedCopy_Request verifies the cleanup request carries the copy's own
-// path and size, keeps a reason the store set over the caller's default, and
-// falls back to the object key for a copy with no storage key.
-func TestRemovedCopy_Request(t *testing.T) {
-	t.Parallel()
-	dc := removedCopy{BackendName: "b1", StorageKey: "k!1", SizeBytes: 7}
-
-	got := dc.request("k", CleanupReasonOverwritten)
-	want := CleanupRequest{BackendName: "b1", ObjectKey: "k", StorageKey: "k!1", Reason: CleanupReasonOverwritten, SizeBytes: 7}
-	if *got != want {
-		t.Errorf("request = %+v, want %+v", *got, want)
-	}
-
-	dc.Reason = CleanupReasonSupersededIntent
-	if got := dc.request("k", CleanupReasonOverwritten); got.Reason != CleanupReasonSupersededIntent {
-		t.Errorf("Reason = %q, want the copy's own %q", got.Reason, CleanupReasonSupersededIntent)
-	}
-
-	legacy := removedCopy{BackendName: "b1", SizeBytes: 7}
-	if got := legacy.request("k", CleanupReasonDeleted); got.StorageKey != "k" {
-		t.Errorf("StorageKey = %q, want the object key for a copy with no path", got.StorageKey)
 	}
 }
 

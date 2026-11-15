@@ -16,8 +16,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"time"
 )
 
@@ -85,25 +83,27 @@ func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]Cl
 	})
 }
 
-// recordObjectTx is the shared transactional body. The bytes each copy adds or
-// displaces are charged to the key's quota stripe last, so the counter commits
-// with the rows and the stripe is held only until the commit.
+// recordObjectTx is the shared transactional body: replace the key's copies with
+// the write's, sweep its tags and the intents of every other write, and commit
+// the edit, which queues the displaced bytes and charges the stripes last.
 func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
 	committed := intentIDs(req.Copies)
 	held, err := keyIntentsHeld(ctx, tx, req.Key, committed...)
 	if err != nil {
 		return nil, err
 	}
+	e := newLedgerEdit(tx)
 	if !held {
-		return discardOvertakenWrite(ctx, tx, req)
+		if err := discardOvertakenWrite(ctx, e, req); err != nil {
+			return nil, err
+		}
+		return e.commit(ctx)
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, req.Key)
 	if err != nil {
 		return nil, err
 	}
-	deltas := make(quotaDeltas, len(existing)+len(req.Copies))
-	displaced, err := clearExistingCopies(ctx, tx, req.Key, existing, deltas)
-	if err != nil {
+	if err := e.removeCopies(ctx, CleanupReasonOverwritten, []string{req.Key}, existing); err != nil {
 		return nil, err
 	}
 	// A PUT replaces the tag set too, even when the key had no copies, so
@@ -113,20 +113,14 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return nil, err
 	}
 	for _, c := range req.Copies {
-		if err := tx.InsertObjectLocation(ctx, ObjectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
-			return nil, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
+		if err := e.insertCopy(ctx, ObjectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
+			return nil, err
 		}
-		deltas.add(c.Backend, req.Size)
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, intentIDs(req.Placing), committed, req.Key)
-	if err != nil {
+	if err := e.clearIntents(ctx, intentIDs(req.Placing), committed, req.Key); err != nil {
 		return nil, err
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded[req.Key]...))
-	if err != nil {
-		return nil, err
-	}
-	return cleanup, chargeStripes(ctx, tx, req.Key, deltas)
+	return e.commit(ctx)
 }
 
 // keyIntentsHeld takes the key's lock, then reports whether every intent still
@@ -160,17 +154,16 @@ func intentsHeld(ctx context.Context, tx TxAdapter, intentIDs []string) (bool, e
 // recorded, its remaining intents are dropped, and its own bytes are queued.
 // The newer write already queued those bytes when it cleared the intent, but
 // the upload may have landed after that delete ran.
-func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
-	own := make([]removedCopy, 0, len(req.Copies))
+func discardOvertakenWrite(ctx context.Context, e *ledgerEdit, req *RecordObjectRequest) error {
 	for _, c := range req.Copies {
 		if c.IntentID != "" {
-			if err := tx.DeletePending(ctx, c.IntentID); err != nil {
-				return nil, fmt.Errorf("delete overtaken intent: %w", err)
+			if err := e.tx.DeletePending(ctx, c.IntentID); err != nil {
+				return fmt.Errorf("delete overtaken intent: %w", err)
 			}
 		}
-		own = append(own, removedCopy{BackendName: c.Backend, StorageKey: c.StorageKey, SizeBytes: req.Size})
+		e.queue(req.Key, CleanupReasonSupersededIntent, c.Backend, c.StorageKey, req.Size)
 	}
-	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonSupersededIntent, own)
+	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -204,10 +197,10 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 }
 
 // deleteObjectsBatchTx is the transactional body of DeleteObjectsBatch: clear
-// each key's copies, tags and intents, debit what the copies held, and queue
-// their bytes. A delete keeps no intents, even on a key with no copies, since
-// an upload still running is placing a copy of an object that no longer exists
-// and an abandoned one would be promoted over the delete.
+// each key's intents, copies and tags, and commit the edit, which queues their
+// bytes and debits the copies. A delete keeps no intents, even on a key with no
+// copies, since an upload still running is placing a copy of an object that no
+// longer exists and an abandoned one would be promoted over the delete.
 func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
 	// The key locks come before the row read on every path, because tagging
 	// calls touch only object_tags and are excluded by the key lock alone.
@@ -218,58 +211,19 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 	if err != nil {
 		return nil, err
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, nil, nil, keys...)
-	if err != nil || (len(rows) == 0 && len(superseded) == 0) {
+	e := newLedgerEdit(tx)
+	if err := e.clearIntents(ctx, nil, nil, keys...); err != nil {
 		return nil, err
 	}
-	if err := tx.DeleteObjectCopies(ctx, keys...); err != nil {
-		return nil, fmt.Errorf("delete object copies: %w", err)
-	}
-	if err := clearTagsForKey(ctx, tx, keys...); err != nil {
-		return nil, err
-	}
-	removed, debits := splitRemovedCopies(rows, len(keys))
-	cleanup, err := queueCleanup(ctx, tx, deletedRequests(removed, superseded))
-	if err != nil {
-		return nil, err
-	}
-	if err := debits.charge(ctx, tx); err != nil {
-		return nil, err
-	}
-	return cleanup, nil
-}
-
-// deletedRequests labels each key's removed copies and cleared intents for
-// cleanup, the keys in sorted order so a batch queues its rows the same way
-// however its keys were named.
-func deletedRequests(copies, intents map[string][]removedCopy) []*CleanupRequest {
-	for key, cleared := range intents {
-		copies[key] = append(copies[key], cleared...)
-	}
-	var requests []*CleanupRequest
-	for _, key := range slices.Sorted(maps.Keys(copies)) {
-		for _, d := range copies[key] {
-			requests = append(requests, d.request(key, CleanupReasonDeleted))
+	if len(rows) > 0 {
+		if err := e.removeCopies(ctx, CleanupReasonDeleted, keys, rows); err != nil {
+			return nil, err
+		}
+		if err := clearTagsForKey(ctx, tx, keys...); err != nil {
+			return nil, err
 		}
 	}
-	return requests
-}
-
-// splitRemovedCopies folds the removed rows into the two views the batch needs:
-// the bytes each key queues, and the debits the stripe charge writes, each on
-// the stripe its own key selects.
-func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removedCopy, stripeDeltas) {
-	removed := make(map[string][]removedCopy, keyCount)
-	debits := make(stripeDeltas)
-	for _, r := range rows {
-		removed[r.ObjectKey] = append(removed[r.ObjectKey], removedCopy{
-			BackendName: r.BackendName,
-			StorageKey:  r.StorageKey,
-			SizeBytes:   r.SizeBytes,
-		})
-		debits.add(r.ObjectKey, r.BackendName, -r.SizeBytes)
-	}
-	return removed, debits
+	return e.commit(ctx)
 }
 
 // -------------------------------------------------------------------------
@@ -288,40 +242,36 @@ func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removed
 // ErrCopyHoldsOnlyDEK the copy that would leave the object unreadable.
 func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		key := loc.ObjectKey
-		if err := tx.AcquireKeyLock(ctx, key); err != nil {
-			return nil, err
-		}
-		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		held, err := removableCopy(existing, loc, keepAtLeast)
-		if err != nil {
-			return nil, err
-		}
-		if err := removeCopyRow(ctx, tx, key, &held, len(existing) == 1); err != nil {
-			return nil, err
-		}
-		if reason == "" {
-			return nil, nil
-		}
-		return enqueueRemoved(ctx, tx, key, reason, removedFromExisting([]ExistingCopy{held}))
+		return deleteObjectLocationTx(ctx, tx, loc, keepAtLeast, reason)
 	})
 }
 
-// removeCopyRow deletes the row of a copy of key the locked re-read holds and
-// debits what it held. Removing the last copy also drops the object's tags.
-func removeCopyRow(ctx context.Context, tx TxAdapter, key string, held *ExistingCopy, last bool) error {
-	if err := tx.DeleteObjectFromBackend(ctx, key, held.BackendName); err != nil {
-		return err
+// deleteObjectLocationTx is the transactional body of DeleteObjectLocation:
+// confirm the copy against the locked copy set, remove it, and drop the
+// object's tags with its last copy.
+func deleteObjectLocationTx(ctx context.Context, tx TxAdapter, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
+	key := loc.ObjectKey
+	if err := tx.AcquireKeyLock(ctx, key); err != nil {
+		return nil, err
 	}
-	if last {
+	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	held, err := removableCopy(existing, loc, keepAtLeast)
+	if err != nil {
+		return nil, err
+	}
+	e := newLedgerEdit(tx)
+	if err := e.removeCopy(ctx, reason, &held); err != nil {
+		return nil, err
+	}
+	if len(existing) == 1 {
 		if err := clearTagsForKey(ctx, tx, key); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return chargeStripes(ctx, tx, key, quotaDeltas{held.BackendName: -held.SizeBytes})
+	return e.commit(ctx)
 }
 
 // removableCopy returns the copy in the locked re-read that loc names, or the
@@ -377,94 +327,72 @@ type MoveReasons struct {
 	SourceDelete string
 }
 
-// placeOutcome is what a placement transaction hands back: the bytes it
-// placed, the cleanup rows it queued, and, for a placement it refused, why.
-// A refusal still commits, since it is what queues the copy the caller wrote.
-type placeOutcome struct {
-	placed  int64
-	cleanup []CleanupItem
-	refusal error
-}
-
 // PlaceCopy records the copy a placement describes and clears its intent,
 // returning the bytes it placed and the cleanup rows it queued. A source gone
 // or replaced since the caller read it is ErrCopyChanged, and a target that
 // already holds another copy is ErrTargetRefused; either way nothing is
 // recorded, and the copied bytes are queued for deletion in their place.
 func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error) {
-	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (placeOutcome, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[int64], error) {
 		return placeCopyTx(ctx, tx, p)
 	})
 	if err != nil {
 		return 0, nil, err
 	}
-	return out.placed, out.cleanup, out.refusal
+	return out.result, out.cleanup, out.refusal
 }
 
 // placeCopyTx is the transactional body of PlaceCopy: lock the key, confirm the
 // intent, the source and the target against the locked copy set, clear the
 // intent, for a move remove the source, and insert.
-func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (placeOutcome, error) {
+func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (outcome[int64], error) {
 	key := p.Source.ObjectKey
 	held, err := keyIntentsHeld(ctx, tx, key, p.Intent.IntentID)
 	if err != nil {
-		return placeOutcome{}, err
+		return outcome[int64]{}, err
 	}
+	e := newLedgerEdit(tx)
 	if !held {
 		// A client write took the key mid-copy and queued these bytes when it
 		// cleared the intent, but the upload may have landed after that delete.
-		cleanup, err := enqueueRemoved(ctx, tx, key, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent)})
-		return placeOutcome{cleanup: cleanup, refusal: ErrCopyChanged}, err
+		e.queueIntent(p.Intent, CleanupReasonSupersededIntent)
+		return finish(ctx, e, int64(0), ErrCopyChanged)
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 	if err != nil {
-		return placeOutcome{}, err
+		return outcome[int64]{}, err
 	}
 	if refusal := p.refusal(existing); refusal != nil {
-		return p.refuse(ctx, tx, refusal)
+		return p.refuse(ctx, e, refusal)
 	}
 	src, ok, err := tx.LockObjectOnBackend(ctx, key, p.Source.BackendName)
 	if err != nil {
-		return placeOutcome{}, err
+		return outcome[int64]{}, err
 	}
 	if !ok {
-		return p.refuse(ctx, tx, ErrCopyChanged)
+		return p.refuse(ctx, e, ErrCopyChanged)
 	}
 	if err := tx.DeletePending(ctx, p.Intent.IntentID); err != nil {
-		return placeOutcome{}, fmt.Errorf("delete placed intent: %w", err)
+		return outcome[int64]{}, fmt.Errorf("delete placed intent: %w", err)
 	}
-	return p.commit(ctx, tx, src)
+	return p.commit(ctx, e, src)
 }
 
 // commit removes the source of a move and inserts the placed copy. The source
 // row goes first, since an in-place rewrite inserts on the same backend and a
 // key holds one copy per backend.
-func (p *Placement) commit(ctx context.Context, tx TxAdapter, src *ObjectLocation) (placeOutcome, error) {
-	key := src.ObjectKey
+func (p *Placement) commit(ctx context.Context, e *ledgerEdit, src *ObjectLocation) (outcome[int64], error) {
 	placed := p.placedCopy(src)
-	deltas := quotaDeltas{}
-	var cleanup []CleanupItem
 	if p.RemoveSource {
-		if err := tx.DeleteObjectFromBackend(ctx, key, src.BackendName); err != nil {
-			return placeOutcome{}, err
+		source := ExistingCopy{ObjectKey: src.ObjectKey, BackendName: src.BackendName, StorageKey: src.StorageKey, SizeBytes: src.SizeBytes}
+		if err := e.removeCopy(ctx, p.Reasons.SourceDelete, &source); err != nil {
+			return outcome[int64]{}, err
 		}
-		deltas.add(src.BackendName, -src.SizeBytes)
-		queued, err := enqueueRemoved(ctx, tx, key, p.Reasons.SourceDelete, []removedCopy{{
-			BackendName: src.BackendName, StorageKey: src.StorageKey, SizeBytes: src.SizeBytes,
-		}})
-		if err != nil {
-			return placeOutcome{}, err
-		}
-		cleanup = queued
 	}
-	if err := tx.InsertObjectLocation(ctx, placed); err != nil {
-		return placeOutcome{}, fmt.Errorf("insert placed copy on %s: %w", placed.BackendName, err)
+	if err := e.insertCopy(ctx, placed); err != nil {
+		return outcome[int64]{}, err
 	}
-	deltas.add(placed.BackendName, placed.SizeBytes)
-	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
-		return placeOutcome{}, err
-	}
-	return placeOutcome{placed: placed.SizeBytes, cleanup: cleanup}, nil
+	return finish(ctx, e, placed.SizeBytes, nil)
 }
 
 // refusal reports why the locked copy set cannot take the placement: the
@@ -489,9 +417,11 @@ func (p *Placement) refusal(existing []ExistingCopy) error {
 
 // refuse drops the placement's intent and queues the bytes the caller copied,
 // committing the refusal so they are not left unrecorded on the target.
-func (p *Placement) refuse(ctx context.Context, tx TxAdapter, refusal error) (placeOutcome, error) {
-	cleanup, err := dropIntent(ctx, tx, p.Intent, p.Reasons.Orphan)
-	return placeOutcome{cleanup: cleanup, refusal: refusal}, err
+func (p *Placement) refuse(ctx context.Context, e *ledgerEdit, refusal error) (outcome[int64], error) {
+	if err := e.dropIntent(ctx, p.Intent, p.Reasons.Orphan); err != nil {
+		return outcome[int64]{}, err
+	}
+	return finish(ctx, e, int64(0), refusal)
 }
 
 // placedCopy is the row the placement inserts: the locked source at the
@@ -589,15 +519,13 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 		loc := ObjectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
 		loc.Unmanaged = req.Unmanaged || req.Form.Unreadable()
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
-		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
-		if err != nil {
+		// Charged without a ceiling check because the bytes are already stored.
+		e := newLedgerEdit(tx)
+		inserted, err := e.insertCopyIfAbsent(ctx, loc)
+		if err != nil || !inserted {
 			return ImportSkippedExisting, err
 		}
-		if !inserted {
-			return ImportSkippedExisting, nil
-		}
-		// Charged without a ceiling check because the bytes are already stored.
-		if err := chargeStripes(ctx, tx, req.Key, quotaDeltas{req.Backend: req.Size}); err != nil {
+		if _, err := e.commit(ctx); err != nil {
 			return ImportSkippedExisting, err
 		}
 		return ImportInserted, nil

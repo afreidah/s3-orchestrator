@@ -102,7 +102,7 @@ func ClaimInRankOrder(ctx context.Context, intents []*PendingObject, ranked []st
 // promoted. Whatever bytes the resolution stopped recording are queued, and the
 // rows are returned for the caller to settle.
 func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, error) {
-	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (promoteOutcome, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[PendingPromoteResult], error) {
 		return promotePendingTx(ctx, tx, p)
 	})
 	if err != nil {
@@ -117,7 +117,7 @@ func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPro
 // Untrusted when a newer write took the key mid-upload, with the cleanup row
 // queued for the copy's bytes.
 func (o TxOps) CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, error) {
-	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (companionOutcome, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[CompanionCommitResult], error) {
 		return commitCompanionTx(ctx, tx, p)
 	})
 	if err != nil {

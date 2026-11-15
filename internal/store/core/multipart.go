@@ -47,14 +47,6 @@ func ValidPartNumber(n int) bool {
 // RECORD PART
 // -------------------------------------------------------------------------
 
-// partOutcome carries a part record's cleanup rows and, for a part whose intent
-// was resolved while it uploaded, why it was refused. A refusal still commits,
-// since it is what queues the bytes the upload wrote.
-type partOutcome struct {
-	cleanup []CleanupItem
-	refusal error
-}
-
 // RecordPart records an uploaded part and clears its intent, returning the
 // cleanup rows it queued for the bytes of a part it replaced. A part whose
 // intent is gone was resolved by the pending reaper mid-upload; its bytes are
@@ -63,7 +55,7 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 	if !ValidPartNumber(p.PartNumber) {
 		return nil, fmt.Errorf("invalid part number %d: must be between %d and %d", p.PartNumber, MinPartNumber, MaxPartNumber)
 	}
-	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (partOutcome, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[struct{}], error) {
 		return recordPartTx(ctx, tx, p)
 	})
 	if err != nil {
@@ -76,42 +68,39 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 // fixed path serializes uploads of one part number, so the row a record
 // replaces is the one whose bytes it queues. The shared upload row lock keeps
 // the record from replacing a part a running completion is reading.
-func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partOutcome, error) {
+func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (outcome[struct{}], error) {
 	partPath := PartPath(p.UploadID, p.PartNumber)
 	if err := tx.AcquireKeyLock(ctx, partPath); err != nil {
-		return partOutcome{}, err
+		return outcome[struct{}]{}, err
 	}
 	backendName, err := lockUploadIdle(ctx, tx, p.UploadID, UploadShared, p.CompletionStaleBefore)
 	if err != nil {
-		return partOutcome{}, err
+		return outcome[struct{}]{}, err
 	}
 	if backendName == "" {
-		return partOutcome{}, ErrMultipartUploadNotFound
+		return outcome[struct{}]{}, ErrMultipartUploadNotFound
 	}
 	held, err := intentsHeld(ctx, tx, []string{p.Intent.IntentID})
 	if err != nil {
-		return partOutcome{}, err
+		return outcome[struct{}]{}, err
 	}
+	e := newLedgerEdit(tx)
+	intent := p.Intent
 	if !held {
-		cleanup, err := enqueueRemoved(ctx, tx, partPath, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent)})
-		return partOutcome{cleanup: cleanup, refusal: ErrIntentLost}, err
+		e.queue(partPath, CleanupReasonSupersededIntent, intent.BackendName, intent.StorageKey, intent.SizeBytes)
+		return finish(ctx, e, struct{}{}, ErrIntentLost)
 	}
 	replaced, err := tx.UpsertPart(ctx, p)
 	if err != nil {
-		return partOutcome{}, err
+		return outcome[struct{}]{}, err
 	}
-	if err := tx.DeletePending(ctx, p.Intent.IntentID); err != nil {
-		return partOutcome{}, fmt.Errorf("delete recorded part intent: %w", err)
+	if err := tx.DeletePending(ctx, intent.IntentID); err != nil {
+		return outcome[struct{}]{}, fmt.Errorf("delete recorded part intent: %w", err)
 	}
-	if replaced == nil {
-		return partOutcome{}, nil
+	if replaced != nil {
+		e.queue(partPath, CleanupReasonPartReplaced, intent.BackendName, replaced.Path(p.UploadID), replaced.SizeBytes)
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, partPath, CleanupReasonPartReplaced, []removedCopy{{
-		BackendName: p.Intent.BackendName,
-		StorageKey:  replaced.Path(p.UploadID),
-		SizeBytes:   replaced.SizeBytes,
-	}})
-	return partOutcome{cleanup: cleanup}, err
+	return finish(ctx, e, struct{}{}, nil)
 }
 
 // -------------------------------------------------------------------------
@@ -131,12 +120,11 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 		if err != nil {
 			return nil, err
 		}
-		requests := make([]*CleanupRequest, len(parts))
+		e := newLedgerEdit(tx)
 		for i := range parts {
-			part := removedCopy{BackendName: backendName, StorageKey: parts[i].Path(uploadID), SizeBytes: parts[i].SizeBytes}
-			requests[i] = part.request(PartPath(uploadID, parts[i].PartNumber), reason)
+			e.queue(PartPath(uploadID, parts[i].PartNumber), reason, backendName, parts[i].Path(uploadID), parts[i].SizeBytes)
 		}
-		return queueCleanup(ctx, tx, requests)
+		return e.commit(ctx)
 	})
 }
 

@@ -13,6 +13,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -20,17 +21,19 @@ import (
 )
 
 // statementCountTx counts the calls a transaction makes for the steps that touch
-// many rows, over the copies and parts it is seeded with, and the order of the
-// writes that follow its inserts.
+// many rows, over the copies and parts it is seeded with, and records the order
+// of every write. lost makes every intent claim fail, as for an overtaken write.
 type statementCountTx struct {
 	noopTxAdapter
 
-	copies  []ExistingCopy
-	parts   []MultipartPart
-	inserts int
-	clears  int
-	charges int
-	order   []string
+	copies   []ExistingCopy
+	parts    []MultipartPart
+	replaced *MultipartPart
+	lost     bool
+	inserts  int
+	clears   int
+	charges  int
+	order    []string
 }
 
 // The writes statementCountTx records the order of.
@@ -39,10 +42,57 @@ const (
 	stmtClear         = "clear intents"
 	stmtCharge        = "charge stripes"
 	stmtDeletePending = "delete intent"
+	stmtWriteCopy     = "write copy"
+	stmtWriteTags     = "write tags"
+	stmtWritePart     = "write part"
 )
 
 func (s *statementCountTx) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	return s.copies, nil
+}
+
+func (s *statementCountTx) ClaimPending(context.Context, string) (bool, error) {
+	return !s.lost, nil
+}
+
+// LockObjectOnBackend returns the seeded copy on backend, as the locked source
+// of a placement.
+func (s *statementCountTx) LockObjectOnBackend(_ context.Context, key, backend string) (*ObjectLocation, bool, error) {
+	c, ok := copyOnBackend(s.copies, backend)
+	if !ok {
+		return nil, false, nil
+	}
+	return &ObjectLocation{ObjectKey: key, BackendName: backend, StorageKey: c.StorageKey, SizeBytes: c.SizeBytes}, true, nil
+}
+
+func (s *statementCountTx) InsertObjectLocation(context.Context, *ObjectLocation) error {
+	s.order = append(s.order, stmtWriteCopy)
+	return nil
+}
+
+func (s *statementCountTx) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
+	s.order = append(s.order, stmtWriteCopy)
+	return true, nil
+}
+
+func (s *statementCountTx) DeleteObjectCopies(context.Context, ...string) error {
+	s.order = append(s.order, stmtWriteCopy)
+	return nil
+}
+
+func (s *statementCountTx) DeleteObjectFromBackend(context.Context, string, string) error {
+	s.order = append(s.order, stmtWriteCopy)
+	return nil
+}
+
+func (s *statementCountTx) DeleteObjectTags(context.Context, ...string) error {
+	s.order = append(s.order, stmtWriteTags)
+	return nil
+}
+
+func (s *statementCountTx) UpsertPart(context.Context, *RecordPartParams) (*MultipartPart, error) {
+	s.order = append(s.order, stmtWritePart)
+	return s.replaced, nil
 }
 
 func (s *statementCountTx) LockMultipartUpload(context.Context, string, UploadLock) (string, time.Time, error) {
@@ -76,31 +126,103 @@ func (s *statementCountTx) DeletePending(context.Context, string) error {
 	return nil
 }
 
-// TestRecordObject_ChargesStripesLast verifies an overwrite clears the key's
-// intents and queues the displaced bytes before it charges the stripes.
-func TestRecordObject_ChargesStripesLast(t *testing.T) {
+// TestLedgerChanges_QueueOnceAndChargeLast verifies every transaction that
+// changes the ledger queues its cleanup rows and charges its stripes in one
+// statement each, the charge after every other write so its rows are held only
+// until the commit.
+func TestLedgerChanges_QueueOnceAndChargeLast(t *testing.T) {
 	t.Parallel()
-	stub := &statementCountTx{copies: []ExistingCopy{{ObjectKey: "key", BackendName: "b1", SizeBytes: 1}}}
-	req := &RecordObjectRequest{Key: "key", Size: 2, Copies: []ObjectCopy{{Backend: "b1", IntentID: "i1"}}}
-	if _, err := stubOps(stub).RecordObject(context.Background(), req); err != nil {
-		t.Fatalf("RecordObject: %v", err)
+	ctx := context.Background()
+	held := ExistingCopy{ObjectKey: "key", BackendName: "b1", StorageKey: "key!a", SizeBytes: 1}
+	other := ExistingCopy{ObjectKey: "key", BackendName: "b2", StorageKey: "key!b", SizeBytes: 1}
+	source := &ObjectLocation{ObjectKey: "key", BackendName: "b1", StorageKey: "key!a", SizeBytes: 1}
+	intent := func(role PendingRole) *PendingObject {
+		return &PendingObject{IntentID: "i1", ObjectKey: "key", BackendName: "b2", StorageKey: "key!i1", SizeBytes: 2, Role: role, CreatedAt: time.Now()}
 	}
-	if want := []string{stmtClear, stmtQueue, stmtCharge}; !slices.Equal(stub.order, want) {
-		t.Errorf("writes = %v, want %v", stub.order, want)
+	record := func(o TxOps) error {
+		_, err := o.RecordObject(ctx, &RecordObjectRequest{Key: "key", Size: 2, Copies: []ObjectCopy{{Backend: "b2", IntentID: "i1"}}})
+		return err
+	}
+	place := func(target PendingRole, move bool) func(TxOps) error {
+		return placeRun(ctx, source, intent(target), move)
+	}
+	cases := []struct {
+		name string
+		stub *statementCountTx
+		run  func(TxOps) error
+	}{
+		{"record a new key", &statementCountTx{}, record},
+		{"overwrite", &statementCountTx{copies: []ExistingCopy{held}}, record},
+		{"overtaken write", &statementCountTx{lost: true}, record},
+		{"delete", &statementCountTx{copies: []ExistingCopy{held, other}}, func(o TxOps) error {
+			_, err := o.DeleteObject(ctx, "key")
+			return err
+		}},
+		{"delete one copy", &statementCountTx{copies: []ExistingCopy{held}}, func(o TxOps) error {
+			_, err := o.DeleteObjectLocation(ctx, source, 0, "excess")
+			return err
+		}},
+		{"replica", &statementCountTx{copies: []ExistingCopy{held}}, place(PendingRoleCompanion, false)},
+		{"move", &statementCountTx{copies: []ExistingCopy{held}}, place(PendingRoleCompanion, true)},
+		{"refused placement", &statementCountTx{copies: []ExistingCopy{held, other}}, place(PendingRoleCompanion, false)},
+		{"promote", &statementCountTx{copies: []ExistingCopy{held}}, func(o TxOps) error {
+			_, _, err := o.PromotePending(ctx, intent(PendingRolePrimary))
+			return err
+		}},
+		{"discard a companion", &statementCountTx{copies: []ExistingCopy{held}}, func(o TxOps) error {
+			_, _, err := o.PromotePending(ctx, intent(PendingRoleCompanion))
+			return err
+		}},
+		{"companion commit", &statementCountTx{}, func(o TxOps) error {
+			_, _, err := o.CommitCompanionCopy(ctx, intent(PendingRoleCompanion))
+			return err
+		}},
+		{"import", &statementCountTx{}, func(o TxOps) error {
+			_, err := o.ImportObject(ctx, &ImportObjectRequest{Key: "key", Backend: "b1", Size: 3, Form: &StoredForm{}})
+			return err
+		}},
+		{"discard an intent", &statementCountTx{}, func(o TxOps) error {
+			_, err := o.DiscardPending(ctx, intent(PendingRolePrimary), "put_failed")
+			return err
+		}},
+		{"replace a part", &statementCountTx{replaced: &MultipartPart{PartNumber: 1, SizeBytes: 1}}, func(o TxOps) error {
+			_, err := o.RecordPart(ctx, &RecordPartParams{UploadID: partUploadID, PartNumber: 1, Intent: intent(PendingRolePrimary), CompletionStaleBefore: markCutoff})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.run(stubOps(tc.stub)); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			tc.stub.requireQueuedOnceChargedLast(t)
+		})
 	}
 }
 
-// TestCommitCompanionCopy_ChargesStripesLast verifies a companion commit deletes
-// its intent before it charges the stripes.
-func TestCommitCompanionCopy_ChargesStripesLast(t *testing.T) {
-	t.Parallel()
-	stub := &statementCountTx{}
-	p := &PendingObject{IntentID: "i1", ObjectKey: "key", BackendName: "b1", StorageKey: "key!i1", SizeBytes: 2, Role: PendingRoleCompanion}
-	if _, _, err := stubOps(stub).CommitCompanionCopy(context.Background(), p); err != nil {
-		t.Fatalf("CommitCompanionCopy: %v", err)
+// placeRun places intent's copy of source, as a move when move is set. A refused
+// placement still commits what it queued, so the refusal is not a failure here.
+func placeRun(ctx context.Context, source *ObjectLocation, intent *PendingObject, move bool) func(TxOps) error {
+	return func(o TxOps) error {
+		_, _, err := o.PlaceCopy(ctx, &Placement{Source: source, Intent: intent, RemoveSource: move,
+			Reasons: MoveReasons{Orphan: "orphan", SourceDelete: "source_delete"}})
+		if errors.Is(err, ErrTargetRefused) {
+			return nil
+		}
+		return err
 	}
-	if want := []string{stmtDeletePending, stmtCharge}; !slices.Equal(stub.order, want) {
-		t.Errorf("writes = %v, want %v", stub.order, want)
+}
+
+// requireQueuedOnceChargedLast fails unless the transaction queued its cleanup
+// rows and charged its stripes in at most one statement each, the charge last.
+func (s *statementCountTx) requireQueuedOnceChargedLast(t *testing.T) {
+	t.Helper()
+	if s.inserts > 1 || s.charges > 1 {
+		t.Errorf("queued %d times and charged %d times, want at most once each: %v", s.inserts, s.charges, s.order)
+	}
+	if i := slices.Index(s.order, stmtCharge); i >= 0 && i != len(s.order)-1 {
+		t.Errorf("writes = %v, want the stripe charge last", s.order)
 	}
 }
 
@@ -147,18 +269,5 @@ func TestDeleteMultipartUpload_QueuesPartsInOneStatement(t *testing.T) {
 	}
 	if stub.inserts != 1 {
 		t.Errorf("inserts = %d, want one statement", stub.inserts)
-	}
-}
-
-// TestChargeStripes_OneStatementAcrossBackends verifies a mutation touching
-// several backends charges them together.
-func TestChargeStripes_OneStatementAcrossBackends(t *testing.T) {
-	t.Parallel()
-	stub := &statementCountTx{}
-	if err := chargeStripes(context.Background(), stub, "key", quotaDeltas{"b1": -1, "b2": -2}); err != nil {
-		t.Fatalf("chargeStripes: %v", err)
-	}
-	if stub.charges != 1 {
-		t.Errorf("charges = %d, want one statement", stub.charges)
 	}
 }
