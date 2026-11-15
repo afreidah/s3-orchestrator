@@ -141,8 +141,9 @@ func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore) *usage.S
 // Stack is the set of collaborators internal/di builds, assembled the same way
 // and handed back as separate values. It carries no behaviour of its own: a
 // test reaches for the collaborator it is exercising. Config is the running
-// configuration every collaborator reads its reloadable sections from, and
-// Metrics the collector over the stack's store, with no shared state.
+// configuration every collaborator reads its reloadable sections from, Metrics
+// the collector over the stack's store, with no shared state, and Detached the
+// copies still uploading after their write was answered.
 type Stack struct {
 	Runtime   *infra.BackendRuntime
 	Coord     *writepath.Coordinator
@@ -153,6 +154,7 @@ type Stack struct {
 	Drainer   *worker.Drainer
 	Usage     *usage.Service
 	Config    *config.Live
+	Detached  *writepath.DetachedUploads
 }
 
 // New builds the whole stack over store and registers its teardown, so a test
@@ -204,6 +206,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	live := config.NewLive(&config.Config{})
 	coord := writepath.New(rt, store)
 	collector := metrics.New(&metrics.CollectorDeps{Store: store, Usage: rt.Usage()})
+	detached := writepath.NewDetachedUploads(detachedUploadCeiling)
 
 	mp := multipart.New(&multipart.Deps{
 		Core:         rt,
@@ -224,7 +227,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,
 		CopiesPerWrite:               opts.CopiesPerWrite,
-		Detached:                     writepath.NewDetachedUploads(detachedUploadCeiling),
+		Detached:                     detached,
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
 		IntegrityCfg:                 live.Integrity(),
@@ -246,8 +249,9 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 			AbortUploads: mp.AbortMultipartUploadsOnBackend,
 			OnRecords:    states.SetStates,
 		}),
-		Usage:  NewUsage(rt, store),
-		Config: live,
+		Usage:    NewUsage(rt, store),
+		Config:   live,
+		Detached: detached,
 	}
 }
 
