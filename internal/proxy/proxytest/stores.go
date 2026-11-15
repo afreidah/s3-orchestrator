@@ -294,17 +294,21 @@ func BuildWorkers(s *Stack, m storetest.MetadataStore) *Workers {
 // di.ProvideReplicator wire in production.
 func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features WorkerFeatures) *Workers {
 	f, live := s.Fleet(), s.Config
+	queue := worker.NewReplicationQueue(m)
 	return &Workers{
 		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Fleet: f, Store: m, Config: live.Rebalance()}),
 		Replicator: worker.NewReplicator(&worker.ReplicatorDeps{
 			Fleet:     f,
 			Store:     m,
+			Queue:     queue,
 			Config:    live.Replication(),
 			Integrity: live.Integrity(),
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Fleet: f, Store: m, Config: live.Replication()}),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{
+			Fleet: f, Store: m, Queue: queue, Config: live.Replication(),
+		}),
 		CleanupWorker: worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 			Ops: s.Runtime, Metrics: s.Metrics, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,

@@ -56,7 +56,7 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 		return nil, fmt.Errorf("invalid part number %d: must be between %d and %d", p.PartNumber, MinPartNumber, MaxPartNumber)
 	}
 	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[struct{}], error) {
-		return recordPartTx(ctx, tx, p)
+		return recordPartTx(ctx, o.edit(tx), p)
 	})
 	if err != nil {
 		return nil, err
@@ -68,7 +68,8 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 // fixed path serializes uploads of one part number, so the row a record
 // replaces is the one whose bytes it queues. The shared upload row lock keeps
 // the record from replacing a part a running completion is reading.
-func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (outcome[struct{}], error) {
+func recordPartTx(ctx context.Context, e *ledgerEdit, p *RecordPartParams) (outcome[struct{}], error) {
+	tx := e.tx
 	partPath := PartPath(p.UploadID, p.PartNumber)
 	if err := tx.AcquireKeyLock(ctx, partPath); err != nil {
 		return outcome[struct{}]{}, err
@@ -84,7 +85,6 @@ func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (outco
 	if err != nil {
 		return outcome[struct{}]{}, err
 	}
-	e := newLedgerEdit(tx)
 	intent := p.Intent
 	if !held {
 		e.queue(partPath, CleanupReasonSupersededIntent, intent.BackendName, intent.StorageKey, intent.SizeBytes)
@@ -120,7 +120,7 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 		if err != nil {
 			return nil, err
 		}
-		e := newLedgerEdit(tx)
+		e := o.edit(tx)
 		for i := range parts {
 			e.queue(PartPath(uploadID, parts[i].PartNumber), reason, backendName, parts[i].Path(uploadID), parts[i].SizeBytes)
 		}

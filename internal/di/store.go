@@ -46,12 +46,14 @@ type metadataStore interface {
 // provideMetadataStore opens the configured driver, runs migrations, syncs
 // quota limits, and returns the opened engine for the role aliases to split.
 // CB protection lives inside each driver's DBTX/DB chokepoint, so this
-// provider does no wrapping of its own.
+// provider does no wrapping of its own. The store's writes queue the keys they
+// leave off the running replication factor, whatever mode this instance runs.
 func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
 	id := r.Resolve[instanceid.ID]()
+	live := r.Resolve[*config.Live]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -61,6 +63,8 @@ func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	replication := live.Replication()
+	cs.UseReplicationFactor(func() int { return replication.Config().Factor })
 	if err := store.Prepare(ctx, cs, cfg.Backends); err != nil {
 		return nil, err
 	}

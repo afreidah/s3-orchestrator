@@ -42,19 +42,19 @@ func (m *MockDeps) EXPECT() *MockDepsMockRecorder {
 	return m.recorder
 }
 
-// CountReplicationBacklog mocks base method.
-func (m *MockDeps) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
+// CountReplicationQueue mocks base method.
+func (m *MockDeps) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountReplicationBacklog", ctx, factor)
+	ret := m.ctrl.Call(m, "CountReplicationQueue", ctx)
 	ret0, _ := ret[0].(core.ReplicationBacklog)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CountReplicationBacklog indicates an expected call of CountReplicationBacklog.
-func (mr *MockDepsMockRecorder) CountReplicationBacklog(ctx, factor any) *gomock.Call {
+// CountReplicationQueue indicates an expected call of CountReplicationQueue.
+func (mr *MockDepsMockRecorder) CountReplicationQueue(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationBacklog", reflect.TypeOf((*MockDeps)(nil).CountReplicationBacklog), ctx, factor)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationQueue", reflect.TypeOf((*MockDeps)(nil).CountReplicationQueue), ctx)
 }
 
 // GetActiveMultipartCounts mocks base method.

@@ -131,6 +131,23 @@ func (r usageFlushResult) describe() string { return "counters flushed to the da
 // four stream their progress, so the TUI renders the step events and the
 // terminal summary the server sends rather than decoding a final JSON body.
 
+// replicationRebuildResult reports how many keys a rebuild of the replication
+// queue found off the factor.
+type replicationRebuildResult struct {
+	adminapi.ReplicationRebuildResponse
+}
+
+func (r replicationRebuildResult) skipReason() string {
+	if skippedBecause(r.Status) == "" {
+		return ""
+	}
+	return cmp.Or(r.Reason, r.Status)
+}
+
+func (r replicationRebuildResult) describe() string {
+	return fmt.Sprintf("queued %s off factor %d", humanize.Count(r.Queued, "key", "keys"), r.Factor)
+}
+
 // requeueResult reports how many dead-lettered cleanups went back into the
 // queue, and for which backend.
 type requeueResult struct {

@@ -1627,46 +1627,124 @@ func TestBatchReads_ReturnWholeRows(t *testing.T) {
 	storetest.CheckWholeRowReads(t, newTestStore(t), "bucket/whole", "backend-a", "backend-b")
 }
 
-// TestReplication_UnderAndOver verifies detection of under- and over-replicated objects.
-func TestReplication_UnderAndOver(t *testing.T) {
+// rebuiltQueue empties the replication queue, rebuilds it at factor, and reads
+// every due key on side, returning each with its counts.
+func rebuiltQueue(t *testing.T, s *Store, factor int, excluded []string, side core.ReplicationDirection) map[string]core.QueuedReplication {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM replication_queue`); err != nil {
+		t.Fatalf("empty replication queue: %v", err)
+	}
+	if _, err := s.RebuildReplicationQueue(ctx, factor, excluded); err != nil {
+		t.Fatalf("RebuildReplicationQueue(%d): %v", factor, err)
+	}
+	return dueKeys(t, s, side, excluded)
+}
+
+// dueKeys reads every due key on side, returning each with its counts.
+func dueKeys(t *testing.T, s *Store, side core.ReplicationDirection, excluded []string) map[string]core.QueuedReplication {
+	t.Helper()
+	due, err := s.ListReplicationQueue(context.Background(), side, 100, excluded)
+	if err != nil {
+		t.Fatalf("ListReplicationQueue: %v", err)
+	}
+	keys := make(map[string]core.QueuedReplication, len(due))
+	for _, q := range due {
+		keys[q.Key] = q
+	}
+	return keys
+}
+
+// TestReplicationQueue_SettleAndRetryMatchTheVersionRead verifies a retry holds
+// a key past now with one more attempt, a settle at a version a newer write
+// replaced keeps the key, and a settle at the current version drops it.
+func TestReplicationQueue_SettleAndRetryMatchTheVersionRead(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
 
-	// Record object on one backend
+	read := rebuiltQueue(t, s, 2, nil, core.ReplicationShort)["bucket/k"]
+	if err := s.RetryReplicationQueue(ctx, &read, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("RetryReplicationQueue: %v", err)
+	}
+	if due := dueKeys(t, s, core.ReplicationShort, nil); len(due) != 0 {
+		t.Errorf("due after a retry = %+v, want none until next_retry", due)
+	}
+
+	if err := s.direct().QueueReplication(ctx, []string{"bucket/k"}, []core.ReplicationDirection{core.ReplicationShort}); err != nil {
+		t.Fatalf("QueueReplication: %v", err)
+	}
+	requeued := dueKeys(t, s, core.ReplicationShort, nil)["bucket/k"]
+	if requeued.Version == read.Version || requeued.Attempts != 0 {
+		t.Fatalf("requeued = %+v, want due now with a new version and no attempts", requeued)
+	}
+	if err := s.SettleReplicationQueue(ctx, &read); err != nil {
+		t.Fatalf("SettleReplicationQueue(stale): %v", err)
+	}
+	if _, kept := dueKeys(t, s, core.ReplicationShort, nil)["bucket/k"]; !kept {
+		t.Error("a settle at the replaced version dropped the key")
+	}
+	if err := s.SettleReplicationQueue(ctx, &requeued); err != nil {
+		t.Fatalf("SettleReplicationQueue: %v", err)
+	}
+	if due := dueKeys(t, s, core.ReplicationShort, nil); len(due) != 0 {
+		t.Errorf("due after the settle = %+v, want none", due)
+	}
+}
+
+// TestReplicationQueue_RebuildQueuesBothSides verifies a rebuild queues a key
+// short of the factor, leaves one at it alone, and queues one past it, each
+// with the counts the drain works from.
+func TestReplicationQueue_RebuildQueuesBothSides(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 
-	// Should be under-replicated at factor 2
-	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10, nil)
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects: %v", err)
-	}
-	if len(under) != 1 {
-		t.Errorf("expected 1 under-replicated, got %d", len(under))
+	short := rebuiltQueue(t, s, 2, nil, core.ReplicationShort)
+	if q, ok := short["bucket/key1"]; !ok || q.Live != 1 || q.Held != 1 {
+		t.Errorf("short side = %+v, want bucket/key1 with one copy", short)
 	}
 
-	// Record replica
 	size, _, err := placeOnto(t, s, "bucket/key1", "backend-a", "backend-b", "bucket/key1!r-backend-b", false)
-	if err != nil {
-		t.Fatalf("PlaceCopy: %v", err)
+	if err != nil || size != 1024 {
+		t.Fatalf("PlaceCopy: size=%d err=%v", size, err)
 	}
-	if size != 1024 {
-		t.Errorf("expected recorded size 1024, got %d", size)
+	if short := rebuiltQueue(t, s, 2, nil, core.ReplicationShort); len(short) != 0 {
+		t.Errorf("short side after the replica = %+v, want none", short)
+	}
+	if over := rebuiltQueue(t, s, 1, nil, core.ReplicationOver); over["bucket/key1"].Held != 2 {
+		t.Errorf("over side at factor 1 = %+v, want bucket/key1 holding 2", over)
+	}
+}
+
+// TestReplicationQueue_WritesQueueTheKeysTheyLeaveOffFactor verifies the
+// store's writes queue a key they leave off the factor and nothing else: a
+// single copy is queued short, a write at the factor is not, and removing one
+// of its copies queues it.
+func TestReplicationQueue_WritesQueueTheKeysTheyLeaveOffFactor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	s.UseReplicationFactor(func() int { return 2 })
+
+	mustRecordObject(t, s, "bucket/one", "backend-a", 100)
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/two", Size: 100, Copies: []core.ObjectCopy{{Backend: "backend-a"}, {Backend: "backend-b"}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	short := dueKeys(t, s, core.ReplicationShort, nil)
+	if _, ok := short["bucket/one"]; !ok || len(short) != 1 {
+		t.Errorf("queued after the writes = %+v, want only bucket/one", short)
 	}
 
-	// Should no longer be under-replicated
-	under, _ = s.GetUnderReplicatedObjects(ctx, 2, 10, nil)
-	if len(under) != 0 {
-		t.Errorf("expected 0 under-replicated after replica, got %d", len(under))
+	loc := &core.ObjectLocation{ObjectKey: "bucket/two", BackendName: "backend-b", StorageKey: "bucket/two"}
+	if _, err := s.DeleteObjectLocation(ctx, loc, 0, "excess"); err != nil {
+		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
-
-	// Should be over-replicated at factor 1
-	over, err := s.GetOverReplicatedObjects(ctx, 1, 10)
-	if err != nil {
-		t.Fatalf("GetOverReplicatedObjects: %v", err)
-	}
-	if len(over) != 2 {
-		t.Errorf("expected 2 copies (over at factor 1), got %d", len(over))
+	if short := dueKeys(t, s, core.ReplicationShort, nil); short["bucket/two"].Live != 1 {
+		t.Errorf("queued after removing a copy = %+v, want bucket/two with one copy", short)
 	}
 }
 
@@ -1704,19 +1782,11 @@ func TestReplication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	under, err := s.GetUnderReplicatedObjects(ctx, 3, 10, nil)
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	if short := rebuiltQueue(t, s, 3, nil, core.ReplicationShort); len(short) != 0 {
+		t.Errorf("short side = %+v, want none: one copy recorded and two intents live meet factor 3", short)
 	}
-	if len(under) != 0 {
-		t.Errorf("under-replicated rows = %d, want 0: one copy recorded and two intents live meet factor 3", len(under))
-	}
-	under, err = s.GetUnderReplicatedObjects(ctx, 3, 10, []string{"backend-d"})
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects excluding: %v", err)
-	}
-	if len(under) != 0 {
-		t.Errorf("under-replicated rows (excluding) = %d, want 0", len(under))
+	if short := rebuiltQueue(t, s, 3, []string{"backend-d"}, core.ReplicationShort); len(short) != 0 {
+		t.Errorf("short side (excluding) = %+v, want none", short)
 	}
 }
 
@@ -2999,27 +3069,6 @@ func TestCorruptTimestamp_ListObjectsByBackend(t *testing.T) {
 	}
 }
 
-// TestCorruptTimestamp_GetUnderReplicatedObjects verifies that a malformed
-// created_at surfaces as an error from the replication query path
-// (scanObjectLocations helper).
-func TestCorruptTimestamp_GetUnderReplicatedObjects(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/under-rep", "backend-a", 100)
-
-	_, err := s.db.ExecContext(ctx, `UPDATE object_locations SET created_at = 'bad' WHERE object_key = 'bucket/under-rep'`)
-	if err != nil {
-		t.Fatalf("corrupt timestamp: %v", err)
-	}
-
-	_, err = s.GetUnderReplicatedObjects(ctx, 2, 100, nil)
-	if err == nil {
-		t.Fatal("expected error from corrupt replication timestamp, got nil")
-	}
-}
-
 // TestVerifySchemaVersion_NewerThanExpected verifies that a database with a
 // schema version newer than the binary expects returns an error, preventing
 // silent data corruption on binary downgrades.
@@ -3406,34 +3455,27 @@ func TestScanMultipartUploads(t *testing.T) {
 	}
 }
 
-// TestGetUnderReplicatedObjects_Excluding verifies under-replication detection
-// with backend exclusions.
-func TestGetUnderReplicatedObjects_Excluding(t *testing.T) {
+// TestReplicationQueue_ExcludedCopiesDoNotCount verifies a copy on an excluded
+// backend does not count toward a short key, so a rebuild queues the key it
+// leaves one copy short.
+func TestReplicationQueue_ExcludedCopiesDoNotCount(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
-
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/b", "backend-b", 200)
+	mustRecordReplica(t, s, "bucket/a", "backend-b", "backend-a", 100)
 
-	// Both under-replicated at factor 2
-	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10, []string{"backend-b"})
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	if short := rebuiltQueue(t, s, 2, nil, core.ReplicationShort); len(short) != 0 {
+		t.Errorf("short side with nothing excluded = %+v, want none", short)
 	}
-
-	// Only bucket/a should appear (backend-b is excluded)
-	for _, loc := range under {
-		if loc.BackendName == "backend-b" {
-			t.Errorf("excluded backend-b should not appear in results")
-		}
+	short := rebuiltQueue(t, s, 2, []string{"backend-b"}, core.ReplicationShort)
+	if q := short["bucket/a"]; q.Live != 1 || q.Held != 2 {
+		t.Errorf("short side excluding backend-b = %+v, want bucket/a live 1 and held 2", short)
 	}
 }
 
-// TestCountReplicationBacklog verifies both directions against one ledger, and
-// that an in-flight intent counts toward the under figure as it does in the
-// replicator's scan.
-func TestCountReplicationBacklog(t *testing.T) {
+// TestCountReplicationQueue verifies both sides against one ledger, and that an
+// in-flight intent counts toward a short key as the drain counts it.
+func TestCountReplicationQueue(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -3453,12 +3495,13 @@ func TestCountReplicationBacklog(t *testing.T) {
 		{3, core.ReplicationBacklog{Under: 3, Over: 0}},
 	}
 	for _, c := range cases {
-		got, err := s.CountReplicationBacklog(ctx, c.factor)
+		rebuiltQueue(t, s, c.factor, nil, core.ReplicationShort)
+		got, err := s.CountReplicationQueue(ctx)
 		if err != nil {
-			t.Fatalf("CountReplicationBacklog(%d): %v", c.factor, err)
+			t.Fatalf("CountReplicationQueue at factor %d: %v", c.factor, err)
 		}
 		if got != c.want {
-			t.Errorf("factor %d: backlog = %+v, want %+v", c.factor, got, c.want)
+			t.Errorf("factor %d: queue = %+v, want %+v", c.factor, got, c.want)
 		}
 	}
 }
@@ -3776,11 +3819,9 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 
 	// Neither does the replicator (a stray with one copy is not a job), nor
 	// checksum backfill, which would spend egress reading the body.
-	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10, nil)
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	if _, queued := rebuiltQueue(t, s, 2, nil, core.ReplicationShort)["stray.txt"]; queued {
+		t.Error("replication queued the stray")
 	}
-	assertNoStray(t, "replication", under)
 
 	assertNoStray(t, "checksum backfill", listByForm(t, s, &backfillCopies))
 }
@@ -3820,11 +3861,9 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 	assertListsOnly(t, s, "bucket/live")
 	assertUnreadableOnly(t, s, "bucket/gone", 508)
 
-	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10, nil)
-	if err != nil {
-		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	if _, queued := rebuiltQueue(t, s, 2, nil, core.ReplicationShort)["bucket/gone"]; queued {
+		t.Error("replication queued bucket/gone")
 	}
-	assertNotQueued(t, "replication", under, "bucket/gone")
 	assertNotQueued(t, "checksum backfill", listByForm(t, s, &backfillCopies), "bucket/gone")
 }
 

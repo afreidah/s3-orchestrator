@@ -14,6 +14,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
@@ -38,10 +39,13 @@ func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Con
 	}
 }
 
-// NewReplicatorService constructs the replication service, which runs while
-// the replication factor is above one. It also runs a pass as it starts, so a
-// restart does not leave objects under-replicated for a whole interval.
-func NewReplicatorService(rep *Replicator, locker core.AdvisoryLocker) lifecycle.Runner {
+// NewReplicationService constructs the replication service, which runs while
+// the replication factor is above one. Each tick works one batch of the
+// queue's short side and then one of its over side, so batch_size per
+// worker_interval paces the copies made and removed. It also runs as it
+// starts, so a restart does not leave objects off the factor for a whole
+// interval.
+func NewReplicationService(rep *Replicator, c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:       locker,
 		LockID:       core.LockReplicator,
@@ -49,24 +53,11 @@ func NewReplicatorService(rep *Replicator, locker core.AdvisoryLocker) lifecycle
 		Interval:     rep.Config().WorkerInterval,
 		ShouldRun:    func() bool { return rep.Config().Factor > 1 },
 		RunAtStartup: true,
-		Work: passWork(func(ctx context.Context) (ReplicationSummary, error) {
-			return rep.Replicate(ctx, *rep.Config(), nil)
-		}),
-	})
-}
-
-// NewOverReplicationService constructs the over-replication cleanup service,
-// which runs while the replication factor is above one.
-func NewOverReplicationService(c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
-	return tickrunner.New(tickrunner.Config{
-		Locker:    locker,
-		LockID:    core.LockOverReplication,
-		Name:      string(audit.WorkloadOverReplication),
-		Interval:  c.Config().WorkerInterval,
-		ShouldRun: func() bool { return c.Config().Factor > 1 },
-		Work: passWork(func(ctx context.Context) (OverReplicationSummary, error) {
-			return c.Clean(ctx, *c.Config(), nil)
-		}),
+		Work: func(ctx context.Context) error {
+			_, replicateErr := rep.Replicate(ctx, *rep.Config(), nil)
+			_, cleanErr := c.Clean(ctx, *c.Config(), nil)
+			return errors.Join(replicateErr, cleanErr)
+		},
 	})
 }
 

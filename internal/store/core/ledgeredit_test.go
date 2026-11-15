@@ -4,9 +4,10 @@
 // Author: Alex Freidah
 //
 // Engine-agnostic tests for what a ledger edit writes when its transaction
-// commits: the cleanup rows its changes queued, in one statement, and then the
-// stripe charges they made, in another. The stub runner runs each transaction
-// body directly, so an operation either commits fully or surfaces its error.
+// commits: the cleanup rows its changes queued, in one statement, the keys it
+// left off the replication factor, and then the stripe charges they made, in
+// another. The stub runner runs each transaction body directly, so an
+// operation either commits fully or surfaces its error.
 // -------------------------------------------------------------------------------
 
 package core
@@ -98,7 +99,7 @@ func TestLedgerEdit_CommitQueuesEachRow(t *testing.T) {
 	t.Parallel()
 	claim := &CleanupClaim{At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), By: "inst-1"}
 	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}, claim: claim}
-	e := newLedgerEdit(queuer)
+	e := newLedgerEdit(queuer, 0)
 	e.queue("k", CleanupReasonDeleted, "b1", "k!a", 10)
 	e.queue("k", CleanupReasonSupersededIntent, "b2", "", 20)
 	items, err := e.commit(context.Background())
@@ -121,7 +122,7 @@ func TestLedgerEdit_RemovedCopiesQueueTheirOwnPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx)
+	e := newLedgerEdit(tx, 0)
 	old := []ExistingCopy{
 		{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old", SizeBytes: 100},
 		{ObjectKey: "k", BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
@@ -149,6 +150,80 @@ func TestLedgerEdit_RemovedCopiesQueueTheirOwnPaths(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// REPLICATION QUEUE
+// -------------------------------------------------------------------------
+
+// replicationRecorder records the keys a commit queues for replication: the
+// ones it knew the side of, and the ones it had the database count at factor.
+type replicationRecorder struct {
+	noopTxAdapter
+	known      []string
+	directions []ReplicationDirection
+	counted    []string
+	countedAt  int
+}
+
+func (r *replicationRecorder) QueueReplication(_ context.Context, keys []string, directions []ReplicationDirection) error {
+	r.known, r.directions = keys, directions
+	return nil
+}
+
+func (r *replicationRecorder) QueueOffFactor(_ context.Context, factor int, keys ...string) error {
+	r.countedAt, r.counted = factor, keys
+	return nil
+}
+
+// TestLedgerEdit_QueuesTheKeysItLeavesOffTheFactor verifies a commit queues a
+// key whose count it knows only when that count is off the factor, has the
+// database count a key whose copies it changed without knowing the count, and
+// skips a key whose changes cancelled out.
+func TestLedgerEdit_QueuesTheKeysItLeavesOffTheFactor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tx := &replicationRecorder{}
+	e := newLedgerEdit(tx, 2)
+	for key, count := range map[string]int{"short": 1, "at": 2, "over": 3, "gone": 0} {
+		e.know(key, count)
+	}
+	for _, key := range []string{"changed", "cancelled", "short"} {
+		if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: key, BackendName: "b1", SizeBytes: 1}); err != nil {
+			t.Fatalf("insertCopy %s: %v", key, err)
+		}
+	}
+	e.debit(&ExistingCopy{ObjectKey: "cancelled", BackendName: "b1", SizeBytes: 1})
+	if _, err := e.commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if !slices.Equal(tx.known, []string{"over", "short"}) || !slices.Equal(tx.directions, []ReplicationDirection{ReplicationOver, ReplicationShort}) {
+		t.Errorf("known = %v %v, want over and short on their sides", tx.known, tx.directions)
+	}
+	if tx.countedAt != 2 || !slices.Equal(tx.counted, []string{"changed"}) {
+		t.Errorf("counted %v at %d, want only changed at 2", tx.counted, tx.countedAt)
+	}
+}
+
+// TestLedgerEdit_NoFactorQueuesNothing verifies an edit at a factor of one or
+// less, where nothing replicates, queues no key however its counts moved.
+func TestLedgerEdit_NoFactorQueuesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, factor := range []int{0, 1} {
+		tx := &replicationRecorder{}
+		e := newLedgerEdit(tx, factor)
+		e.know("known", 3)
+		if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: "changed", BackendName: "b1", SizeBytes: 1}); err != nil {
+			t.Fatalf("insertCopy: %v", err)
+		}
+		if _, err := e.commit(ctx); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		if tx.known != nil || tx.counted != nil {
+			t.Errorf("factor %d queued %v and counted %v, want nothing", factor, tx.known, tx.counted)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
 // STRIPE CHARGES
 // -------------------------------------------------------------------------
 
@@ -159,7 +234,7 @@ func TestLedgerEdit_ChargesEachKeyOnItsStripeInOrder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx)
+	e := newLedgerEdit(tx, 0)
 	for _, loc := range []*ObjectLocation{
 		{ObjectKey: "bucket/key", BackendName: "b3", SizeBytes: 100},
 		{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 50},
@@ -186,10 +261,10 @@ func TestLedgerEdit_NothingChangedWritesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	if items, err := newLedgerEdit(tx).commit(ctx); err != nil || items != nil {
+	if items, err := newLedgerEdit(tx, 0).commit(ctx); err != nil || items != nil {
 		t.Errorf("empty edit: items=%+v err=%v, want nothing", items, err)
 	}
-	e := newLedgerEdit(tx)
+	e := newLedgerEdit(tx, 0)
 	if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 5}); err != nil {
 		t.Fatalf("insertCopy: %v", err)
 	}
@@ -213,7 +288,7 @@ func TestLedgerEdit_FailedWriteFailsCommit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			e := newLedgerEdit(tx)
+			e := newLedgerEdit(tx, 0)
 			e.queue("k", CleanupReasonDeleted, "b1", "k!a", 10)
 			e.debit(&ExistingCopy{ObjectKey: "k", BackendName: "b1", SizeBytes: 10})
 			if items, err := e.commit(ctx); !errors.Is(err, sentinel) || items != nil {

@@ -34,6 +34,16 @@ type ReplicateResponse struct {
 	Failed        int `json:"failed,omitempty"`
 }
 
+// ReplicationRebuildResponse reports a rebuild of the replication queue from
+// the ledger: the factor it counted against and how many keys it queued. A
+// rebuild is skipped when replication is unconfigured or the factor is 1, or
+// while a replication pass is running.
+type ReplicationRebuildResponse struct {
+	Outcome
+	Factor int   `json:"factor"`
+	Queued int64 `json:"queued"`
+}
+
 // OverReplicationCleanResponse reports an over-replication cleanup pass: how
 // many surplus copies were removed, and how many objects still carry surplus
 // the pass could not remove.

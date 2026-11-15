@@ -3,80 +3,100 @@
 --
 -- Author: Alex Freidah
 --
--- sqlc-input definitions backing the replicator and over-replication
--- cleaner: the under- and over-replicated scans and the backlog count.
+-- sqlc-input definitions backing the replication queue: the writes that queue
+-- the keys a transaction left off the factor, the rebuild that queues every one
+-- the ledger holds, and the drain's read, settle, retry and count.
+--
+-- A key's count is its managed copies plus the intents still uploading one,
+-- because a write that places its own copies commits them a moment apart and
+-- the intent is the statement that the copy is on its way. Every live intent
+-- counts, whatever its role: the first copy to land may be a companion while the
+-- primary is still in flight. One left by a write that never finished holds the
+-- key off only until the reaper clears it.
+--
+-- Copies on an excluded backend do not count toward a short key, but an intent
+-- there still does: excluding a backend says no copy will be placed there, not
+-- that a copy already going there is absent. A key past the factor counts every
+-- recorded copy. An empty list excludes nothing.
+--
+-- Every queue write makes the key due now with fresh attempts and bumps its
+-- version, so a drain that read an older version cannot settle it away.
 -- -----------------------------------------------------------------------------
 
--- name: GetUnderReplicatedObjects :many
--- A key's copies are the rows it holds plus the intents still uploading one,
--- because a write that places its own copies commits them a moment apart and
--- the intent is the statement that the copy is on its way. Counting only the
--- rows makes every such write look under-replicated for that moment, and a
--- scan landing inside it reads the object back to make a copy the write is
--- already placing.
---
--- Every live intent counts, whatever its role. The role tells the reaper what
--- to do with an abandoned intent; it does not say which copy records the
--- object. That is the first to land, and when it is a companion the write's
--- primary intent is the one still in flight: a count of companions alone read
--- such a key as one copy short, and the worker copied it to the very backend
--- the primary was landing on. An intent a later write to the same key adds
--- counts too, harmlessly, since that write replaces the object; one left by a
--- write that never finished holds replication off only until the reaper
--- clears it.
---
--- Copies on an excluded backend do not count, but an intent there still does:
--- excluding a backend says the worker will not place a copy there, not that a
--- copy already going there is absent. An empty list excludes nothing.
+-- name: QueueReplication :exec
+-- Queues keys the transaction knows the side of, in the order given.
+INSERT INTO replication_queue (object_key, direction)
+SELECT unnest(@object_keys::text[]), unnest(@directions::smallint[])
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1;
+
+-- name: QueueOffFactor :exec
+-- Counts each key and queues those off factor. A key with no copy and no intent
+-- is gone and needs nothing.
+INSERT INTO replication_queue (object_key, direction)
+SELECT counted.object_key, (CASE WHEN counted.live < @factor::bigint THEN -1 ELSE 1 END)::smallint
+FROM (
+    SELECT keys.object_key,
+        (SELECT COUNT(*) FROM object_locations ol WHERE ol.object_key = keys.object_key AND ol.managed)
+      + (SELECT COUNT(*) FROM pending_objects p WHERE p.object_key = keys.object_key) AS live
+    FROM unnest(@object_keys::text[]) AS keys(object_key)
+) counted
+WHERE counted.live > 0 AND counted.live <> @factor::bigint
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1;
+
+-- name: RebuildReplicationQueue :execrows
+-- One grouped pass over the ledger that queues every key off factor, for a
+-- factor or excluded set the queue was not kept against.
 WITH inflight AS (
     SELECT object_key, COUNT(*) AS copies
     FROM pending_objects
     GROUP BY object_key
 ),
-under_replicated AS (
-    SELECT ol.object_key
-    FROM object_locations ol
-    LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.backend_name != ALL(@excluded::text[]) AND ol.managed
-    GROUP BY ol.object_key, i.copies
-    HAVING COUNT(*) + COALESCE(i.copies, 0) < @factor::bigint
-    LIMIT @max_keys
-)
-SELECT ol.*
-FROM object_locations ol
-JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC;
-
--- name: GetOverReplicatedObjects :many
-WITH over_replicated AS (
-    SELECT object_key
-    FROM object_locations
-    WHERE managed
-    GROUP BY object_key
-    HAVING COUNT(*) > @factor::bigint
-    LIMIT @max_keys
-)
-SELECT ol.*
-FROM object_locations ol
-JOIN over_replicated orep ON ol.object_key = orep.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC;
-
--- name: CountReplicationBacklog :one
--- One grouped pass for both directions. Under applies GetUnderReplicatedObjects'
--- in-flight rule; over counts recorded copies only, as GetOverReplicatedObjects
--- does.
-WITH inflight AS (
-    SELECT object_key, COUNT(*) AS copies
-    FROM pending_objects
-    GROUP BY object_key
-),
-copies AS (
-    SELECT COUNT(*) AS held, COALESCE(i.copies, 0) AS inflight
+counted AS (
+    SELECT ol.object_key,
+           COUNT(*) FILTER (WHERE ol.backend_name != ALL(@excluded::text[])) + COALESCE(i.copies, 0) AS live,
+           COUNT(*) AS held
     FROM object_locations ol
     LEFT JOIN inflight i ON i.object_key = ol.object_key
     WHERE ol.managed
     GROUP BY ol.object_key, i.copies
 )
-SELECT COUNT(*) FILTER (WHERE held + inflight < @factor::bigint)::bigint AS under_replicated,
-       COUNT(*) FILTER (WHERE held > @factor::bigint)::bigint AS over_replicated
-FROM copies;
+INSERT INTO replication_queue (object_key, direction)
+SELECT object_key, (CASE WHEN live < @factor::bigint THEN -1 ELSE 1 END)::smallint
+FROM counted
+WHERE live < @factor::bigint OR held > @factor::bigint
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1;
+
+-- name: ListReplicationQueue :many
+-- Reads a side's next due keys with each key's count. The replicator's lock
+-- keeps one drain at a time, so the read holds nothing.
+SELECT rq.object_key, rq.direction, rq.attempts, rq.version,
+    ((SELECT COUNT(*) FROM object_locations ol
+      WHERE ol.object_key = rq.object_key AND ol.managed AND ol.backend_name != ALL(@excluded::text[]))
+   + (SELECT COUNT(*) FROM pending_objects p WHERE p.object_key = rq.object_key))::bigint AS live,
+    (SELECT COUNT(*) FROM object_locations ol
+     WHERE ol.object_key = rq.object_key AND ol.managed)::bigint AS held
+FROM replication_queue rq
+WHERE rq.direction = @direction::smallint AND rq.next_retry <= NOW()
+ORDER BY rq.direction, rq.next_retry
+LIMIT @row_limit;
+
+-- name: SettleReplicationQueue :exec
+-- Drops a key the drain brought back to the factor, unless a write queued it
+-- again since the drain read it.
+DELETE FROM replication_queue
+WHERE object_key = @object_key AND version = @version;
+
+-- name: RetryReplicationQueue :exec
+-- Holds a key the drain left off factor until next_retry, unless a write queued
+-- it again since the drain read it.
+UPDATE replication_queue
+SET attempts = attempts + 1, next_retry = @next_retry::timestamptz
+WHERE object_key = @object_key AND version = @version;
+
+-- name: CountReplicationQueue :one
+SELECT COUNT(*) FILTER (WHERE direction < 0)::bigint AS under_replicated,
+       COUNT(*) FILTER (WHERE direction > 0)::bigint AS over_replicated
+FROM replication_queue;

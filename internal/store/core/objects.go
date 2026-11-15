@@ -79,20 +79,21 @@ func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]Cl
 		return nil, err
 	}
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		return recordObjectTx(ctx, tx, req)
+		return recordObjectTx(ctx, o.edit(tx), req)
 	})
 }
 
 // recordObjectTx is the shared transactional body: replace the key's copies with
 // the write's, sweep its tags and the intents of every other write, and commit
-// the edit, which queues the displaced bytes and charges the stripes last.
-func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
+// the edit, which queues the displaced bytes and charges the stripes last. The
+// key ends with the write's copies plus the uploads it is still placing.
+func recordObjectTx(ctx context.Context, e *ledgerEdit, req *RecordObjectRequest) ([]CleanupItem, error) {
+	tx := e.tx
 	committed := intentIDs(req.Copies)
 	held, err := keyIntentsHeld(ctx, tx, req.Key, committed...)
 	if err != nil {
 		return nil, err
 	}
-	e := newLedgerEdit(tx)
 	if !held {
 		if err := discardOvertakenWrite(ctx, e, req); err != nil {
 			return nil, err
@@ -120,6 +121,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := e.clearIntents(ctx, intentIDs(req.Placing), committed, req.Key); err != nil {
 		return nil, err
 	}
+	e.know(req.Key, len(req.Copies)+len(req.Placing))
 	return e.commit(ctx)
 }
 
@@ -157,8 +159,8 @@ func intentsHeld(ctx context.Context, tx TxAdapter, intentIDs []string) (bool, e
 func discardOvertakenWrite(ctx context.Context, e *ledgerEdit, req *RecordObjectRequest) error {
 	for _, c := range req.Copies {
 		if c.IntentID != "" {
-			if err := e.tx.DeletePending(ctx, c.IntentID); err != nil {
-				return fmt.Errorf("delete overtaken intent: %w", err)
+			if err := e.resolveIntent(ctx, req.Key, c.IntentID); err != nil {
+				return fmt.Errorf("overtaken write: %w", err)
 			}
 		}
 		e.queue(req.Key, CleanupReasonSupersededIntent, c.Backend, c.StorageKey, req.Size)
@@ -192,7 +194,7 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 		return nil, nil
 	}
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		return deleteObjectsBatchTx(ctx, tx, keys)
+		return deleteObjectsBatchTx(ctx, o.edit(tx), keys)
 	})
 }
 
@@ -201,7 +203,8 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 // bytes and debits the copies. A delete keeps no intents, even on a key with no
 // copies, since an upload still running is placing a copy of an object that no
 // longer exists and an abandoned one would be promoted over the delete.
-func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
+func deleteObjectsBatchTx(ctx context.Context, e *ledgerEdit, keys []string) ([]CleanupItem, error) {
+	tx := e.tx
 	// The key locks come before the row read on every path, because tagging
 	// calls touch only object_tags and are excluded by the key lock alone.
 	if err := tx.AcquireKeyLock(ctx, keys...); err != nil {
@@ -211,7 +214,9 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 	if err != nil {
 		return nil, err
 	}
-	e := newLedgerEdit(tx)
+	for _, key := range keys {
+		e.know(key, 0)
+	}
 	if err := e.clearIntents(ctx, nil, nil, keys...); err != nil {
 		return nil, err
 	}
@@ -242,14 +247,15 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 // ErrCopyHoldsOnlyDEK the copy that would leave the object unreadable.
 func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		return deleteObjectLocationTx(ctx, tx, loc, keepAtLeast, reason)
+		return deleteObjectLocationTx(ctx, o.edit(tx), loc, keepAtLeast, reason)
 	})
 }
 
 // deleteObjectLocationTx is the transactional body of DeleteObjectLocation:
 // confirm the copy against the locked copy set, remove it, and drop the
 // object's tags with its last copy.
-func deleteObjectLocationTx(ctx context.Context, tx TxAdapter, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
+func deleteObjectLocationTx(ctx context.Context, e *ledgerEdit, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
+	tx := e.tx
 	key := loc.ObjectKey
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
 		return nil, err
@@ -262,7 +268,6 @@ func deleteObjectLocationTx(ctx context.Context, tx TxAdapter, loc *ObjectLocati
 	if err != nil {
 		return nil, err
 	}
-	e := newLedgerEdit(tx)
 	if err := e.removeCopy(ctx, reason, &held); err != nil {
 		return nil, err
 	}
@@ -334,7 +339,7 @@ type MoveReasons struct {
 // recorded, and the copied bytes are queued for deletion in their place.
 func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error) {
 	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[int64], error) {
-		return placeCopyTx(ctx, tx, p)
+		return placeCopyTx(ctx, o.edit(tx), p)
 	})
 	if err != nil {
 		return 0, nil, err
@@ -345,13 +350,13 @@ func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupIte
 // placeCopyTx is the transactional body of PlaceCopy: lock the key, confirm the
 // intent, the source and the target against the locked copy set, clear the
 // intent, for a move remove the source, and insert.
-func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (outcome[int64], error) {
+func placeCopyTx(ctx context.Context, e *ledgerEdit, p *Placement) (outcome[int64], error) {
+	tx := e.tx
 	key := p.Source.ObjectKey
 	held, err := keyIntentsHeld(ctx, tx, key, p.Intent.IntentID)
 	if err != nil {
 		return outcome[int64]{}, err
 	}
-	e := newLedgerEdit(tx)
 	if !held {
 		// A client write took the key mid-copy and queued these bytes when it
 		// cleared the intent, but the upload may have landed after that delete.
@@ -372,8 +377,8 @@ func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (outcome[int64
 	if !ok {
 		return p.refuse(ctx, e, ErrCopyChanged)
 	}
-	if err := tx.DeletePending(ctx, p.Intent.IntentID); err != nil {
-		return outcome[int64]{}, fmt.Errorf("delete placed intent: %w", err)
+	if err := e.resolveIntent(ctx, key, p.Intent.IntentID); err != nil {
+		return outcome[int64]{}, fmt.Errorf("placed copy: %w", err)
 	}
 	return p.commit(ctx, e, src)
 }
@@ -520,7 +525,7 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 		loc.Unmanaged = req.Unmanaged || req.Form.Unreadable()
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
 		// Charged without a ceiling check because the bytes are already stored.
-		e := newLedgerEdit(tx)
+		e := o.edit(tx)
 		inserted, err := e.insertCopyIfAbsent(ctx, loc)
 		if err != nil || !inserted {
 			return ImportSkippedExisting, err

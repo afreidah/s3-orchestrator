@@ -98,6 +98,45 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// REPLICATION QUEUE
+// -------------------------------------------------------------------------
+
+// TestHandleReplicationRebuild pins each answer a rebuild gives: the factor and
+// the keys queued, a skip with its reason when replication is off, and a 500
+// when the rebuild fails.
+func TestHandleReplicationRebuild(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		repl       replicatorStub
+		wantCode   int
+		wantStatus string
+		wantQueued int64
+	}{
+		{"rebuilt", replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, queued: 4}, http.StatusOK, "ok", 4},
+		{"replication off", replicatorStub{cfg: &config.ReplicationConfig{Factor: 1}}, http.StatusOK, "skipped", 0},
+		{"rebuild failed", replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, err: errors.New("db down")}, http.StatusInternalServerError, "", 0},
+	} {
+		h := newCoverageHandler(t)
+		replicationWith(t, h, tc.repl, overRepStub{})
+
+		w := httptest.NewRecorder()
+		h.handleReplicationRebuild(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, adminapi.PathReplicationRebuild, nil))
+		if w.Code != tc.wantCode {
+			t.Fatalf("%s: status = %d, want %d; body=%s", tc.name, w.Code, tc.wantCode, w.Body.String())
+		}
+		if tc.wantCode != http.StatusOK {
+			continue
+		}
+		var resp adminapi.ReplicationRebuildResponse
+		_ = json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Status != tc.wantStatus || resp.Queued != tc.wantQueued {
+			t.Errorf("%s: got status=%q queued=%d, want %q and %d", tc.name, resp.Status, resp.Queued, tc.wantStatus, tc.wantQueued)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
 // OVER-REPLICATION
 // -------------------------------------------------------------------------
 

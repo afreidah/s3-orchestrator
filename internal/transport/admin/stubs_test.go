@@ -111,6 +111,7 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
 		Backlog:    backlogStub{over: over.count, err: over.countErr},
+		Locker:     testx.Locker{},
 		Config:     config.NewLive(running),
 	})
 }
@@ -130,8 +131,8 @@ type backlogStub struct {
 	err  error
 }
 
-// CountReplicationBacklog returns the stub's count.
-func (b backlogStub) CountReplicationBacklog(context.Context, int) (core.ReplicationBacklog, error) {
+// CountReplicationQueue returns the stub's count.
+func (b backlogStub) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
 	return core.ReplicationBacklog{Over: b.over}, b.err
 }
 
@@ -180,15 +181,18 @@ func newDashboardOps(t *testing.T, data *dashboard.Data, err error) *MockDashboa
 }
 
 // replicatorStub configures the Replicator mock. failed stands for the
-// objects the cycle could not bring up to factor.
+// objects the cycle could not bring up to factor, and queued for the keys a
+// rebuild of the replication queue finds.
 type replicatorStub struct {
 	cfg     *config.ReplicationConfig
 	created int
 	failed  int
+	queued  int64
 	err     error
 }
 
-// newReplicator builds a Replicator mock that reports cfg.created copies.
+// newReplicator builds a Replicator mock that reports cfg.created copies, and
+// cfg.queued keys from a rebuild.
 func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicator {
 	t.Helper()
 	m := opstest.NewMockReplicator(gomock.NewController(t))
@@ -200,6 +204,7 @@ func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicator {
 				CopiesCreated: cfg.created,
 			}, cfg.err
 		}).AnyTimes()
+	m.EXPECT().RebuildQueue(gomock.Any(), gomock.Any()).Return(cfg.queued, cfg.err).AnyTimes()
 	return m
 }
 

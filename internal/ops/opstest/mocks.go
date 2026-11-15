@@ -473,6 +473,21 @@ func (m *MockReplicator) EXPECT() *MockReplicatorMockRecorder {
 	return m.recorder
 }
 
+// RebuildQueue mocks base method.
+func (m *MockReplicator) RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RebuildQueue", ctx, cfg)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RebuildQueue indicates an expected call of RebuildQueue.
+func (mr *MockReplicatorMockRecorder) RebuildQueue(ctx, cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebuildQueue", reflect.TypeOf((*MockReplicator)(nil).RebuildQueue), ctx, cfg)
+}
+
 // Replicate mocks base method.
 func (m *MockReplicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 	m.ctrl.T.Helper()

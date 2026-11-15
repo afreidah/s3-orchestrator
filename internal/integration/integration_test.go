@@ -2490,12 +2490,20 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 }
 
-// overPending counts the objects holding more copies than factor.
+// overPending counts the objects holding more copies than factor, as a rebuild
+// of the replication queue at factor finds them.
 func overPending(t *testing.T, factor int) int64 {
 	t.Helper()
-	backlog, err := testStore.CountReplicationBacklog(context.Background(), factor)
+	ctx := context.Background()
+	if _, err := testDB.Exec("DELETE FROM replication_queue"); err != nil {
+		t.Fatalf("empty replication queue: %v", err)
+	}
+	if _, err := testStore.RebuildReplicationQueue(ctx, factor, nil); err != nil {
+		t.Fatalf("RebuildReplicationQueue factor=%d: %v", factor, err)
+	}
+	backlog, err := testStore.CountReplicationQueue(ctx)
 	if err != nil {
-		t.Fatalf("CountReplicationBacklog factor=%d: %v", factor, err)
+		t.Fatalf("CountReplicationQueue: %v", err)
 	}
 	return backlog.Over
 }

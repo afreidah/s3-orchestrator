@@ -4,16 +4,17 @@
 // Author: Alex Freidah
 //
 // The replicator and the over-replication cleaner do the same pass from
-// opposite sides: group an object's copies, keep the objects whose copy count
-// is off the factor, and work through each one under admission while counting
-// the copies changed. This file is that pass; each worker supplies which side
-// of the factor it acts on and what it does to one object.
+// opposite sides: read the queued keys on their side of the factor, and work
+// through each one under admission while counting the copies changed, then
+// settle it or hold it for a retry. This file is that pass; each worker
+// supplies which side it acts on and what it does to one object.
 // -------------------------------------------------------------------------------
 
 package worker
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -21,49 +22,34 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
-// copySet is one object whose copy count is off the replication factor: its
-// copies, and how many copies it is short or over by.
+// copySet is one queued object whose copy count is off the replication factor:
+// its copies, how many copies it is short or over by, and its queue entry.
 type copySet struct {
 	key    string
 	copies []core.ObjectLocation
 	off    int
+	queued *core.QueuedReplication
 }
 
-// planCopySets groups location rows by key and keeps each key that offBy
-// reports a positive count for, given how many copies it has. The result order
-// is not stable.
-func planCopySets(locations []core.ObjectLocation, offBy func(copies int) int) []copySet {
-	grouped := core.GroupByKey(locations)
-	sets := make([]copySet, 0, len(grouped))
-	for key, copies := range grouped {
-		if off := offBy(len(copies)); off > 0 {
-			sets = append(sets, copySet{key: key, copies: copies, off: off})
-		}
-	}
-	return sets
-}
-
-// shortBy counts the copies a key needs to reach factor.
-func shortBy(factor int) func(int) int {
-	return func(copies int) int { return factor - copies }
-}
-
-// overBy counts the copies a key holds beyond factor.
-func overBy(factor int) func(int) int {
-	return func(copies int) int { return copies - factor }
-}
-
-// copySetPass is how a pass works through its copy sets: how many objects it
-// works on at once, and who watches.
+// copySetPass is how a pass works through its copy sets: the queue it settles
+// them in, how many objects it works on at once, and who watches.
 type copySetPass struct {
+	queue       *ReplicationQueue
 	concurrency int
 	observer    progress.Observer
 }
 
 // run works through sets, each under an admission slot, and returns the tally
-// with the number of copies fn reports it changed across every set.
-func (p copySetPass) run(ctx context.Context, ops Ops, sets []copySet, fn func(ctx context.Context, set *copySet) (int, batch.ItemResult)) (batch.Summary, int) {
-	var changed atomic.Int64
+// with the number of copies fn reports it changed across every set. fn also
+// reports whether the set reached the factor, which settles its key; one that
+// did not is held for a retry. A set the pass never reached stays due, and the
+// first key it failed to settle or retry is its error.
+func (p copySetPass) run(ctx context.Context, ops Ops, sets []copySet, fn func(ctx context.Context, set *copySet) (int, bool, batch.ItemResult)) (batch.Summary, int, error) {
+	var (
+		changed  atomic.Int64
+		failOnce sync.Once
+		failed   error
+	)
 	runner := batch.Runner[copySet]{
 		Concurrency: p.concurrency,
 		Admission:   ops,
@@ -71,9 +57,12 @@ func (p copySetPass) run(ctx context.Context, ops Ops, sets []copySet, fn func(c
 		Key:         func(s copySet) string { return s.key },
 	}
 	sum := runner.Run(ctx, sets, func(ctx context.Context, set copySet) batch.ItemResult {
-		n, res := fn(ctx, &set)
+		n, done, res := fn(ctx, &set)
 		changed.Add(int64(n))
+		if err := p.queue.finish(ctx, set.queued, done); err != nil {
+			failOnce.Do(func() { failed = err })
+		}
 		return res
 	})
-	return sum, int(changed.Load())
+	return sum, int(changed.Load()), failed
 }

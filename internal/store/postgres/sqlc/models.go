@@ -205,6 +205,15 @@ type PendingObject struct {
 	Tagging                  *string
 }
 
+type ReplicationQueue struct {
+	ObjectKey string
+	Direction int16
+	Attempts  int32
+	NextRetry pgtype.Timestamptz
+	Version   int64
+	CreatedAt pgtype.Timestamptz
+}
+
 type UsageFlush struct {
 	FlushID   string
 	AppliedAt pgtype.Timestamptz

@@ -192,10 +192,12 @@ func TestWireAuditMetrics(t *testing.T) {
 func TestProvideMetadataStore_SQLiteInMemory(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
-	do.ProvideValue(inj, &config.Config{
+	cfg := &config.Config{
 		Database: config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"},
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
-	})
+	}
+	do.ProvideValue(inj, cfg)
+	do.ProvideValue(inj, config.NewLive(cfg))
 	do.ProvideValue[*breaker.CircuitBreaker](inj, nil)
 	do.ProvideValue(inj, instanceid.ID(testInstanceID))
 	cs, err := provideMetadataStore(inj)

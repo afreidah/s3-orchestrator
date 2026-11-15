@@ -5,7 +5,7 @@
 //
 // Every store read that returns copies reads the whole object_locations row, so
 // a copy is the same value whichever read produced it: the read path's lookup,
-// the replication scans, the scrub queue or a pass's listing. Both engines run
+// the scrub queue or a pass's listing. Both engines run
 // this check against a real store, which keeps them from drifting apart on
 // which fields a read fills.
 // -------------------------------------------------------------------------------
@@ -14,7 +14,6 @@ package storetest
 
 import (
 	"context"
-	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -28,8 +27,6 @@ type WholeRowReader interface {
 	LocationLister
 	RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, error)
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error)
-	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error)
 	ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error)
 }
@@ -43,10 +40,6 @@ func CheckWholeRowReads(t *testing.T, s WholeRowReader, key, managed, unmanaged 
 	ctx := context.Background()
 	c := rowCheck{key: key, want: seedWholeRows(t, s, key, managed, unmanaged)}
 
-	under, err := s.GetUnderReplicatedObjects(ctx, 3, math.MaxInt32, nil)
-	c.read(t, "GetUnderReplicatedObjects", 2, under, err)
-	over, err := s.GetOverReplicatedObjects(ctx, 0, math.MaxInt32)
-	c.read(t, "GetOverReplicatedObjects", 2, over, err)
 	scrub, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{managed}, time.Now().Add(time.Hour))
 	c.read(t, "GetLeastRecentlyScrubbedObjects", 1, scrub, err)
 	for _, backend := range []string{managed, unmanaged} {

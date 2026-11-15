@@ -98,9 +98,11 @@ type Mover interface {
 // Replicator is the slice of *worker.Replicator the replication operations
 // use. Replicate runs one cycle and returns the copies it created alongside the
 // per-item tally, so a caller can tell a cycle that did its work from one where
-// objects failed.
+// objects failed. RebuildQueue rebuilds the replication queue from the ledger
+// and reports how many keys it queued.
 type Replicator interface {
 	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error)
+	RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error)
 }
 
 // Rebalancer is the slice of *worker.Rebalancer the rebalance operation uses.
@@ -123,9 +125,9 @@ type OverReplicationCleaner interface {
 	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error)
 }
 
-// BacklogCounter counts the keys under and over a replication factor.
+// BacklogCounter counts the queued keys under and over the replication factor.
 type BacklogCounter interface {
-	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
+	CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error)
 }
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.

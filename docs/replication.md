@@ -42,6 +42,8 @@ The second property is what keeps racing writes safe. With `write_path.parallel_
 
 **Verifying new copies:** Copies are streamed backend-to-backend and recorded without being read back, so a copy that lands corrupt still counts toward the replication factor until the scrubber reaches it. Setting `integrity.verify_on_replicate` closes that window by hash-checking each new copy before recording it, at the cost of reading every replica back. It is off by default; see [configuration.md#integrity](../configuration/#integrity).
 
+**Finding the work:** The replicator and the over-replication cleaner do not scan the ledger. A write that leaves a key off the factor adds the key to the replication queue in its own transaction, and each tick works one `batch_size` batch of short keys and then one of keys with surplus copies, so `batch_size` per `worker_interval` paces both. A key a pass could not bring back to the factor, such as one with no backend that has room, is retried after a backoff that starts at one minute and grows to an hour. The queue is rebuilt from the ledger in one grouped query on the first pass after a start, and again whenever the factor, the backends refusing reads or the configured backends change. `POST /admin/api/replication/rebuild` (`s3-orchestrator admin replication-rebuild`) runs the same rebuild on demand. A manual replicate, clean or rebuild takes the advisory lock the scheduled drain holds, and answers `skipped` while a drain is running.
+
 
 ## Rebalance
 
@@ -80,7 +82,7 @@ The cleaner scores each copy by its backend's health and storage utilization, th
 
 Among healthy backends, the most utilized backend gets the lowest score - freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.
 
-The worker runs at the `replication.worker_interval` and shares the same `batch_size` and `concurrency` settings. It only runs when `replication.factor > 1`. Like the replicator, it uses a PostgreSQL advisory lock for multi-instance coordination.
+The cleaner runs in the replicator's service, draining the queue's surplus side after the replicator's side each tick, and shares the same `batch_size` and `concurrency` settings. It only runs when `replication.factor > 1`, under the replicator's advisory lock.
 
 Cleanup can also be triggered on demand via the admin API (`POST /admin/api/over-replication`), the CLI (`s3-orchestrator admin over-replication --execute`), or the web dashboard's **Clean Excess** button.
 

@@ -193,11 +193,11 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 	return snap
 }
 
-// computeReplication counts under- and over-replicated objects. Returns nil
-// when no factor source is wired (test fixtures that build metrics without a
-// replication worker) or when a count fails. With replication disabled it
-// returns a ready, zeroed snapshot, so the admin endpoint reports "not
-// replicating" rather than "not yet computed".
+// computeReplication counts the queued under- and over-replicated objects.
+// Returns nil when no factor source is wired (test fixtures that build metrics
+// without a replication worker) or when a count fails. With replication
+// disabled it returns a ready, zeroed snapshot, so the admin endpoint reports
+// "not replicating" rather than "not yet computed".
 func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapshot {
 	if mc.d.ReplicationFactor == nil {
 		return nil
@@ -207,9 +207,9 @@ func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapsho
 		return &ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()}
 	}
 
-	backlog, err := mc.d.Store.CountReplicationBacklog(ctx, factor)
+	backlog, err := mc.d.Store.CountReplicationQueue(ctx)
 	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to count replication backlog", "error", err)
+		mc.log.ErrorContext(ctx, "failed to count replication queue", "error", err)
 		return nil
 	}
 	return &ReplicationSnapshot{

@@ -333,6 +333,12 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
+			Method: http.MethodPost, Pattern: adminapi.PathReplicationRebuild, Handler: h.handleReplicationRebuild,
+			Summary:  "Rebuild the replication queue from the object ledger",
+			Response: adminapi.ReplicationRebuildResponse{},
+			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
+		},
+		{
 			Method: http.MethodGet, Pattern: adminapi.PathOverReplication, Handler: h.handleOverReplicationStatus,
 			Summary:  "Count of objects holding surplus copies",
 			Response: adminapi.OverReplicationStatusResponse{},

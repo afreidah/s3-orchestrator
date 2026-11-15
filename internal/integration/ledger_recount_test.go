@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +59,8 @@ const (
 
 // recountRun is one run of the workload: the harness and the client that drive
 // it, the seeded source every choice comes from, what the test knows each key
-// may hold and what was done to it, and the faults in force.
+// may hold and what was done to it, the faults in force, and the factor the
+// store's writes queue keys against.
 type recountRun struct {
 	t       *testing.T
 	h       *harness
@@ -72,6 +74,7 @@ type recountRun struct {
 	drained string
 	fault   string
 	fired   map[string]int
+	factor  atomic.Int64
 }
 
 // recountFault is one failure the workload arms around an operation. arm
@@ -160,10 +163,13 @@ func newRecountRun(t *testing.T) *recountRun {
 	// One attempt per request: a retry would turn most armed faults into a
 	// success the test never sees fail.
 	client := s3.New(h.client.Options(), func(o *s3.Options) { o.RetryMaxAttempts = 1 })
-	return &recountRun{
+	r := &recountRun{
 		t: t, h: h, client: client, seed: seed, rng: rand.New(rand.NewPCG(seed, seed)),
 		model: map[string][][]byte{}, history: map[string][]string{}, fired: map[string]int{},
 	}
+	r.factor.Store(2)
+	h.store.UseReplicationFactor(func() int { return int(r.factor.Load()) })
+	return r
 }
 
 // -------------------------------------------------------------------------
@@ -496,10 +502,13 @@ func describe(body []byte) string {
 // -------------------------------------------------------------------------
 
 // settle runs the workers that finish leftover work, as their ticks would given
-// time, until a round changes nothing and nothing is queued. The first round
-// runs with one backend refusing every request and one promote failing.
+// time, until a round changes nothing and nothing is queued. The store's writes
+// queue keys against factor from here on, as a config reload would set it. The
+// first round runs with one backend refusing every request and one promote
+// failing.
 func (r *recountRun) settle(factor int) {
 	r.t.Helper()
+	r.factor.Store(int64(factor))
 	flaky := r.pickBackend()
 	r.h.proxies[flaky].SetRule(func(*http.Request) proxyAction { return proxyRefuse })
 	r.h.faults.SetFault(failOnce(opPromotePending, "", errSimulatedCommitFailure))
@@ -520,11 +529,13 @@ func (r *recountRun) settle(factor int) {
 }
 
 // round runs each worker once. Intents are aged past the reaper's minimum and
-// cleanup rows made due, which is all the waiting their ticks would do.
+// cleanup and replication rows made due, which is all the waiting their ticks
+// would do.
 func (r *recountRun) round(factor int) error {
 	ctx := context.Background()
 	r.exec("UPDATE pending_objects SET created_at = NOW() - INTERVAL '1 hour'")
 	r.exec("UPDATE cleanup_queue SET next_retry = NOW(), claimed_at = NULL")
+	r.exec("UPDATE replication_queue SET next_retry = NOW()")
 	cfg := config.ReplicationConfig{
 		Factor: factor, WorkerInterval: time.Minute, BatchSize: 500, Concurrency: 1,
 		UnhealthyThreshold: 10 * time.Minute,
@@ -556,6 +567,7 @@ func (r *recountRun) fingerprint() string {
 		(SELECT count(*) FROM object_locations), (SELECT COALESCE(sum(size_bytes), 0) FROM object_locations),
 		(SELECT count(*) FROM pending_objects), (SELECT count(*) FROM cleanup_queue),
 		(SELECT count(*) FROM cleanup_dlq), (SELECT count(*) FROM multipart_uploads),
+		(SELECT count(*) FROM replication_queue),
 		(SELECT COALESCE(sum(bytes_used), 0) FROM backend_quota_stripes))`)
 	return s
 }
@@ -564,7 +576,7 @@ func (r *recountRun) fingerprint() string {
 func (r *recountRun) leftover() int {
 	var n int
 	r.scan(&n, `SELECT (SELECT count(*) FROM pending_objects) + (SELECT count(*) FROM cleanup_queue)
-		+ (SELECT count(*) FROM multipart_uploads)`)
+		+ (SELECT count(*) FROM multipart_uploads) + (SELECT count(*) FROM replication_queue)`)
 	return n
 }
 
@@ -760,28 +772,24 @@ func absentFrom(a, b map[string]bool) []string {
 	return out
 }
 
-// checkQueues requires every queue a worker drains to be empty and the
-// replicator's and cleaner's own scans to find nothing.
+// checkQueues requires every queue a worker drains to be empty, and a rebuild
+// of the replication queue to find no key the writes left off the factor
+// without queueing it.
 func (r *recountRun) checkQueues(stage string, factor int) {
 	r.t.Helper()
-	for _, table := range []string{"pending_objects", "cleanup_queue", "cleanup_dlq", "multipart_uploads", "multipart_parts"} {
+	for _, table := range []string{"pending_objects", "cleanup_queue", "cleanup_dlq", "multipart_uploads", "multipart_parts", "replication_queue"} {
 		var n int
 		r.scan(&n, "SELECT count(*) FROM "+table)
 		if n != 0 {
 			r.t.Errorf("%s: %s holds %d rows", stage, table, n)
 		}
 	}
-	ctx := context.Background()
-	under, err := r.h.store.GetUnderReplicatedObjects(ctx, factor, 50, nil)
+	queued, err := r.h.store.RebuildReplicationQueue(context.Background(), factor, nil)
 	if err != nil {
-		r.t.Fatalf("%s: under-replicated scan: %v", stage, err)
+		r.t.Fatalf("%s: rebuild replication queue: %v", stage, err)
 	}
-	over, err := r.h.store.GetOverReplicatedObjects(ctx, factor, 50)
-	if err != nil {
-		r.t.Fatalf("%s: over-replicated scan: %v", stage, err)
-	}
-	if len(under) > 0 || len(over) > 0 {
-		r.t.Errorf("%s: the replicator's scan finds %d rows and the cleaner's %d", stage, len(under), len(over))
+	if queued > 0 {
+		r.t.Errorf("%s: a rebuild queues %d keys off the factor that no write queued", stage, queued)
 	}
 }
 

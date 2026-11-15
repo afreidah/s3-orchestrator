@@ -650,6 +650,7 @@ func resetState(t *testing.T) {
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
+		"DELETE FROM replication_queue",
 		"DELETE FROM backend_states",
 	} {
 		if _, err := testDB.Exec(q); err != nil {

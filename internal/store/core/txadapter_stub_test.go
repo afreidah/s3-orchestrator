@@ -103,6 +103,12 @@ func (*noopTxAdapter) DeleteObjectTags(context.Context, ...string) error { retur
 
 func (*noopTxAdapter) AdjustQuotaStripes(context.Context, ...StripeCharge) error { return nil }
 
+func (*noopTxAdapter) QueueReplication(context.Context, []string, []ReplicationDirection) error {
+	return nil
+}
+
+func (*noopTxAdapter) QueueOffFactor(context.Context, int, ...string) error { return nil }
+
 // keyedCopies returns a stub's seeded copies as a locked read of keys returns
 // them, each naming its key: a seeded copy that leaves its key empty belongs to
 // the one key a single-key read asked for.
