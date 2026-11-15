@@ -1,6 +1,6 @@
 module github.com/afreidah/s3-orchestrator
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.10.0
