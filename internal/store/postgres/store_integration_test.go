@@ -1561,6 +1561,39 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	}
 }
 
+// TestStoreInt_DeleteObjectsBatch_ClearsIntentsOfAKeyWithNoCopies deletes a key
+// whose only trace is the intent of a write whose commit failed. The delete has
+// to clear that intent and queue its bytes, or the reaper restores the write.
+func TestStoreInt_DeleteObjectsBatch_ClearsIntentsOfAKeyWithNoCopies(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	p := core.PendingObject{IntentID: uniqueKey(t, "intent"), ObjectKey: key, StorageKey: key + "!intent", BackendName: "backend-a", SizeBytes: 100, Role: core.PendingRolePrimary}
+	if _, err := s.InsertPendingIfFits(ctx, &p, core.AcceptForWrite); err != nil {
+		t.Fatalf("InsertPendingIfFits: %v", err)
+	}
+	defer func() { _ = s.DeletePending(ctx, p.IntentID) }()
+
+	got, err := s.DeleteObjectsBatch(ctx, []string{key})
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch: %v", err)
+	}
+	if len(got) != 1 || got[0].StorageKey != p.StorageKey || got[0].BackendName != p.BackendName {
+		t.Errorf("delete queued %+v, want only the intent's bytes at %s on %s", got, p.StorageKey, p.BackendName)
+	}
+
+	result, _, err := s.PromotePending(ctx, &p)
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != core.PendingPromoteAlreadyResolved {
+		t.Errorf("PromotePending after the delete = %v, want AlreadyResolved", result)
+	}
+	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
+		t.Errorf("key reads back after its delete: err = %v", err)
+	}
+}
+
 // TestStoreInt_DeleteObjectsBatch_ConcurrentBatchesDoNotDeadlock runs batches
 // on disjoint keys at once. Each batch spans every stripe, so batches taking
 // those rows in their own key order deadlock and lose every key to 40P01.

@@ -397,23 +397,25 @@ func (s *batchIntentStub) ClearPendingForKey(_ context.Context, _ []string, keys
 	return intents, nil
 }
 
-// TestDeleteObjectsBatch_ClearsIntentsAndQueues verifies the batch clears each
-// removed key's intents and queues, per key in sorted order, the copies'
-// bytes as deleted and the intents' bytes as superseded.
+// TestDeleteObjectsBatch_ClearsIntentsAndQueues verifies the batch clears the
+// intents of every key it names, one with no copies included, and queues, per
+// key in sorted order, the copies' bytes as deleted and the intents' bytes as
+// superseded.
 func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 	t.Parallel()
 	stub := &batchIntentStub{quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{
 		{ObjectKey: "k2", BackendName: "b1", StorageKey: "k2!a", SizeBytes: 20},
 		{ObjectKey: "k1", BackendName: "b1", StorageKey: "k1!a", SizeBytes: 10},
 	}}}
-	cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1", "missing"})
+	cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1", "intent-only"})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
-	if !slices.Equal(stub.cleared, []string{"k1", "k2"}) {
-		t.Errorf("cleared intents for %v, want each removed key in order", stub.cleared)
+	if !slices.Equal(stub.cleared, []string{"k2", "k1", "intent-only"}) {
+		t.Errorf("cleared intents for %v, want every key the batch names", stub.cleared)
 	}
 	want := []CleanupItem{
+		{BackendName: "b9", ObjectKey: "intent-only", StorageKey: "intent-only!inflight", Reason: CleanupReasonSupersededIntent, SizeBytes: 5},
 		{BackendName: "b1", ObjectKey: "k1", StorageKey: "k1!a", Reason: CleanupReasonDeleted, SizeBytes: 10},
 		{BackendName: "b9", ObjectKey: "k1", StorageKey: "k1!inflight", Reason: CleanupReasonSupersededIntent, SizeBytes: 5},
 		{BackendName: "b1", ObjectKey: "k2", StorageKey: "k2!a", Reason: CleanupReasonDeleted, SizeBytes: 20},
