@@ -205,8 +205,9 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 
 // deleteObjectsBatchTx is the transactional body of DeleteObjectsBatch: clear
 // each key's copies, tags and intents, debit what the copies held, and queue
-// their bytes. A delete keeps no intents, since an upload still running is
-// placing a copy of an object that no longer exists.
+// their bytes. A delete keeps no intents, even on a key with no copies, since
+// an upload still running is placing a copy of an object that no longer exists
+// and an abandoned one would be promoted over the delete.
 func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
 	// The key locks come before the row read on every path, because tagging
 	// calls touch only object_tags and are excluded by the key lock alone.
@@ -214,7 +215,11 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		return nil, err
 	}
 	rows, err := tx.GetExistingCopiesForUpdate(ctx, keys...)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
+		return nil, err
+	}
+	superseded, err := clearSupersededIntents(ctx, tx, nil, nil, keys...)
+	if err != nil || (len(rows) == 0 && len(superseded) == 0) {
 		return nil, err
 	}
 	if err := tx.DeleteObjectCopies(ctx, keys...); err != nil {
@@ -224,18 +229,7 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		return nil, err
 	}
 	removed, debits := splitRemovedCopies(rows, len(keys))
-	held := slices.Sorted(maps.Keys(removed))
-	superseded, err := clearSupersededIntents(ctx, tx, nil, nil, held...)
-	if err != nil {
-		return nil, err
-	}
-	requests := make([]*CleanupRequest, 0, len(rows))
-	for _, key := range held {
-		for _, d := range append(removed[key], superseded[key]...) {
-			requests = append(requests, d.request(key, CleanupReasonDeleted))
-		}
-	}
-	cleanup, err := queueCleanup(ctx, tx, requests)
+	cleanup, err := queueCleanup(ctx, tx, deletedRequests(removed, superseded))
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +237,22 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		return nil, err
 	}
 	return cleanup, nil
+}
+
+// deletedRequests labels each key's removed copies and cleared intents for
+// cleanup, the keys in sorted order so a batch queues its rows the same way
+// however its keys were named.
+func deletedRequests(copies, intents map[string][]removedCopy) []*CleanupRequest {
+	for key, cleared := range intents {
+		copies[key] = append(copies[key], cleared...)
+	}
+	var requests []*CleanupRequest
+	for _, key := range slices.Sorted(maps.Keys(copies)) {
+		for _, d := range copies[key] {
+			requests = append(requests, d.request(key, CleanupReasonDeleted))
+		}
+	}
+	return requests
 }
 
 // splitRemovedCopies folds the removed rows into the two views the batch needs:
