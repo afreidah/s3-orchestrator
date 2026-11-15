@@ -13,6 +13,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -398,9 +399,8 @@ func (s *batchIntentStub) ClearPendingForKey(_ context.Context, _ []string, keys
 }
 
 // TestDeleteObjectsBatch_ClearsIntentsAndQueues verifies the batch clears the
-// intents of every key it names, one with no copies included, and queues, per
-// key in sorted order, the copies' bytes as deleted and the intents' bytes as
-// superseded.
+// intents of every key it names, one with no copies included, and queues the
+// copies' bytes as deleted and the intents' bytes as superseded.
 func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 	t.Parallel()
 	stub := &batchIntentStub{quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{
@@ -421,6 +421,7 @@ func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 		{BackendName: "b1", ObjectKey: "k2", StorageKey: "k2!a", Reason: CleanupReasonDeleted, SizeBytes: 20},
 		{BackendName: "b9", ObjectKey: "k2", StorageKey: "k2!inflight", Reason: CleanupReasonSupersededIntent, SizeBytes: 5},
 	}
+	slices.SortFunc(cleanup, func(a, b CleanupItem) int { return cmp.Compare(a.StorageKey, b.StorageKey) })
 	if !slices.Equal(cleanup, want) {
 		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
 	}

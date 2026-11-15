@@ -62,9 +62,9 @@ func (s *promoteTxStub) ClaimPending(context.Context, string) (bool, error) {
 	return s.claimed, s.claimErr
 }
 
-func (s *promoteTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
+func (s *promoteTxStub) GetExistingCopiesForUpdate(_ context.Context, keys ...string) ([]ExistingCopy, error) {
 	s.ops = append(s.ops, "read_copies")
-	return s.existingCopies, s.existingErr
+	return keyedCopies(s.existingCopies, keys), s.existingErr
 }
 
 func (s *promoteTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocation) error {
@@ -906,6 +906,93 @@ func TestClaimPendingCopies_ErrorClaimsNothing(t *testing.T) {
 			}
 			if len(claims.Claimed) != 0 || len(claims.Declined) != 0 {
 				t.Errorf("claims = %+v alongside the error, want none", claims)
+			}
+		})
+	}
+}
+
+// -------------------------------------------------------------------------
+// DISCARD PENDING
+// -------------------------------------------------------------------------
+
+// discardTxStub drives DiscardPending: it decides whether the intent is still
+// held and records the intents it deletes.
+type discardTxStub struct {
+	noopTxAdapter
+
+	lost      bool
+	claimErr  error
+	lockErr   error
+	deleteErr error
+	deleted   []string
+}
+
+func (s *discardTxStub) AcquireKeyLock(context.Context, ...string) error { return s.lockErr }
+
+func (s *discardTxStub) ClaimPending(context.Context, string) (bool, error) {
+	return !s.lost, s.claimErr
+}
+
+func (s *discardTxStub) DeletePending(_ context.Context, intentID string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deleted = append(s.deleted, intentID)
+	return nil
+}
+
+// discardedIntent is the upload a write gave up on after its bytes landed
+// on b1.
+func discardedIntent() *PendingObject {
+	return &PendingObject{IntentID: "i-9", ObjectKey: "k", BackendName: "b1", StorageKey: "k!i-9", SizeBytes: 42}
+}
+
+// TestDiscardPending_DropsAndQueues verifies a held intent is deleted and its
+// bytes queued under the caller's reason.
+func TestDiscardPending_DropsAndQueues(t *testing.T) {
+	t.Parallel()
+	stub := &discardTxStub{}
+	cleanup, err := stubOps(stub).DiscardPending(context.Background(), discardedIntent(), "put_failed")
+	if err != nil {
+		t.Fatalf("DiscardPending: %v", err)
+	}
+	if !slices.Equal(stub.deleted, []string{"i-9"}) {
+		t.Errorf("deleted = %v, want the discarded intent", stub.deleted)
+	}
+	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!i-9", Reason: "put_failed", SizeBytes: 42}}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestDiscardPending_IntentAlreadyGone verifies an intent someone else already
+// resolved queues nothing, since whoever removed it queued its bytes.
+func TestDiscardPending_IntentAlreadyGone(t *testing.T) {
+	t.Parallel()
+	stub := &discardTxStub{lost: true}
+	cleanup, err := stubOps(stub).DiscardPending(context.Background(), discardedIntent(), "put_failed")
+	if err != nil || cleanup != nil || len(stub.deleted) != 0 {
+		t.Errorf("cleanup=%+v err=%v deleted=%v, want nothing", cleanup, err, stub.deleted)
+	}
+}
+
+// TestDiscardPending_FailuresRollBack verifies each step's failure surfaces
+// with nothing queued.
+func TestDiscardPending_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	cases := map[string]TxAdapter{
+		"key lock": &discardTxStub{lockErr: sentinel},
+		"claim":    &discardTxStub{claimErr: sentinel},
+		"delete":   &discardTxStub{deleteErr: sentinel},
+		"queue":    &queueRecorder{TxAdapter: &discardTxStub{}, err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cleanup, err := stubOps(tx).DiscardPending(context.Background(), discardedIntent(), "put_failed")
+			if !errors.Is(err, sentinel) || cleanup != nil {
+				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
 			}
 		})
 	}

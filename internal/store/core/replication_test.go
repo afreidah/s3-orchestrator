@@ -42,8 +42,8 @@ type excessTxStub struct {
 func (s *excessTxStub) AcquireKeyLock(context.Context, ...string) error { return s.lockErr }
 
 // GetExistingCopiesForUpdate returns the seeded copy set or error.
-func (s *excessTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
-	return s.existing, s.existingErr
+func (s *excessTxStub) GetExistingCopiesForUpdate(_ context.Context, keys ...string) ([]ExistingCopy, error) {
+	return keyedCopies(s.existing, keys), s.existingErr
 }
 
 // DeleteObjectFromBackend records the deleted backend or returns the seeded error.

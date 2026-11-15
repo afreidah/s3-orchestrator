@@ -16,193 +16,135 @@ package core
 import (
 	"context"
 	"fmt"
-	"slices"
 )
 
 // -------------------------------------------------------------------------
 // PROMOTE PENDING
 // -------------------------------------------------------------------------
 
-// promoteOutcome carries the resolution result and the cleanup rows it queued
-// out of the transactional body so the caller can settle them.
-type promoteOutcome struct {
-	result  PendingPromoteResult
-	cleanup []CleanupItem
-}
-
-// promotePendingTx is the transactional body of PromotePending. The
-// orchestration reads as five ordered steps: claim, key-lock, supersession
-// check, commit, and the same-tx delete of the pending row.
-func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (promoteOutcome, error) {
+// promotePendingTx is the transactional body of PromotePending: claim the
+// intent under the key lock, decide it against the locked copy set, and commit
+// the edit.
+func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (outcome[PendingPromoteResult], error) {
 	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
 	if err != nil {
-		return promoteOutcome{}, err
+		return outcome[PendingPromoteResult]{}, err
 	}
 	if !claimed {
-		return promoteOutcome{result: PendingPromoteAlreadyResolved}, nil
+		return outcome[PendingPromoteResult]{result: PendingPromoteAlreadyResolved}, nil
 	}
-
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
 	if err != nil {
-		return promoteOutcome{}, err
+		return outcome[PendingPromoteResult]{}, err
 	}
-
-	if p.IsCompanion() {
-		return resolveCompanion(ctx, tx, p, existing)
+	e := newLedgerEdit(tx)
+	result, err := promote(ctx, e, p, existing)
+	if err != nil {
+		return outcome[PendingPromoteResult]{}, err
 	}
-
-	// The bytes are on the backend, since the reaper only promotes after its
-	// probe found them, and a newer copy means nothing will ever record them.
-	if intentSuperseded(existing, p.CreatedAt) {
-		cleanup, err := dropIntent(ctx, tx, p, CleanupReasonSupersededIntent)
-		if err != nil {
-			return promoteOutcome{}, err
-		}
-		return promoteOutcome{result: PendingPromoteSuperseded, cleanup: cleanup}, nil
-	}
-
-	return commitPromotion(ctx, tx, p, existing)
+	return finish(ctx, e, result, nil)
 }
 
-// commitPromotion finalises a non-superseded intent: clears prior copies,
-// inserts the new object_location row, replaces the key's tags with the set the
-// write carried, charges the bytes that moved, and deletes the pending row in
-// the same transaction.
-func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
-	deltas := make(quotaDeltas, len(existing)+1)
-	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, existing, deltas)
-	if err != nil {
-		return promoteOutcome{}, err
+// promote decides a claimed intent: a companion is kept or discarded, a primary
+// a newer copy superseded is dropped, and any other primary becomes the object.
+func promote(ctx context.Context, e *ledgerEdit, p *PendingObject, existing []ExistingCopy) (PendingPromoteResult, error) {
+	switch {
+	case p.IsCompanion():
+		return resolveCompanion(ctx, e, p, existing)
+	case intentSuperseded(existing, p.CreatedAt):
+		// The bytes are on the backend, since the reaper only promotes after its
+		// probe found them, and a newer copy means nothing will ever record them.
+		return PendingPromoteSuperseded, e.dropIntent(ctx, p, CleanupReasonSupersededIntent)
+	default:
+		return PendingPromoteCommitted, commitPromotion(ctx, e, p, existing)
 	}
-	if err := recordIntent(ctx, tx, p, deltas); err != nil {
-		return promoteOutcome{}, err
+}
+
+// commitPromotion makes a non-superseded intent the object: it replaces the
+// prior copies with the intent's, deletes the pending row, and replaces the
+// key's tags with the set the write carried.
+func commitPromotion(ctx context.Context, e *ledgerEdit, p *PendingObject, existing []ExistingCopy) error {
+	if err := e.removeCopies(ctx, CleanupReasonOverwritten, []string{p.ObjectKey}, existing); err != nil {
+		return err
 	}
-	if err := replaceObjectTagsTx(ctx, tx, p.ObjectKey, p.Tags); err != nil {
-		return promoteOutcome{}, err
+	if err := recordIntent(ctx, e, p); err != nil {
+		return err
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonOverwritten, displaced)
-	if err != nil {
-		return promoteOutcome{}, err
-	}
-	return promoteOutcome{result: PendingPromoteCommitted, cleanup: cleanup}, nil
+	return replaceObjectTagsTx(ctx, e.tx, p.ObjectKey, p.Tags)
 }
 
 // resolveCompanion settles a companion-copy intent left by a process that died
 // mid-upload. It never promotes, because the bytes may be partial; the
 // replication worker rebuilds the copy from a committed one. The bytes are
 // kept only when a copy is already recorded at this intent's own path.
-func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
+func resolveCompanion(ctx context.Context, e *ledgerEdit, p *PendingObject, existing []ExistingCopy) (PendingPromoteResult, error) {
 	for _, ec := range existing {
 		if ec.BackendName == p.BackendName && ec.StorageKey == p.StorageKey {
-			if err := tx.DeletePending(ctx, p.IntentID); err != nil {
-				return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
+			if err := e.tx.DeletePending(ctx, p.IntentID); err != nil {
+				return PendingPromoteCompanionKept, fmt.Errorf("delete companion pending row: %w", err)
 			}
-			return promoteOutcome{result: PendingPromoteCompanionKept}, nil
+			return PendingPromoteCompanionKept, nil
 		}
 	}
-	cleanup, err := dropIntent(ctx, tx, p, CleanupReasonCompanionDiscarded)
-	if err != nil {
-		return promoteOutcome{}, err
-	}
-	return promoteOutcome{result: PendingPromoteCompanionDiscarded, cleanup: cleanup}, nil
+	return PendingPromoteCompanionDiscarded, e.dropIntent(ctx, p, CleanupReasonCompanionDiscarded)
 }
 
 // -------------------------------------------------------------------------
 // COMPANION COMMIT
 // -------------------------------------------------------------------------
 
-// companionOutcome carries the resolution of an extra copy out of the
-// transactional body, shaped like promoteOutcome so both resolution paths hand
-// their caller the same two things.
-type companionOutcome struct {
-	result  CompanionCommitResult
-	cleanup []CleanupItem
-}
-
 // commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
 // key, claim the intent, and either add the copy or discard it. Any newer write
 // clears this intent, so a successful claim proves nothing newer took the key.
-func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
+func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (outcome[CompanionCommitResult], error) {
 	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
 	if err != nil {
-		return companionOutcome{}, err
+		return outcome[CompanionCommitResult]{}, err
 	}
+	e := newLedgerEdit(tx)
 	if !claimed {
-		return discardUntrustedCopy(ctx, tx, p)
+		// The upload was overtaken. Its bytes sit at a path no other write
+		// shares, and nothing is debited because they were never recorded.
+		e.queueIntent(p, CleanupReasonCompanionUntrusted)
+		return finish(ctx, e, CompanionCopyUntrusted, nil)
 	}
-	if err := recordIntent(ctx, tx, p, quotaDeltas{}); err != nil {
-		return companionOutcome{}, err
+	if err := recordIntent(ctx, e, p); err != nil {
+		return outcome[CompanionCommitResult]{}, err
 	}
-	return companionOutcome{result: CompanionCopyCommitted}, nil
+	return finish(ctx, e, CompanionCopyCommitted, nil)
 }
 
-// recordIntent records the claimed intent's upload as a copy of its key,
-// deletes the intent row, and then charges deltas plus its bytes, all in the
-// transaction that claimed it.
-func recordIntent(ctx context.Context, tx TxAdapter, p *PendingObject, deltas quotaDeltas) error {
+// recordIntent records the claimed intent's upload as a copy of its key and
+// deletes the intent row, in the transaction that claimed it.
+func recordIntent(ctx context.Context, e *ledgerEdit, p *PendingObject) error {
 	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
-	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
-		return fmt.Errorf("insert %s location: %w", p.RoleOrDefault(), err)
+	if err := e.insertCopy(ctx, loc); err != nil {
+		return fmt.Errorf("record %s: %w", p.RoleOrDefault(), err)
 	}
-	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
+	if err := e.tx.DeletePending(ctx, p.IntentID); err != nil {
 		return fmt.Errorf("delete %s pending row: %w", p.RoleOrDefault(), err)
 	}
-	deltas.add(p.BackendName, p.SizeBytes)
-	return chargeStripes(ctx, tx, p.ObjectKey, deltas)
+	return nil
 }
 
-// discardUntrustedCopy resolves an upload overtaken by a newer write by queueing
-// its bytes, which sit at a path no other write shares. Nothing is debited
-// because the bytes were never recorded.
-func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
-	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonCompanionUntrusted, []removedCopy{intentBytes(p)})
-	if err != nil {
-		return companionOutcome{}, err
-	}
-	return companionOutcome{result: CompanionCopyUntrusted, cleanup: cleanup}, nil
-}
+// -------------------------------------------------------------------------
+// DISCARD PENDING
+// -------------------------------------------------------------------------
 
-// clearSupersededIntents removes every intent for the keys except keep, and
-// returns the bytes of each cleared intent not in committing for deletion,
-// grouped by the key each belonged to.
-//
-// committing intents are cleared but their bytes are the object being
-// recorded. Every other cleared intent's bytes are stale, even on a backend
-// this write also landed on, since they sit at a different path. keep holds
-// this write's own uploads still in flight; their surviving rows are what
-// their later commit reads as proof that nothing newer touched the key.
-func clearSupersededIntents(ctx context.Context, tx TxAdapter, keep, committing []string, keys ...string) (map[string][]removedCopy, error) {
-	cleared, err := tx.ClearPendingForKey(ctx, keep, keys...)
-	if err != nil {
-		return nil, fmt.Errorf("clear superseded intents: %w", err)
-	}
-	stale := make(map[string][]removedCopy, len(cleared))
-	for _, si := range cleared {
-		if slices.Contains(committing, si.IntentID) {
-			continue
+// DiscardPending drops an intent whose upload will not be recorded and queues
+// its bytes under reason, for a write that gave up after uploading. An intent
+// already gone was resolved by whoever removed it, which queued its bytes, so
+// nothing is returned for it.
+func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
+		claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
+		if err != nil || !claimed {
+			return nil, err
 		}
-		stale[si.ObjectKey] = append(stale[si.ObjectKey], removedCopy{
-			BackendName: si.BackendName,
-			StorageKey:  si.StorageKey,
-			SizeBytes:   si.SizeBytes,
-			Reason:      CleanupReasonSupersededIntent,
-		})
-	}
-	return stale, nil
-}
-
-// clearExistingCopies deletes every prior copy of the key and accumulates
-// per-backend negative deltas in the supplied map. Every copy's bytes are
-// returned for the caller to queue, each one naming the path it occupies.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas quotaDeltas) ([]removedCopy, error) {
-	if len(existing) == 0 {
-		return nil, nil
-	}
-	if err := tx.DeleteObjectCopies(ctx, key); err != nil {
-		return nil, fmt.Errorf("delete existing copies: %w", err)
-	}
-	for _, ec := range existing {
-		deltas.add(ec.BackendName, -ec.SizeBytes)
-	}
-	return removedFromExisting(existing), nil
+		e := newLedgerEdit(tx)
+		if err := e.dropIntent(ctx, p, reason); err != nil {
+			return nil, err
+		}
+		return e.commit(ctx)
+	})
 }

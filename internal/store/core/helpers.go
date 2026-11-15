@@ -84,28 +84,6 @@ func PartPath(uploadID string, partNumber int) string {
 	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
 }
 
-// -------------------------------------------------------------------------
-// COPY-REMOVAL HELPER
-// -------------------------------------------------------------------------
-
-// removedFromExisting returns the bytes a removed copy set leaves to delete.
-// Every copy goes, including those on backends an overwrite lands on, because
-// the new write uses its own path and the old bytes stay behind.
-func removedFromExisting(existing []ExistingCopy) []removedCopy {
-	if len(existing) == 0 {
-		return nil
-	}
-	removed := make([]removedCopy, 0, len(existing))
-	for _, ec := range existing {
-		removed = append(removed, removedCopy{
-			BackendName: ec.BackendName,
-			StorageKey:  ec.StorageKey,
-			SizeBytes:   ec.SizeBytes,
-		})
-	}
-	return removed
-}
-
 // KeysOf returns the object key of each copy in locs, in order. A key held on
 // several backends appears once per copy.
 func KeysOf(locs []ObjectLocation) []string {

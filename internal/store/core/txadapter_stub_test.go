@@ -14,6 +14,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"time"
 )
 
@@ -101,3 +102,16 @@ func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) e
 func (*noopTxAdapter) DeleteObjectTags(context.Context, ...string) error { return nil }
 
 func (*noopTxAdapter) AdjustQuotaStripes(context.Context, ...StripeCharge) error { return nil }
+
+// keyedCopies returns a stub's seeded copies as a locked read of keys returns
+// them, each naming its key: a seeded copy that leaves its key empty belongs to
+// the one key a single-key read asked for.
+func keyedCopies(copies []ExistingCopy, keys []string) []ExistingCopy {
+	out := slices.Clone(copies)
+	for i := range out {
+		if out[i].ObjectKey == "" && len(keys) == 1 {
+			out[i].ObjectKey = keys[0]
+		}
+	}
+	return out
+}
