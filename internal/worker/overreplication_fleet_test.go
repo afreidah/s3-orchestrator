@@ -110,8 +110,7 @@ func TestClean_QueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db down")).AnyTimes()
+	expectQueued(store, core.ReplicationOver, nil, errors.New("db down"))
 	storetest.Permissive(store)
 
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
@@ -130,12 +129,11 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+	}, nil)
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(nil, errors.New("db timeout")).AnyTimes()
 	storetest.Permissive(store)
@@ -165,12 +163,11 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	rt := &removeExcessTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+	}, nil)
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -215,12 +212,11 @@ func TestClean_RemoveCopyError(t *testing.T) {
 	rt := &removeExcessTracker{err: errors.New("db error")}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+	}, nil)
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
 	storetest.Permissive(store)
@@ -249,15 +245,14 @@ func TestClean_MultipleObjects(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-			{ObjectKey: "key2", BackendName: "b1", SizeBytes: 200},
-			{ObjectKey: "key2", BackendName: "b2", SizeBytes: 200},
-			{ObjectKey: "key2", BackendName: "b3", SizeBytes: 200},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+		{ObjectKey: "key2", BackendName: "b1", SizeBytes: 200},
+		{ObjectKey: "key2", BackendName: "b2", SizeBytes: 200},
+		{ObjectKey: "key2", BackendName: "b3", SizeBytes: 200},
+	}, nil)
 	storetest.Permissive(store)
 
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
@@ -286,12 +281,11 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "gone", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "gone", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+	}, nil)
 	storetest.Permissive(store)
 
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
@@ -320,12 +314,11 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationOver, []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+	}, nil)
 	storetest.Permissive(store)
 
 	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})

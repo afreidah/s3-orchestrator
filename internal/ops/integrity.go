@@ -93,19 +93,9 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 		batchSize = icfg.ScrubberBatchSize
 	}
 
-	var sum batch.Summary
-	acquired, err := i.d.Locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
-		var err error
-		sum, err = i.d.Scrubber.Scrub(lockCtx, batchSize, backend, observer)
-		return err
+	return underLock(ctx, i.d.Locker, core.LockScrubber, ErrScrubInProgress, func(lockCtx context.Context) (batch.Summary, error) {
+		return i.d.Scrubber.Scrub(lockCtx, batchSize, backend, observer)
 	})
-	if err != nil {
-		return batch.Summary{}, err
-	}
-	if !acquired {
-		return batch.Summary{}, ErrScrubInProgress
-	}
-	return sum, nil
 }
 
 // VerifyKey verifies every recorded copy of one key immediately. Reports

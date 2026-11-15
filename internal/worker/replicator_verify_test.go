@@ -254,6 +254,7 @@ func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 	r := NewReplicator(&ReplicatorDeps{
 		Fleet:     fleetOf(ops, NewMockPlacement(ctrl)),
 		Store:     ms,
+		Queue:     NewReplicationQueue(ms),
 		Config:    defaultReplication,
 		Integrity: verifyOnReplicate,
 		Codec:     codec,
@@ -299,6 +300,7 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 	r := NewReplicator(&ReplicatorDeps{
 		Fleet:     fleetOf(ops, NewMockPlacement(ctrl)),
 		Store:     ms,
+		Queue:     NewReplicationQueue(ms),
 		Config:    defaultReplication,
 		Integrity: verifyOnReplicate,
 		Encryptor: enc,

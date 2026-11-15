@@ -4,10 +4,11 @@
 // Author: Alex Freidah
 //
 // /admin/api/replicate triggers a one-shot replication pass to fill in
-// under-replicated objects; the over-replication endpoints expose count
-// + cleanup so operators can drive excess-copy removal from outside the
-// scheduled cleaner. Each handler renders what the matching operation in
-// internal/ops reports.
+// under-replicated objects, and /admin/api/replication/rebuild rebuilds the
+// queue those passes drain from the ledger. The over-replication endpoints
+// expose count + cleanup so operators can drive excess-copy removal from
+// outside the scheduled cleaner. Each handler renders what the matching
+// operation in internal/ops reports.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -30,6 +31,27 @@ import (
 // handleReplicate triggers one replication cycle.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	h.servePass(w, r, ReplicatePass(h.d.Ops))
+}
+
+// handleReplicationRebuild rebuilds the replication queue from the ledger and
+// reports how many keys it queued, or why it was skipped.
+func (h *Handler) handleReplicationRebuild(w http.ResponseWriter, r *http.Request) {
+	res, err := h.d.Ops.Replication.RebuildQueue(r.Context())
+	if reason, skipped := ops.SkipReason(err); skipped {
+		httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicationRebuildResponse{
+			Outcome: adminapi.Outcome{Status: adminstream.OutcomeSkipped, Reason: reason},
+		})
+		return
+	}
+	if err != nil {
+		httputil.InternalError(r.Context(), h.log, w, "failed to rebuild the replication queue", err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicationRebuildResponse{
+		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
+		Factor:  res.Factor,
+		Queued:  res.Queued,
+	})
 }
 
 // -------------------------------------------------------------------------

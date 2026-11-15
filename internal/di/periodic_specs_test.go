@@ -60,8 +60,7 @@ func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Servi
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
 		worker.NewRebalancerService(f.rebalancer, locker),
 		NewLifecycleService(f.expirer, locker),
-		worker.NewOverReplicationService(f.overRep, locker),
-		worker.NewReplicatorService(f.replicator, locker),
+		worker.NewReplicationService(f.replicator, f.overRep, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
 			Buckets: declared, Metrics: f.stack.Metrics,
@@ -193,7 +192,6 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 		"pending_reaper",
 		"rebalance",
 		"replication",
-		"over_replication",
 		"drain",
 		"lifecycle",
 		"scrub",

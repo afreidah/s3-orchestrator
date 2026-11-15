@@ -134,13 +134,22 @@ type CreateMultipartUploadParams struct {
 	Tags          []Tag  // applied to the object CompleteMultipartUpload produces
 }
 
-// ReplicationStore defines replication management operations. The
-// under-replicated scan does not count copies on the excluded backends, which
-// may be empty.
+// ReplicationStore defines the replication queue. RebuildReplicationQueue
+// queues every key the ledger holds off factor, not counting copies on the
+// excluded backends, and reports how many it queued. A drain, one at a time
+// under the replicator's lock, reads a side's due keys, then settles each one
+// it brought back to the factor or retries it at nextRetry; both match the
+// version it read, so a key a newer write queued again survives.
+// UseReplicationFactor names the factor the store's own writes queue keys
+// against, and ReplicationFactor reads it, zero when none is named.
 type ReplicationStore interface {
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]ObjectLocation, error)
-	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
+	RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error)
+	ListReplicationQueue(ctx context.Context, direction ReplicationDirection, limit int, excluded []string) ([]QueuedReplication, error)
+	SettleReplicationQueue(ctx context.Context, q *QueuedReplication) error
+	RetryReplicationQueue(ctx context.Context, q *QueuedReplication, nextRetry time.Time) error
+	CountReplicationQueue(ctx context.Context) (ReplicationBacklog, error)
+	UseReplicationFactor(factor func() int)
+	ReplicationFactor() int
 }
 
 // CleanupStore defines the cleanup queue lifecycle. Rows are queued by the

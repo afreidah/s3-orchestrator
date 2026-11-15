@@ -945,22 +945,71 @@ func TestStoreInt_LedgerStats_CountsAndUnhashed(t *testing.T) {
 // REPLICATION QUERIES
 // -------------------------------------------------------------------------
 
-// TestStoreInt_ReplicationQueries verifies the under/over-replication
-// queries run and CountOverReplicated returns a non-error count.
-func TestStoreInt_ReplicationQueries(t *testing.T) {
+// dueKey reads every due key on side and returns key's entry and whether it
+// was due. The fixture is shared, so other tests' keys may be queued too.
+func dueKey(t *testing.T, s *Store, key string, excluded []string, side core.ReplicationDirection) (core.QueuedReplication, bool) {
+	t.Helper()
+	due, err := s.ListReplicationQueue(context.Background(), side, 100000, excluded)
+	if err != nil {
+		t.Fatalf("ListReplicationQueue: %v", err)
+	}
+	i := slices.IndexFunc(due, func(q core.QueuedReplication) bool { return q.Key == key })
+	if i < 0 {
+		return core.QueuedReplication{}, false
+	}
+	return due[i], true
+}
+
+// queuedKey rebuilds the replication queue at factor and reads key's entry on
+// side, as dueKey does.
+func queuedKey(t *testing.T, s *Store, key string, factor int, excluded []string, side core.ReplicationDirection) (core.QueuedReplication, bool) {
+	t.Helper()
+	if _, err := s.RebuildReplicationQueue(context.Background(), factor, excluded); err != nil {
+		t.Fatalf("RebuildReplicationQueue(%d): %v", factor, err)
+	}
+	return dueKey(t, s, key, excluded, side)
+}
+
+// TestStoreInt_ReplicationQueue_SettleAndRetryMatchTheVersionRead verifies a
+// rebuilt key is read with its counts, comes back after a retry with one more
+// attempt, survives a settle at a version a newer write replaced, and is
+// dropped by a settle at its current version.
+func TestStoreInt_ReplicationQueue_SettleAndRetryMatchTheVersionRead(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
-	if _, err := s.GetUnderReplicatedObjects(ctx, 2, 100, nil); err != nil {
-		t.Errorf("GetUnderReplicatedObjects: %v", err)
+	key := uniqueKey(t, "k")
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a"}}}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.GetUnderReplicatedObjects(ctx, 2, 100, []string{"backend-c"}); err != nil {
-		t.Errorf("GetUnderReplicatedObjects excluding: %v", err)
+
+	q, ok := queuedKey(t, s, key, 2, nil, core.ReplicationShort)
+	if !ok || q.Live != 1 || q.Held != 1 || q.Attempts != 0 {
+		t.Fatalf("read = %+v (due %v), want one copy and no attempts", q, ok)
 	}
-	if _, err := s.GetOverReplicatedObjects(ctx, 1, 100); err != nil {
-		t.Errorf("GetOverReplicatedObjects: %v", err)
+	if err := s.RetryReplicationQueue(ctx, &q, time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("RetryReplicationQueue: %v", err)
 	}
-	if _, err := s.CountReplicationBacklog(ctx, 1); err != nil {
-		t.Errorf("CountReplicationBacklog: %v", err)
+	retried, ok := dueKey(t, s, key, nil, core.ReplicationShort)
+	if !ok || retried.Attempts != 1 || retried.Version != q.Version {
+		t.Fatalf("read after retry = %+v (due %v), want one attempt at the same version", retried, ok)
+	}
+
+	requeued, ok := queuedKey(t, s, key, 2, nil, core.ReplicationShort)
+	if !ok || requeued.Version == retried.Version {
+		t.Fatalf("read after a rebuild = %+v (due %v), want a new version", requeued, ok)
+	}
+	if err := s.SettleReplicationQueue(ctx, &retried); err != nil {
+		t.Fatalf("SettleReplicationQueue(stale): %v", err)
+	}
+	if n := pgCount(t, s, `SELECT COUNT(*) FROM replication_queue WHERE object_key = $1`, key); n != 1 {
+		t.Errorf("rows after a stale settle = %d, want the key kept", n)
+	}
+	if err := s.SettleReplicationQueue(ctx, &requeued); err != nil {
+		t.Fatalf("SettleReplicationQueue: %v", err)
+	}
+	if n := pgCount(t, s, `SELECT COUNT(*) FROM replication_queue WHERE object_key = $1`, key); n != 0 {
+		t.Errorf("rows after the settle = %d, want none", n)
 	}
 }
 
@@ -997,28 +1046,11 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	// The fixture is shared, so other tests' keys may be under-replicated;
-	// the assertion is about this key alone.
-	for _, tc := range []struct {
-		name  string
-		query func() ([]core.ObjectLocation, error)
-	}{
-		{"nothing excluded", func() ([]core.ObjectLocation, error) {
-			return s.GetUnderReplicatedObjects(ctx, 3, 1000, nil)
-		}},
-		{"backend-d excluded", func() ([]core.ObjectLocation, error) {
-			return s.GetUnderReplicatedObjects(ctx, 3, 1000, []string{"backend-d"})
-		}},
-	} {
-		under, err := tc.query()
-		if err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
-		}
-		for _, loc := range under {
-			if loc.ObjectKey == key {
-				t.Errorf("%s: key reported under-replicated at factor 3 with one copy recorded and two intents live", tc.name)
-				break
-			}
+	// The fixture is shared, so other tests' keys may be queued; the
+	// assertion is about this key alone.
+	for name, excluded := range map[string][]string{"nothing excluded": nil, "backend-d excluded": {"backend-d"}} {
+		if q, queued := queuedKey(t, s, key, 3, excluded, core.ReplicationShort); queued {
+			t.Errorf("%s: key queued short at factor 3 with one copy recorded and two intents live: %+v", name, q)
 		}
 	}
 }

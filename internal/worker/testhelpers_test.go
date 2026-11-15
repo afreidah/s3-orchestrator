@@ -17,7 +17,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -195,7 +197,7 @@ var (
 // verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate
 // set its integrity section and pass their own decoders through ReplicatorDeps.
 func newTestReplicator(f Fleet, store ReplicatorStore) *Replicator {
-	return NewReplicator(&ReplicatorDeps{Fleet: f, Store: store, Config: defaultReplication, Integrity: defaultIntegrity})
+	return NewReplicator(&ReplicatorDeps{Fleet: f, Store: store, Queue: NewReplicationQueue(store), Config: defaultReplication, Integrity: defaultIntegrity})
 }
 
 // admitClaims has pl accept every copy-target claim, recording each intent
@@ -298,6 +300,12 @@ type mockMetadataStore struct {
 	overReplicated      []core.ObjectLocation
 	overReplicatedErr   error
 	overReplicatedCount int64
+	replicationFactor   int
+	queueMu             sync.Mutex
+	settledKeys         []string
+	retriedKeys         []string
+	releaseErr          error
+	rebuilds            int
 	quotaStats          map[string]core.QuotaStat
 	quotaStatsErr       error
 	placeCopySize       int64
@@ -539,11 +547,103 @@ func expectUsage(ops *MockOps, tracker *counter.UsageTracker) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
-	return withPaths(m.underReplicated), m.underReplicatedErr
+// ListReplicationQueue hands out the test-set under- or over-replicated rows
+// as queued keys, each counted by its rows and live outside excluded.
+func (m *mockMetadataStore) ListReplicationQueue(_ context.Context, side core.ReplicationDirection, _ int, excluded []string) ([]core.QueuedReplication, error) {
+	rows, err := m.overReplicated, m.overReplicatedErr
+	if side == core.ReplicationShort {
+		rows, err = m.underReplicated, m.underReplicatedErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return queuedFrom(side, rows, excluded), nil
 }
+
+// queuedFrom groups rows into the keys a read of side hands out, each counted
+// by its rows and live outside excluded.
+func queuedFrom(side core.ReplicationDirection, rows []core.ObjectLocation, excluded []string) []core.QueuedReplication {
+	grouped := core.GroupByKey(rows)
+	out := make([]core.QueuedReplication, 0, len(grouped))
+	for _, key := range slices.Sorted(maps.Keys(grouped)) {
+		copies := grouped[key]
+		live := len(copies)
+		for i := range copies {
+			if slices.Contains(excluded, copies[i].BackendName) {
+				live--
+			}
+		}
+		out = append(out, core.QueuedReplication{Key: key, Direction: side, Live: live, Held: len(copies)})
+	}
+	return out
+}
+
+// expectQueued has store hand out rows as the queued keys on side, with each
+// key's copies, or fail the read with err.
+func expectQueued(store *storetest.MockMetadataStore, side core.ReplicationDirection, rows []core.ObjectLocation, err error) {
+	store.EXPECT().ListReplicationQueue(gomock.Any(), side, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ core.ReplicationDirection, _ int, excluded []string) ([]core.QueuedReplication, error) {
+			if err != nil {
+				return nil, err
+			}
+			return queuedFrom(side, rows, excluded), nil
+		}).AnyTimes()
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string) ([]core.ObjectLocation, error) {
+			return rowsFor(rows, key), nil
+		}).AnyTimes()
+}
+
+// rowsFor returns key's rows among rows, each at its storage path, as the
+// store reads a key's copies back.
+func rowsFor(rows []core.ObjectLocation, key string) []core.ObjectLocation {
+	var copies []core.ObjectLocation
+	for i := range rows {
+		if rows[i].ObjectKey == key {
+			copies = append(copies, rows[i])
+		}
+	}
+	return withPaths(copies)
+}
+
+// SettleReplicationQueue records the key a pass brought back to the factor,
+// or fails with the test-set release error.
+func (m *mockMetadataStore) SettleReplicationQueue(_ context.Context, q *core.QueuedReplication) error {
+	m.queueMu.Lock()
+	defer m.queueMu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
+	m.settledKeys = append(m.settledKeys, q.Key)
+	return nil
+}
+
+// RetryReplicationQueue records the key a pass left off the factor, or fails
+// with the test-set release error.
+func (m *mockMetadataStore) RetryReplicationQueue(_ context.Context, q *core.QueuedReplication, _ time.Time) error {
+	m.queueMu.Lock()
+	defer m.queueMu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
+	m.retriedKeys = append(m.retriedKeys, q.Key)
+	return nil
+}
+
+// RebuildReplicationQueue counts the rebuilds a pass asked for.
+func (m *mockMetadataStore) RebuildReplicationQueue(context.Context, int, []string) (int64, error) {
+	m.queueMu.Lock()
+	defer m.queueMu.Unlock()
+	m.rebuilds++
+	return 0, nil
+}
+
+// ReplicationFactor reports the test-set factor the store's writes queue
+// against; zero means none, so every pass rebuilds.
+func (m *mockMetadataStore) ReplicationFactor() int { return m.replicationFactor }
+
+// UseReplicationFactor is a no-op on mockMetadataStore.
+func (m *mockMetadataStore) UseReplicationFactor(func() int) {}
 
 // GetQuotaStats is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
@@ -561,15 +661,9 @@ func (m *mockMetadataStore) PlaceCopy(_ context.Context, p *core.Placement) (int
 	return m.placeCopySize, nil, nil
 }
 
-// GetOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return withPaths(m.overReplicated), m.overReplicatedErr
-}
-
-// CountReplicationBacklog is a stub on mockMetadataStore; reports the test-set
+// CountReplicationQueue is a stub on mockMetadataStore; reports the test-set
 // over-replicated count.
-func (m *mockMetadataStore) CountReplicationBacklog(_ context.Context, _ int) (core.ReplicationBacklog, error) {
+func (m *mockMetadataStore) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
 	return core.ReplicationBacklog{Over: m.overReplicatedCount}, nil
 }
 
@@ -593,10 +687,13 @@ func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string,
 	return withPaths(out), nil
 }
 
-// GetAllObjectLocations is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]core.ObjectLocation, error) {
-	return withPaths(m.allLocations), m.allLocationsErr
+// GetAllObjectLocations returns the test-set copies when a test sets them, or
+// else key's rows among the under- and over-replicated fixtures.
+func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, key string) ([]core.ObjectLocation, error) {
+	if m.allLocations != nil || m.allLocationsErr != nil {
+		return withPaths(m.allLocations), m.allLocationsErr
+	}
+	return rowsFor(slices.Concat(m.underReplicated, m.overReplicated), key), nil
 }
 
 // GetObjectBackendsForKeys is a stub on mockMetadataStore; returns either the test-set

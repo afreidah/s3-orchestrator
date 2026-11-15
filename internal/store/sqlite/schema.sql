@@ -225,6 +225,20 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_claim
     ON cleanup_queue(next_retry, created_at) WHERE attempts < 10;
 
+-- The keys whose copies plus live intents are off the replication factor.
+-- direction is -1 for a key short of the factor and 1 for one past it.
+CREATE TABLE IF NOT EXISTS replication_queue (
+    object_key  TEXT PRIMARY KEY,
+    direction   INTEGER NOT NULL,
+    attempts    INT NOT NULL DEFAULT 0,
+    next_retry  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    version     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_replication_queue_due
+    ON replication_queue (direction, next_retry);
+
 -- size_bytes rides last so backend_capacity's orphan sum runs from the index.
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_backend_storage_key
     ON cleanup_queue(backend_name, storage_key, size_bytes);
@@ -439,4 +453,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (35);
+INSERT INTO schema_version (version) VALUES (36);

@@ -300,6 +300,32 @@ func (a *pgTxAdapter) AdjustQuotaStripes(ctx context.Context, charges ...core.St
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// REPLICATION TX OPERATIONS
+// -------------------------------------------------------------------------
+
+// QueueReplication queues keys the transaction knows the side of, in one
+// statement.
+func (a *pgTxAdapter) QueueReplication(ctx context.Context, keys []string, directions []core.ReplicationDirection) error {
+	sides := make([]int16, len(directions))
+	for i, d := range directions {
+		sides[i] = int16(d)
+	}
+	if err := a.q.QueueReplication(ctx, db.QueueReplicationParams{ObjectKeys: keys, Directions: sides}); err != nil {
+		return fmt.Errorf("queue replication: %w", err)
+	}
+	return nil
+}
+
+// QueueOffFactor counts the keys and queues those off factor, in one
+// statement.
+func (a *pgTxAdapter) QueueOffFactor(ctx context.Context, factor int, keys ...string) error {
+	if err := a.q.QueueOffFactor(ctx, db.QueueOffFactorParams{Factor: int64(factor), ObjectKeys: keys}); err != nil {
+		return fmt.Errorf("queue off-factor keys: %w", err)
+	}
+	return nil
+}
+
 // AcquireBackendLock serializes the claims on backends with a byte ceiling for
 // the rest of the transaction, in one statement and in byte order; an unlimited
 // backend takes no lock.

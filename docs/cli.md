@@ -190,6 +190,10 @@ s3-orchestrator admin cache-invalidate-prefix -prefix bucket/path/
 # Trigger one replication cycle (creates missing replicas)
 s3-orchestrator admin replicate
 
+# Rebuild the replication queue from the object ledger, and report how many
+# keys it found off the factor
+s3-orchestrator admin replication-rebuild
+
 # Trigger one rebalance cycle (redistribute objects across backends per the
 # configured strategy; falls back to "spread" with defaults when unconfigured)
 s3-orchestrator admin rebalance
@@ -581,7 +585,7 @@ Deleting a directory removes everything under it, so the confirmation states how
 
 Downloads and uploads move real bytes, so the status line reports the progress (`downloading bucket/db.sql   45.2 MiB / 120.0 MiB (37%)`) while the interface stays responsive. A download writes to a temporary file beside its destination and renames it into place only once the whole body has landed, so an interrupted transfer leaves nothing where a complete file would be - a failure reports what went wrong rather than leaving a truncated file to be discovered later.
 
-The **Ops** section, reached with `o`, is the full menu, grouped by kind: the maintenance passes (rebalance, replicate under-replicated objects, clean over-replicated copies, scrub, backfill checksums, reconcile metadata, reconcile usage counters, flush usage counters to the database, expire objects by lifecycle rule, purge unreadable copies), cache control (flush the cache, invalidate one key, invalidate a prefix), the encryption transitions (encrypt existing, decrypt existing, rotate the encryption key), and the compression transitions (compress existing, decompress existing, each with a batch variant). Accepting the confirmation switches to a scrolling output pane immediately, so an operation that takes minutes reports that it started rather than leaving the menu live until it finishes.
+The **Ops** section, reached with `o`, is the full menu, grouped by kind: the maintenance passes (rebalance, replicate under-replicated objects, clean over-replicated copies, rebuild the replication queue, scrub, backfill checksums, reconcile metadata, reconcile usage counters, flush usage counters to the database, expire objects by lifecycle rule, purge unreadable copies), cache control (flush the cache, invalidate one key, invalidate a prefix), the encryption transitions (encrypt existing, decrypt existing, rotate the encryption key), and the compression transitions (compress existing, decompress existing, each with a batch variant). Accepting the confirmation switches to a scrolling output pane immediately, so an operation that takes minutes reports that it started rather than leaving the menu live until it finishes.
 
 An entry ending in `...` asks for a value first: the key or prefix to invalidate, or the key id to rotate away from. Type it and press `enter`, or `esc` to abandon the action. An empty value is refused in the prompt rather than sent, since the endpoints that take one reject an empty value on purpose. Rotation still confirms after the key id is entered; cache invalidation does not, because the value typed is itself the statement of intent and nothing is lost but a cached copy.
 

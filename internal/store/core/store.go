@@ -103,7 +103,7 @@ func ClaimInRankOrder(ctx context.Context, intents []*PendingObject, ranked []st
 // rows are returned for the caller to settle.
 func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, error) {
 	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[PendingPromoteResult], error) {
-		return promotePendingTx(ctx, tx, p)
+		return promotePendingTx(ctx, o.edit(tx), p)
 	})
 	if err != nil {
 		// Ambiguous is the safe result for a caller that inspects it before err.
@@ -118,7 +118,7 @@ func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPro
 // queued for the copy's bytes.
 func (o TxOps) CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, error) {
 	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (outcome[CompanionCommitResult], error) {
-		return commitCompanionTx(ctx, tx, p)
+		return commitCompanionTx(ctx, o.edit(tx), p)
 	})
 	if err != nil {
 		// The zero value with nothing queued, so a caller that reaches the

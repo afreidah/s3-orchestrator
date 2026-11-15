@@ -319,29 +319,29 @@ func (f *FailableStore) LedgerStats(ctx context.Context) (core.LedgerStats, erro
 	return f.inner.LedgerStats(ctx)
 }
 
-// GetUnderReplicatedObjects finds keys short of the factor unless the
-// fault fails the call.
-func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
-	if err := f.fail("GetUnderReplicatedObjects", ""); err != nil {
-		return nil, err
-	}
-	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit, excluded)
-}
-
-// GetOverReplicatedObjects finds keys past the factor unless the fault
+// RebuildReplicationQueue queues every key off the factor unless the fault
 // fails the call.
-func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
-	if err := f.fail("GetOverReplicatedObjects", ""); err != nil {
-		return nil, err
+func (f *FailableStore) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+	if err := f.fail("RebuildReplicationQueue", ""); err != nil {
+		return 0, err
 	}
-	return f.inner.GetOverReplicatedObjects(ctx, factor, limit)
+	return f.inner.RebuildReplicationQueue(ctx, factor, excluded)
 }
 
-// CountReplicationBacklog counts keys off the factor unless the fault fails
-// the call.
-func (f *FailableStore) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
-	if err := f.fail("CountReplicationBacklog", ""); err != nil {
+// ListReplicationQueue reads a side's due keys unless the fault fails the
+// call.
+func (f *FailableStore) ListReplicationQueue(ctx context.Context, direction core.ReplicationDirection, limit int, excluded []string) ([]core.QueuedReplication, error) {
+	if err := f.fail("ListReplicationQueue", ""); err != nil {
+		return nil, err
+	}
+	return f.inner.ListReplicationQueue(ctx, direction, limit, excluded)
+}
+
+// CountReplicationQueue counts the queued keys unless the fault fails the
+// call.
+func (f *FailableStore) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
+	if err := f.fail("CountReplicationQueue", ""); err != nil {
 		return core.ReplicationBacklog{}, err
 	}
-	return f.inner.CountReplicationBacklog(ctx, factor)
+	return f.inner.CountReplicationQueue(ctx)
 }

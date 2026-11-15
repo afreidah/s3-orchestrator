@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -51,11 +52,13 @@ import (
 func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Workers)) *ops.Services {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	// The handler drives real workers, whose passes read the ledger. These are
-	// incidental to the wrapper-closure behaviour under test.
-	mock.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	mock.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	mock.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).Return(core.ReplicationBacklog{}, nil).AnyTimes()
+	// The handler drives real workers, whose passes read the replication queue
+	// and the ledger. These are incidental to the wrapper-closure behaviour
+	// under test.
+	mock.EXPECT().ReplicationFactor().Return(0).AnyTimes()
+	mock.EXPECT().RebuildReplicationQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mock.EXPECT().ListReplicationQueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().CountReplicationQueue(gomock.Any()).Return(core.ReplicationBacklog{}, nil).AnyTimes()
 	mock.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
 	mock.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
@@ -63,8 +66,8 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetUsageSince(gomock.Any(), gomock.Any()).Return(map[string]core.WorkloadUsage{}, nil).AnyTimes()
 	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	// An operator-triggered scrub runs under the advisory lock, so the dashboard
-	// only reaches the scrubber when the lock is granted.
+	// An operator-triggered scrub or replication pass runs under its advisory
+	// lock, so the dashboard only reaches the worker when the lock is granted.
 	mock.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
 			return true, fn(ctx)
@@ -306,6 +309,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 		Replicator: repl,
 		OverRep:    over,
 		Backlog:    storetest.NewMockMetadataStore(ctrl),
+		Locker:     testx.Locker{},
 		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2, BatchSize: 10}}),
 	})
 }

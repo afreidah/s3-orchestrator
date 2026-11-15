@@ -55,7 +55,7 @@ func (fakeReplicationDeps) GetActiveMultipartCounts(context.Context) (map[string
 func (fakeReplicationDeps) GetUsageSince(context.Context, map[string]time.Time) (map[string]core.WorkloadUsage, error) {
 	return nil, nil
 }
-func (f fakeReplicationDeps) CountReplicationBacklog(context.Context, int) (core.ReplicationBacklog, error) {
+func (f fakeReplicationDeps) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
 	return core.ReplicationBacklog{Under: f.under, Over: f.over}, nil
 }
 

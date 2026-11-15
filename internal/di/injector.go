@@ -117,6 +117,7 @@ func registerBackendStack(inj do.Injector) {
 // Reconciler registers only in worker-side modes.
 func registerWorkers(inj do.Injector, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
+	do.Provide(inj, ProvideReplicationQueue)
 	do.Provide(inj, ProvideReplicator)
 	do.Provide(inj, ProvideOverReplicationCleaner)
 	do.Provide(inj, ProvideCleanupWorker)

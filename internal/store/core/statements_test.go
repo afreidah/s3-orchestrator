@@ -26,19 +26,21 @@ import (
 type statementCountTx struct {
 	noopTxAdapter
 
-	copies   []ExistingCopy
-	parts    []MultipartPart
-	replaced *MultipartPart
-	lost     bool
-	inserts  int
-	clears   int
-	charges  int
-	order    []string
+	copies     []ExistingCopy
+	parts      []MultipartPart
+	replaced   *MultipartPart
+	lost       bool
+	inserts    int
+	clears     int
+	replicates int
+	charges    int
+	order      []string
 }
 
 // The writes statementCountTx records the order of.
 const (
 	stmtQueue         = "queue cleanup"
+	stmtReplicate     = "queue replication"
 	stmtClear         = "clear intents"
 	stmtCharge        = "charge stripes"
 	stmtDeletePending = "delete intent"
@@ -109,6 +111,18 @@ func (s *statementCountTx) InsertCleanup(ctx context.Context, requests ...*Clean
 	return s.noopTxAdapter.InsertCleanup(ctx, requests...)
 }
 
+func (s *statementCountTx) QueueReplication(context.Context, []string, []ReplicationDirection) error {
+	s.replicates++
+	s.order = append(s.order, stmtReplicate)
+	return nil
+}
+
+func (s *statementCountTx) QueueOffFactor(context.Context, int, ...string) error {
+	s.replicates++
+	s.order = append(s.order, stmtReplicate)
+	return nil
+}
+
 func (s *statementCountTx) ClearPendingForKey(context.Context, []string, ...string) ([]SupersededIntent, error) {
 	s.clears++
 	s.order = append(s.order, stmtClear)
@@ -127,9 +141,10 @@ func (s *statementCountTx) DeletePending(context.Context, string) error {
 }
 
 // TestLedgerChanges_QueueOnceAndChargeLast verifies every transaction that
-// changes the ledger queues its cleanup rows and charges its stripes in one
-// statement each, the charge after every other write so its rows are held only
-// until the commit.
+// changes the ledger at a factor that replicates queues its cleanup rows and
+// charges its stripes in one statement each, and queues replication in at most
+// two, the charge after every other write so its rows are held only until the
+// commit.
 func TestLedgerChanges_QueueOnceAndChargeLast(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -193,7 +208,9 @@ func TestLedgerChanges_QueueOnceAndChargeLast(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if err := tc.run(stubOps(tc.stub)); err != nil {
+			ops := stubOps(tc.stub)
+			ops.UseReplicationFactor(func() int { return 2 })
+			if err := tc.run(ops); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
 			tc.stub.requireQueuedOnceChargedLast(t)
@@ -215,11 +232,16 @@ func placeRun(ctx context.Context, source *ObjectLocation, intent *PendingObject
 }
 
 // requireQueuedOnceChargedLast fails unless the transaction queued its cleanup
-// rows and charged its stripes in at most one statement each, the charge last.
+// rows and charged its stripes in at most one statement each, queued
+// replication in at most two (the keys it knows and the ones it counts), and
+// charged last.
 func (s *statementCountTx) requireQueuedOnceChargedLast(t *testing.T) {
 	t.Helper()
 	if s.inserts > 1 || s.charges > 1 {
 		t.Errorf("queued %d times and charged %d times, want at most once each: %v", s.inserts, s.charges, s.order)
+	}
+	if s.replicates > 2 {
+		t.Errorf("queued replication %d times, want at most twice: %v", s.replicates, s.order)
 	}
 	if i := slices.Index(s.order, stmtCharge); i >= 0 && i != len(s.order)-1 {
 		t.Errorf("writes = %v, want the stripe charge last", s.order)

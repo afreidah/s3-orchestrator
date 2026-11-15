@@ -25,19 +25,18 @@ import (
 // promotePendingTx is the transactional body of PromotePending: claim the
 // intent under the key lock, decide it against the locked copy set, and commit
 // the edit.
-func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (outcome[PendingPromoteResult], error) {
-	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
+func promotePendingTx(ctx context.Context, e *ledgerEdit, p *PendingObject) (outcome[PendingPromoteResult], error) {
+	claimed, err := keyIntentsHeld(ctx, e.tx, p.ObjectKey, p.IntentID)
 	if err != nil {
 		return outcome[PendingPromoteResult]{}, err
 	}
 	if !claimed {
 		return outcome[PendingPromoteResult]{result: PendingPromoteAlreadyResolved}, nil
 	}
-	existing, err := tx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
+	existing, err := e.tx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
 	if err != nil {
 		return outcome[PendingPromoteResult]{}, err
 	}
-	e := newLedgerEdit(tx)
 	result, err := promote(ctx, e, p, existing)
 	if err != nil {
 		return outcome[PendingPromoteResult]{}, err
@@ -80,8 +79,8 @@ func commitPromotion(ctx context.Context, e *ledgerEdit, p *PendingObject, exist
 func resolveCompanion(ctx context.Context, e *ledgerEdit, p *PendingObject, existing []ExistingCopy) (PendingPromoteResult, error) {
 	for _, ec := range existing {
 		if ec.BackendName == p.BackendName && ec.StorageKey == p.StorageKey {
-			if err := e.tx.DeletePending(ctx, p.IntentID); err != nil {
-				return PendingPromoteCompanionKept, fmt.Errorf("delete companion pending row: %w", err)
+			if err := e.resolveIntent(ctx, p.ObjectKey, p.IntentID); err != nil {
+				return PendingPromoteCompanionKept, fmt.Errorf("kept companion: %w", err)
 			}
 			return PendingPromoteCompanionKept, nil
 		}
@@ -96,12 +95,11 @@ func resolveCompanion(ctx context.Context, e *ledgerEdit, p *PendingObject, exis
 // commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
 // key, claim the intent, and either add the copy or discard it. Any newer write
 // clears this intent, so a successful claim proves nothing newer took the key.
-func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (outcome[CompanionCommitResult], error) {
-	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
+func commitCompanionTx(ctx context.Context, e *ledgerEdit, p *PendingObject) (outcome[CompanionCommitResult], error) {
+	claimed, err := keyIntentsHeld(ctx, e.tx, p.ObjectKey, p.IntentID)
 	if err != nil {
 		return outcome[CompanionCommitResult]{}, err
 	}
-	e := newLedgerEdit(tx)
 	if !claimed {
 		// The upload was overtaken. Its bytes sit at a path no other write
 		// shares, and nothing is debited because they were never recorded.
@@ -121,8 +119,8 @@ func recordIntent(ctx context.Context, e *ledgerEdit, p *PendingObject) error {
 	if err := e.insertCopy(ctx, loc); err != nil {
 		return fmt.Errorf("record %s: %w", p.RoleOrDefault(), err)
 	}
-	if err := e.tx.DeletePending(ctx, p.IntentID); err != nil {
-		return fmt.Errorf("delete %s pending row: %w", p.RoleOrDefault(), err)
+	if err := e.resolveIntent(ctx, p.ObjectKey, p.IntentID); err != nil {
+		return fmt.Errorf("record %s: %w", p.RoleOrDefault(), err)
 	}
 	return nil
 }
@@ -141,7 +139,7 @@ func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason stri
 		if err != nil || !claimed {
 			return nil, err
 		}
-		e := newLedgerEdit(tx)
+		e := o.edit(tx)
 		if err := e.dropIntent(ctx, p, reason); err != nil {
 			return nil, err
 		}

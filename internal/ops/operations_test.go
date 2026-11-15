@@ -1153,22 +1153,17 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 	}
 }
 
-// TestCountSurplus_ReportsBacklog asserts the surplus count is answered at the
-// running factor, and declines when replication is meaningless.
+// TestCountSurplus_ReportsBacklog asserts the surplus count is the queue's over
+// side, reported with the running factor.
 func TestCountSurplus_ReportsBacklog(t *testing.T) {
 	t.Parallel()
-	var askedFactor int
 	svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
 		opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
-		backlogFunc(func(_ context.Context, factor int) (core.ReplicationBacklog, error) {
-			askedFactor = factor
+		backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
 			return core.ReplicationBacklog{Under: 3, Over: 7}, nil
 		}))
 
 	res, err := svc.CountSurplus(context.Background())
-	if askedFactor != 2 {
-		t.Errorf("counted at factor %d, want the running 2", askedFactor)
-	}
 	if err != nil {
 		t.Fatalf("CountSurplus: %v", err)
 	}
@@ -1255,33 +1250,99 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 	}
 }
 
+// TestReplication_RebuildQueueReportsWhatItQueued asserts a rebuild runs at the
+// running factor and reports it with the keys the replicator queued, and
+// declines when replication is meaningless.
+func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
+	t.Parallel()
+	repl := opstest.NewMockReplicator(gomock.NewController(t))
+	repl.EXPECT().RebuildQueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig) (int64, error) {
+			return int64(cfg.Factor * 10), nil
+		}).Times(1)
+	svc := replicationOver(t, repl, opstest.NewMockOverReplicationCleaner(gomock.NewController(t)))
+
+	res, err := svc.RebuildQueue(context.Background())
+	if err != nil || res != (QueueRebuild{Factor: 2, Queued: 20}) {
+		t.Errorf("RebuildQueue = %+v, %v; want factor 2 and 20 queued", res, err)
+	}
+
+	off := NewReplication(ReplicationDeps{
+		Replicator: repl, OverRep: opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
+		Backlog: emptyBacklog, Locker: testx.Locker{}, Config: config.NewLive(&config.Config{}),
+	})
+	if _, err := off.RebuildQueue(context.Background()); !errors.Is(err, ErrReplicationDisabled) {
+		t.Errorf("RebuildQueue at factor 1 err = %v, want ErrReplicationDisabled", err)
+	}
+}
+
+// TestReplication_PassesDeclineWhileADrainHoldsTheLock asserts a manual
+// replicate, clean-excess or rebuild reports ErrReplicationInProgress without
+// running while the replicator's lock is held, and surfaces a failed lock
+// call.
+func TestReplication_PassesDeclineWhileADrainHoldsTheLock(t *testing.T) {
+	t.Parallel()
+	lockErr := errors.New("lock store down")
+	for _, tc := range []struct {
+		name    string
+		locker  testx.Locker
+		wantErr error
+	}{
+		{"held", testx.Locker{Busy: true}, ErrReplicationInProgress},
+		{"lock call failed", testx.Locker{Err: lockErr}, lockErr},
+	} {
+		ctrl := gomock.NewController(t)
+		repl, over := opstest.NewMockReplicator(ctrl), opstest.NewMockOverReplicationCleaner(ctrl)
+		svc := NewReplication(ReplicationDeps{
+			Replicator: repl,
+			OverRep:    over,
+			Backlog:    emptyBacklog,
+			Locker:     tc.locker,
+			Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
+		})
+		if _, err := svc.Replicate(context.Background(), nil); !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: Replicate err = %v, want %v", tc.name, err, tc.wantErr)
+		}
+		if _, err := svc.CleanExcess(context.Background(), 0, nil); !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: CleanExcess err = %v, want %v", tc.name, err, tc.wantErr)
+		}
+		if _, err := svc.RebuildQueue(context.Background()); !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: RebuildQueue err = %v, want %v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+// emptyBacklog reports an empty replication queue.
+var emptyBacklog = backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
+	return core.ReplicationBacklog{}, nil
+})
+
 // replicationOver builds a replication service over the two stubbed workers,
 // running at factor 2 over an empty backlog.
 func replicationOver(t *testing.T, repl Replicator, over OverReplicationCleaner) *Replication {
 	t.Helper()
-	return replicationCounting(t, repl, over, backlogFunc(func(context.Context, int) (core.ReplicationBacklog, error) {
-		return core.ReplicationBacklog{}, nil
-	}))
+	return replicationCounting(t, repl, over, emptyBacklog)
 }
 
 // replicationCounting builds a replication service whose backlog count
-// comes from backlog, running at factor 2.
+// comes from backlog, running at factor 2 under a lock it always takes.
 func replicationCounting(t *testing.T, repl Replicator, over OverReplicationCleaner, backlog BacklogCounter) *Replication {
 	t.Helper()
 	return NewReplication(ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,
 		Backlog:    backlog,
+		Locker:     testx.Locker{},
 		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 	})
 }
 
 // backlogFunc adapts a function to BacklogCounter.
-type backlogFunc func(ctx context.Context, factor int) (core.ReplicationBacklog, error)
+type backlogFunc func(ctx context.Context) (core.ReplicationBacklog, error)
 
-// CountReplicationBacklog calls the function.
-func (f backlogFunc) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
-	return f(ctx, factor)
+// CountReplicationQueue calls the function.
+func (f backlogFunc) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
+	return f(ctx)
 }
 
 // TestDecryptExisting_EmptyStore asserts the reverse pass shares the driver
@@ -1463,7 +1524,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 		t.Parallel()
 		svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
 			opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
-			backlogFunc(func(context.Context, int) (core.ReplicationBacklog, error) {
+			backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
 				return core.ReplicationBacklog{}, errBackend
 			}))
 

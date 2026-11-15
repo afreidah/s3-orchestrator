@@ -308,19 +308,19 @@ func (mr *MockMetadataStoreMockRecorder) CountObjectsByPrefix(ctx, prefix any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectsByPrefix", reflect.TypeOf((*MockMetadataStore)(nil).CountObjectsByPrefix), ctx, prefix)
 }
 
-// CountReplicationBacklog mocks base method.
-func (m *MockMetadataStore) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
+// CountReplicationQueue mocks base method.
+func (m *MockMetadataStore) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountReplicationBacklog", ctx, factor)
+	ret := m.ctrl.Call(m, "CountReplicationQueue", ctx)
 	ret0, _ := ret[0].(core.ReplicationBacklog)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CountReplicationBacklog indicates an expected call of CountReplicationBacklog.
-func (mr *MockMetadataStoreMockRecorder) CountReplicationBacklog(ctx, factor any) *gomock.Call {
+// CountReplicationQueue indicates an expected call of CountReplicationQueue.
+func (mr *MockMetadataStoreMockRecorder) CountReplicationQueue(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationBacklog", reflect.TypeOf((*MockMetadataStore)(nil).CountReplicationBacklog), ctx, factor)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).CountReplicationQueue), ctx)
 }
 
 // CountScrubCandidatesOnBackends mocks base method.
@@ -672,21 +672,6 @@ func (mr *MockMetadataStoreMockRecorder) GetObjectTags(ctx, key any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectTags), ctx, key)
 }
 
-// GetOverReplicatedObjects mocks base method.
-func (m *MockMetadataStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetOverReplicatedObjects", ctx, factor, limit)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetOverReplicatedObjects indicates an expected call of GetOverReplicatedObjects.
-func (mr *MockMetadataStoreMockRecorder) GetOverReplicatedObjects(ctx, factor, limit any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOverReplicatedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetOverReplicatedObjects), ctx, factor, limit)
-}
-
 // GetPendingCleanups mocks base method.
 func (m *MockMetadataStore) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
@@ -745,21 +730,6 @@ func (m *MockMetadataStore) GetStalePending(ctx context.Context, olderThan time.
 func (mr *MockMetadataStoreMockRecorder) GetStalePending(ctx, olderThan, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStalePending", reflect.TypeOf((*MockMetadataStore)(nil).GetStalePending), ctx, olderThan, limit)
-}
-
-// GetUnderReplicatedObjects mocks base method.
-func (m *MockMetadataStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUnderReplicatedObjects", ctx, factor, limit, excluded)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUnderReplicatedObjects indicates an expected call of GetUnderReplicatedObjects.
-func (mr *MockMetadataStoreMockRecorder) GetUnderReplicatedObjects(ctx, factor, limit, excluded any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnderReplicatedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetUnderReplicatedObjects), ctx, factor, limit, excluded)
 }
 
 // GetUsageSince mocks base method.
@@ -1031,6 +1001,21 @@ func (mr *MockMetadataStoreMockRecorder) ListParts(ctx, uploadID, afterPart, lim
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListParts", reflect.TypeOf((*MockMetadataStore)(nil).ListParts), ctx, uploadID, afterPart, limit)
 }
 
+// ListReplicationQueue mocks base method.
+func (m *MockMetadataStore) ListReplicationQueue(ctx context.Context, direction core.ReplicationDirection, limit int, excluded []string) ([]core.QueuedReplication, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListReplicationQueue", ctx, direction, limit, excluded)
+	ret0, _ := ret[0].([]core.QueuedReplication)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListReplicationQueue indicates an expected call of ListReplicationQueue.
+func (mr *MockMetadataStoreMockRecorder) ListReplicationQueue(ctx, direction, limit, excluded any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).ListReplicationQueue), ctx, direction, limit, excluded)
+}
+
 // ListUsers mocks base method.
 func (m *MockMetadataStore) ListUsers(ctx context.Context) ([]core.User, error) {
 	m.ctrl.T.Helper()
@@ -1166,6 +1151,21 @@ func (mr *MockMetadataStoreMockRecorder) PromotePending(ctx, p any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PromotePending", reflect.TypeOf((*MockMetadataStore)(nil).PromotePending), ctx, p)
 }
 
+// RebuildReplicationQueue mocks base method.
+func (m *MockMetadataStore) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RebuildReplicationQueue", ctx, factor, excluded)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RebuildReplicationQueue indicates an expected call of RebuildReplicationQueue.
+func (mr *MockMetadataStoreMockRecorder) RebuildReplicationQueue(ctx, factor, excluded any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebuildReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).RebuildReplicationQueue), ctx, factor, excluded)
+}
+
 // ReconcileUsage mocks base method.
 func (m *MockMetadataStore) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()
@@ -1268,6 +1268,20 @@ func (mr *MockMetadataStoreMockRecorder) ReplaceObjectTags(ctx, key, tags any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplaceObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).ReplaceObjectTags), ctx, key, tags)
 }
 
+// ReplicationFactor mocks base method.
+func (m *MockMetadataStore) ReplicationFactor() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReplicationFactor")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// ReplicationFactor indicates an expected call of ReplicationFactor.
+func (mr *MockMetadataStoreMockRecorder) ReplicationFactor() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplicationFactor", reflect.TypeOf((*MockMetadataStore)(nil).ReplicationFactor))
+}
+
 // RequeueCleanupDLQ mocks base method.
 func (m *MockMetadataStore) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -1310,6 +1324,20 @@ func (m *MockMetadataStore) RetryNotification(ctx context.Context, id int64, bac
 func (mr *MockMetadataStoreMockRecorder) RetryNotification(ctx, id, backoff, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryNotification", reflect.TypeOf((*MockMetadataStore)(nil).RetryNotification), ctx, id, backoff, lastError)
+}
+
+// RetryReplicationQueue mocks base method.
+func (m *MockMetadataStore) RetryReplicationQueue(ctx context.Context, q *core.QueuedReplication, nextRetry time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RetryReplicationQueue", ctx, q, nextRetry)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RetryReplicationQueue indicates an expected call of RetryReplicationQueue.
+func (mr *MockMetadataStoreMockRecorder) RetryReplicationQueue(ctx, q, nextRetry any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).RetryReplicationQueue), ctx, q, nextRetry)
 }
 
 // RunMigrations mocks base method.
@@ -1368,6 +1396,20 @@ func (m *MockMetadataStore) SetGrant(ctx context.Context, g *core.Grant) error {
 func (mr *MockMetadataStoreMockRecorder) SetGrant(ctx, g any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGrant", reflect.TypeOf((*MockMetadataStore)(nil).SetGrant), ctx, g)
+}
+
+// SettleReplicationQueue mocks base method.
+func (m *MockMetadataStore) SettleReplicationQueue(ctx context.Context, q *core.QueuedReplication) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SettleReplicationQueue", ctx, q)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SettleReplicationQueue indicates an expected call of SettleReplicationQueue.
+func (mr *MockMetadataStoreMockRecorder) SettleReplicationQueue(ctx, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SettleReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).SettleReplicationQueue), ctx, q)
 }
 
 // StartDrain mocks base method.
@@ -1440,6 +1482,18 @@ func (m *MockMetadataStore) UpdateCopyMetadata(ctx context.Context, loc *core.Ob
 func (mr *MockMetadataStoreMockRecorder) UpdateCopyMetadata(ctx, loc, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCopyMetadata", reflect.TypeOf((*MockMetadataStore)(nil).UpdateCopyMetadata), ctx, loc, p)
+}
+
+// UseReplicationFactor mocks base method.
+func (m *MockMetadataStore) UseReplicationFactor(factor func() int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "UseReplicationFactor", factor)
+}
+
+// UseReplicationFactor indicates an expected call of UseReplicationFactor.
+func (mr *MockMetadataStoreMockRecorder) UseReplicationFactor(factor any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UseReplicationFactor", reflect.TypeOf((*MockMetadataStore)(nil).UseReplicationFactor), factor)
 }
 
 // VerifySchemaVersion mocks base method.

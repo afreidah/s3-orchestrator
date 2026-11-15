@@ -140,6 +140,8 @@ func maintenanceActions() []opsAction {
 			"Create the missing copies of under-replicated objects?", nil),
 		post("Clean over-replicated copies", adminapi.PathOverReplication,
 			"Remove over-replicated object copies?", nil),
+		post("Rebuild the replication queue", adminapi.PathReplicationRebuild,
+			"Rebuild the replication queue from the object ledger?", decodeOneShot[replicationRebuildResult]),
 		post("Scrub (verify integrity)", adminapi.PathScrub,
 			"Scrub every object to verify integrity?", nil),
 		post("Backfill checksums", adminapi.PathBackfillChecksums,

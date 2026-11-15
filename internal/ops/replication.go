@@ -5,8 +5,9 @@
 //
 // The two halves of keeping copy counts at the configured factor: a cycle that
 // creates the copies under-replicated objects are missing, and a cycle that
-// removes the surplus copies over-replicated objects carry. Both decline only
-// when replication is meaningless at the running factor.
+// removes the surplus copies over-replicated objects carry. Both run under the
+// replicator's lock, so one never overlaps the replication service's drain, and
+// decline when replication is meaningless at the running factor.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -16,6 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -39,11 +41,19 @@ type SurplusCount struct {
 	Pending int64
 }
 
+// QueueRebuild reports a rebuild of the replication queue: the factor it
+// counted against and how many keys it queued.
+type QueueRebuild struct {
+	Factor int
+	Queued int64
+}
+
 // ReplicationDeps holds the collaborators Replication requires.
 type ReplicationDeps struct {
 	Replicator Replicator
 	OverRep    OverReplicationCleaner
 	Backlog    BacklogCounter
+	Locker     core.AdvisoryLocker
 	Config     *config.Live
 }
 
@@ -59,6 +69,7 @@ func NewReplication(d ReplicationDeps) *Replication {
 	must.NotNil("d.Replicator", d.Replicator)
 	must.NotNil("d.OverRep", d.OverRep)
 	must.NotNil("d.Backlog", d.Backlog)
+	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
 	return &Replication{d: d}
 }
@@ -75,10 +86,12 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	if err != nil {
 		return worker.ReplicationSummary{}, err
 	}
-	return r.d.Replicator.Replicate(ctx, runCfg, observer)
+	return underLock(ctx, r.d.Locker, core.LockReplicator, ErrReplicationInProgress, func(lockCtx context.Context) (worker.ReplicationSummary, error) {
+		return r.d.Replicator.Replicate(lockCtx, runCfg, observer)
+	})
 }
 
-// CountSurplus reports the current over-replication backlog at the running
+// CountSurplus reports the queued over-replication backlog at the running
 // factor.
 func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 	runCfg, err := r.runConfig()
@@ -86,11 +99,25 @@ func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 		return SurplusCount{}, err
 	}
 
-	backlog, err := r.d.Backlog.CountReplicationBacklog(ctx, runCfg.Factor)
+	backlog, err := r.d.Backlog.CountReplicationQueue(ctx)
 	if err != nil {
 		return SurplusCount{}, err
 	}
 	return SurplusCount{Factor: runCfg.Factor, Pending: backlog.Over}, nil
+}
+
+// RebuildQueue rebuilds the replication queue from the ledger at the running
+// factor, for an operator who suspects it drifted, and reports how many keys
+// it queued.
+func (r *Replication) RebuildQueue(ctx context.Context) (QueueRebuild, error) {
+	runCfg, err := r.runConfig()
+	if err != nil {
+		return QueueRebuild{}, err
+	}
+	return underLock(ctx, r.d.Locker, core.LockReplicator, ErrReplicationInProgress, func(lockCtx context.Context) (QueueRebuild, error) {
+		queued, err := r.d.Replicator.RebuildQueue(lockCtx, runCfg)
+		return QueueRebuild{Factor: runCfg.Factor, Queued: queued}, err
+	})
 }
 
 // CleanExcess removes copies beyond the configured factor. batchSize <= 0 uses
@@ -104,7 +131,9 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 	if batchSize > 0 {
 		runCfg.BatchSize = min(batchSize, maxCleanBatchSize)
 	}
-	return r.d.OverRep.Clean(ctx, runCfg, observer)
+	return underLock(ctx, r.d.Locker, core.LockReplicator, ErrReplicationInProgress, func(lockCtx context.Context) (worker.OverReplicationSummary, error) {
+		return r.d.OverRep.Clean(lockCtx, runCfg, observer)
+	})
 }
 
 // runConfig returns the running config for one manual cycle, whose defaults

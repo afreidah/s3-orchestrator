@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Creates additional copies of under-replicated objects across backends. Objects
-// are written to one backend on PUT; this worker asynchronously ensures each
-// object reaches the configured replication factor. Uses conditional DB inserts
-// to safely handle concurrent overwrites and deletes.
+// Creates additional copies of under-replicated objects across backends. A
+// write that leaves an object short of the replication factor queues it, and
+// this worker drains the queue's short side until each object reaches the
+// factor. Uses conditional DB inserts to safely handle concurrent overwrites and
+// deletes.
 //
 // When integrity.verify_on_replicate is on, each new copy is read back and
 // hash-checked before it is recorded; replicator_verify.go holds that path.
@@ -43,9 +44,9 @@ import (
 // REPLICATOR TYPE
 // -------------------------------------------------------------------------
 
-// ReplicatorStore is the narrow persistence surface the replicator needs:
-// under-replicated discovery + per-replica record / location updates.
-// Declared locally so the worker does not pull in the full MetadataStore.
+// ReplicatorStore is the narrow persistence surface the replicator needs: the
+// replication queue and the per-replica record and location updates. Declared
+// locally so the worker does not pull in the full MetadataStore.
 type ReplicatorStore interface {
 	core.ObjectStore
 	core.ReplicationStore
@@ -61,7 +62,8 @@ type Replicator struct {
 	hasher *storedHasher
 }
 
-// ReplicatorDeps groups the replicator's constructor dependencies. Integrity
+// ReplicatorDeps groups the replicator's constructor dependencies. Queue is the
+// replication queue it shares with the over-replication cleaner. Integrity
 // decides whether a new copy is read back and hash-checked before it is
 // recorded. Encryptor and Codec are optional and are only consulted when
 // integrity.verify_on_replicate is on: verifying a copy means undoing its
@@ -70,6 +72,7 @@ type Replicator struct {
 type ReplicatorDeps struct {
 	Fleet
 	Store     ReplicatorStore
+	Queue     *ReplicationQueue
 	Config    syncutil.Section[config.ReplicationConfig]
 	Integrity syncutil.Section[config.IntegrityConfig]
 	Encryptor *encryption.Encryptor
@@ -81,6 +84,7 @@ func NewReplicator(d *ReplicatorDeps) *Replicator {
 	must.NotNil("d", d)
 	d.mustBeWired()
 	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Queue", d.Queue)
 	must.NotNil("d.Config", d.Config)
 	must.NotNil("d.Integrity", d.Integrity)
 	return &Replicator{
@@ -104,10 +108,11 @@ type ReplicationSummary struct {
 	CopiesCreated int
 }
 
-// Replicate finds under-replicated objects and creates additional copies to
-// reach the target replication factor. observer, when non-nil, receives a
-// start and end step per object replicated. A cycle that attempted anything
-// publishes ReplicationCompleted, whether a tick or an operator ran it.
+// Replicate reads a batch of queued under-replicated objects and creates
+// additional copies to reach the target replication factor. observer, when
+// non-nil, receives a start and end step per object replicated. A cycle that
+// attempted anything publishes ReplicationCompleted, whether a tick or an
+// operator ran it.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
 	pass := cycle.Pass{Workload: audit.WorkloadReplication, Refresh: r.d.Metrics}
 	sum, err := cycle.Run(ctx, pass, func(ctx context.Context) (ReplicationSummary, error) {
@@ -120,6 +125,14 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 		})
 	}
 	return sum, err
+}
+
+// RebuildQueue rebuilds the replication queue from the ledger at cfg's factor,
+// not counting copies on the backends the replicator is skipping, and reports
+// how many keys it queued.
+func (r *Replicator) RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error) {
+	excluded := unhealthyBackends(r.d.Ops, r.log, cfg.UnhealthyThreshold)
+	return r.d.Queue.rebuild(ctx, cfg.Factor, excluded, r.d.Ops.Backends())
 }
 
 // AuditAttrs adds the copies created to the tally's attributes.
@@ -144,30 +157,31 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	excluded := r.unhealthyBackends(cfg.UnhealthyThreshold)
-	locations, err := r.d.Store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
-	if err != nil {
-		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
+	excluded := unhealthyBackends(r.d.Ops, r.log, cfg.UnhealthyThreshold)
+	if err := r.d.Queue.prepare(ctx, cfg.Factor, excluded, r.d.Ops.Backends()); err != nil {
+		return ReplicationSummary{}, err
 	}
-	sets := planCopySets(locations, shortBy(cfg.Factor))
-	if len(sets) == 0 {
-		return ReplicationSummary{}, nil
+	sets, err := r.d.Queue.read(ctx, core.ReplicationShort, cfg.BatchSize, excluded, func(q *core.QueuedReplication) int {
+		return cfg.Factor - q.Live
+	})
+	if err != nil || len(sets) == 0 {
+		return ReplicationSummary{}, err
 	}
 
-	// The pending gauge comes from the fleet snapshot's ledger count, not this
-	// batch, so every instance serves the same figure.
-	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
-	sum, created := pass.run(ctx, r.d.Ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+	// The pending gauge comes from the queue's depth, not this batch, so every
+	// instance serves the same figure.
+	pass := copySetPass{queue: r.d.Queue, concurrency: cfg.Concurrency, observer: observer}
+	sum, created, err := pass.run(ctx, r.d.Ops, sets, func(ctx context.Context, set *copySet) (int, bool, batch.ItemResult) {
 		outcome := r.replicateObject(ctx, set.key, set.copies, set.off)
 		r.reportObjectOutcome(ctx, &outcome)
-		return outcome.Created, replicaOutcomeResult(&outcome)
+		return outcome.Created, outcome.Created >= set.off, replicaOutcomeResult(&outcome)
 	})
 
 	telemetry.ReplicationCopiesCreatedTotal.Add(float64(created))
 	if len(excluded) > 0 && created > 0 {
 		telemetry.ReplicationHealthCopiesTotal.Add(float64(created))
 	}
-	return ReplicationSummary{Summary: sum, CopiesCreated: created}, nil
+	return ReplicationSummary{Summary: sum, CopiesCreated: created}, err
 }
 
 // -------------------------------------------------------------------------
@@ -304,8 +318,8 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 		}
 
 		// Surface the rare race where the source row's size_bytes shifted
-		// between GetUnderReplicatedObjects and the placement, in case it
-		// indicates a deeper bug.
+		// between the copy read and the placement, in case it indicates a
+		// deeper bug.
 		if recordedSize != transferredSize {
 			r.log.WarnContext(ctx, "source size shifted mid-replication",
 				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
@@ -439,13 +453,14 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocat
 
 // unhealthyBackends returns the backends that have refused reads for at least
 // threshold, whose copies no longer count toward the replica count. Returns
-// nil when every backend is serving reads.
-func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
+// nil when every backend is serving reads. Both sides of the queue pass the
+// same set, so it is part of what the queue was rebuilt against.
+func unhealthyBackends(ops Ops, log *slog.Logger, threshold time.Duration) []string {
 	var names []string
-	for name := range r.d.Ops.Backends() {
-		if d := r.d.Ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {
+	for name := range ops.Backends() {
+		if d := ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {
 			names = append(names, name)
-			r.log.InfoContext(context.Background(), "backend refusing reads, excluding from replica count",
+			log.InfoContext(context.Background(), "backend refusing reads, excluding from replica count",
 				"backend", name,
 				"refused_for", d.Round(time.Second))
 		}

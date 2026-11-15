@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.179.x (current)
+### v0.180.x (current)
+
+**Replication drains a queue instead of scanning the ledger ([#1903](https://github.com/afreidah/s3-orchestrator/issues/1903), v0.180.0)**
+
+The replicator and the over-replication cleaner used to find their work by scanning the whole ledger on every pass, and the replication gauges did the same, so the cost grew with the ledger and competed with client writes. A write that leaves a key off the factor now queues the key in its own transaction, and the workers drain that queue. The queue is rebuilt from the ledger on the first pass after a start, and whenever the factor, the backends refusing reads or the configured backends change. One migration (Postgres `00050`, SQLite `0036`).
+
+**Operator action items after upgrade:**
+
+- **The first pass after every start rebuilds the queue** with one grouped query over the ledger.
+- **The over-replication cleaner runs inside the `replication` service.** `/admin/api/workers`, the TUI Workers pane and `s3o_worker_ticks_total` report its ticks under `replication`. Its log component, usage workload and `s3o_worker_cycles_total` label stay `over_replication`.
+- **A manual replicate or over-replication cleanup answers `skipped` while a replication pass is running**, instead of running beside it.
+- **New endpoint `POST /admin/api/replication/rebuild`** rebuilds the queue on demand, also as `s3-orchestrator admin replication-rebuild` and in the TUI Ops menu.
+
+### v0.179.x
 
 **Parts of one upload record together, and completion reads parts ahead ([#1882](https://github.com/afreidah/s3-orchestrator/issues/1882), v0.179.21)**
 

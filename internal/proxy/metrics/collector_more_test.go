@@ -290,7 +290,7 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageSince(gomock.Any(), gomock.Any()).Return(map[string]core.WorkloadUsage{}, nil).AnyTimes()
-	store.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).
+	store.EXPECT().CountReplicationQueue(gomock.Any()).
 		Return(core.ReplicationBacklog{Under: 1}, nil).
 		AnyTimes()
 
@@ -333,7 +333,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageSince(gomock.Any(), gomock.Any()).Return(map[string]core.WorkloadUsage{}, nil).AnyTimes()
-	store.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).
+	store.EXPECT().CountReplicationQueue(gomock.Any()).
 		Return(core.ReplicationBacklog{}, errors.New("db error")).
 		AnyTimes()
 

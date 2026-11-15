@@ -52,6 +52,7 @@ var (
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
 	ErrLifecycleUnavailable  = &SkipError{Reason: "lifecycle manager not available"}
 	ErrScrubInProgress       = &SkipError{Reason: "another instance is already scrubbing"}
+	ErrReplicationInProgress = &SkipError{Reason: "a replication pass is already running"}
 
 	ErrCompressionUnavailable = &SkipError{Reason: "compression codec not available"}
 )

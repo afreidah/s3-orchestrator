@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Implements the Postgres engine bindings for the replication-related
-// queries: the copy lookups, the under- and over-replicated scans, and the
-// backlog count. The under-replicated scan takes the backends the worker is
-// skipping, such as draining or circuit-broken ones.
+// queries: the copy lookups and the replication queue's rebuild, read,
+// settle, retry and count. The rebuild and the read take the backends the
+// drain is skipping, such as circuit-broken ones.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -14,6 +14,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -65,54 +66,84 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 }
 
 // -------------------------------------------------------------------------
-// UNDER-REPLICATION
+// REPLICATION QUEUE
 // -------------------------------------------------------------------------
 
-// GetUnderReplicatedObjects finds objects with fewer copies than the target
-// factor, not counting copies on the excluded backends. Returns all rows for
-// those objects so callers know which backends already have copies.
-func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
-	if excluded == nil {
-		// A nil slice binds as NULL, and != ALL(NULL) would match no row.
-		excluded = []string{}
-	}
-	rows, err := s.queries.GetUnderReplicatedObjects(ctx, db.GetUnderReplicatedObjectsParams{
-		Excluded: excluded,
+// RebuildReplicationQueue queues every key the ledger holds off factor in one
+// grouped pass and reports how many it queued.
+func (s *Store) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+	n, err := s.queries.RebuildReplicationQueue(ctx, db.RebuildReplicationQueueParams{
+		Excluded: excludedList(excluded),
 		Factor:   int64(factor),
-		MaxKeys:  rowLimit(limit),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
+		return 0, fmt.Errorf("failed to rebuild replication queue: %w", err)
 	}
-
-	return toObjectLocations(rows), nil
+	return n, nil
 }
 
-// -------------------------------------------------------------------------
-// OVER-REPLICATION
-// -------------------------------------------------------------------------
-
-// GetOverReplicatedObjects finds objects with more copies than the target
-// replication factor. Returns all rows for those objects so callers can
-// score each copy and decide which to remove.
-func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.GetOverReplicatedObjects(ctx, db.GetOverReplicatedObjectsParams{
-		Factor:  int64(factor),
-		MaxKeys: rowLimit(limit),
+// ListReplicationQueue reads a side's next due keys, each with its count and
+// the version a settle or retry must match.
+func (s *Store) ListReplicationQueue(ctx context.Context, direction core.ReplicationDirection, limit int, excluded []string) ([]core.QueuedReplication, error) {
+	rows, err := s.queries.ListReplicationQueue(ctx, db.ListReplicationQueueParams{
+		Excluded:  excludedList(excluded),
+		Direction: int16(direction),
+		RowLimit:  rowLimit(limit),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)
+		return nil, fmt.Errorf("failed to read replication queue: %w", err)
 	}
-
-	return toObjectLocations(rows), nil
+	return mapSlice(rows, func(r *db.ListReplicationQueueRow) core.QueuedReplication {
+		return core.QueuedReplication{
+			Key:       r.ObjectKey,
+			Direction: core.ReplicationDirection(r.Direction),
+			Attempts:  r.Attempts,
+			Version:   r.Version,
+			Live:      int(r.Live),
+			Held:      int(r.Held),
+		}
+	}), nil
 }
 
-// CountReplicationBacklog counts every key under and over the target factor,
-// uncapped, in one pass.
-func (s *Store) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
-	row, err := s.queries.CountReplicationBacklog(ctx, int64(factor))
+// SettleReplicationQueue drops a key the drain brought back to the factor,
+// unless a write queued it again since the drain read it.
+func (s *Store) SettleReplicationQueue(ctx context.Context, q *core.QueuedReplication) error {
+	if err := s.queries.SettleReplicationQueue(ctx, db.SettleReplicationQueueParams{
+		ObjectKey: q.Key,
+		Version:   q.Version,
+	}); err != nil {
+		return fmt.Errorf("failed to settle replication queue key: %w", err)
+	}
+	return nil
+}
+
+// RetryReplicationQueue holds a key the drain left off factor until
+// nextRetry, unless a write queued it again since the drain read it.
+func (s *Store) RetryReplicationQueue(ctx context.Context, q *core.QueuedReplication, nextRetry time.Time) error {
+	if err := s.queries.RetryReplicationQueue(ctx, db.RetryReplicationQueueParams{
+		ObjectKey: q.Key,
+		NextRetry: pgTimestamptz(nextRetry),
+		Version:   q.Version,
+	}); err != nil {
+		return fmt.Errorf("failed to retry replication queue key: %w", err)
+	}
+	return nil
+}
+
+// CountReplicationQueue counts the queued keys on each side of the factor.
+func (s *Store) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
+	row, err := s.queries.CountReplicationQueue(ctx)
 	if err != nil {
-		return core.ReplicationBacklog{}, fmt.Errorf("failed to count replication backlog: %w", err)
+		return core.ReplicationBacklog{}, fmt.Errorf("failed to count replication queue: %w", err)
 	}
 	return core.ReplicationBacklog{Under: row.UnderReplicated, Over: row.OverReplicated}, nil
+}
+
+// excludedList binds an empty list for nil, since a nil slice binds as NULL
+// and != ALL(NULL) would match no row.
+func excludedList(excluded []string) []string {
+	if excluded == nil {
+		return []string{}
+	}
+	return excluded
 }

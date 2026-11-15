@@ -83,8 +83,7 @@ func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, expire
 	sm.Register(worker.NewCleanupQueueService(ws.cleanup, locker))
 	sm.Register(worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick))
 	sm.Register(worker.NewRebalancerService(ws.rebalancer, locker))
-	sm.Register(worker.NewReplicatorService(ws.replicator, locker))
-	sm.Register(worker.NewOverReplicationService(ws.overRep, locker))
+	sm.Register(worker.NewReplicationService(ws.replicator, ws.overRep, locker))
 	sm.Register(worker.NewDrainerService(ws.drainer, locker))
 	sm.Register(NewLifecycleService(expirer, locker))
 	if cfg.Integrity.ScrubberInterval > 0 {

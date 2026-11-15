@@ -41,7 +41,7 @@ type Deps interface {
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	core.UsageReader
-	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
+	CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error)
 }
 
 // Collector records Prometheus metrics for manager-level operations and

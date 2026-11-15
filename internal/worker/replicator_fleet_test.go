@@ -139,8 +139,7 @@ func TestReplicate_QueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db down")).AnyTimes()
+	expectQueued(store, core.ReplicationShort, nil, errors.New("db down"))
 	storetest.Permissive(store)
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
@@ -149,16 +148,15 @@ func TestReplicate_QueryError(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}, nil); err == nil {
-		t.Fatal("expected error from GetUnderReplicatedObjects failure")
+		t.Fatal("expected error from the queue claim failure")
 	}
 }
 
 // replicateSuccessStubs wires the per-call stubs replicator success
-// tests share: under-replicated returns, GetBackendWithSpace chosen-from-
-// eligible behaviour, and a PlaceCopy captured into pt.
+// tests share: the queued under-replicated keys, GetBackendWithSpace chosen-
+// from-eligible behaviour, and a PlaceCopy captured into pt.
 func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.ObjectLocation, pt *placeCopyTracker) {
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(locations, nil).AnyTimes()
+	expectQueued(store, core.ReplicationShort, locations, nil)
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubPlaceCopy(pt)).AnyTimes()
 }
@@ -202,8 +200,7 @@ func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
+	expectQueued(store, core.ReplicationShort, []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil)
 	// Every target declines the claim, which is how a full backend reports itself.
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(false, nil).AnyTimes()
 	storetest.Permissive(store)
@@ -662,7 +659,7 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 		"b2": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	if names := w.unhealthyBackends(0); len(names) != 0 {
+	if names := unhealthyBackends(w.d.Ops, w.log, 0); len(names) != 0 {
 		t.Errorf("expected empty, got %v", names)
 	}
 }
@@ -723,7 +720,7 @@ func TestServesReads_OnlyWritesRefused(t *testing.T) {
 	if !w.servesReads("b1") {
 		t.Error("backend refusing only uploads should serve reads")
 	}
-	if names := w.unhealthyBackends(time.Nanosecond); len(names) != 0 {
+	if names := unhealthyBackends(w.d.Ops, w.log, time.Nanosecond); len(names) != 0 {
 		t.Errorf("UnhealthyBackends = %v, want none while reads are served", names)
 	}
 }

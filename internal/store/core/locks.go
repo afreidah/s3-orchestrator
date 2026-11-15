@@ -27,7 +27,6 @@ const (
 	LockMultipartCleanup int64 = 1004 // stale multipart upload removal
 	LockLifecycle        int64 = 1005 // object expiration rule evaluation
 	LockDrain            int64 = 1006 // backend drain and object migration
-	LockOverReplication  int64 = 1008 // excess replica removal
 	LockReconcile        int64 = 1009 // backend-vs-database consistency check
 	LockScrubber         int64 = 1010 // background integrity verification
 	LockPendingReaper    int64 = 1011 // abandoned PUT-intent resolution

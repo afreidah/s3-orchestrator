@@ -7,94 +7,74 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countReplicationBacklog = `-- name: CountReplicationBacklog :one
-WITH inflight AS (
-    SELECT object_key, COUNT(*) AS copies
-    FROM pending_objects
-    GROUP BY object_key
-),
-copies AS (
-    SELECT COUNT(*) AS held, COALESCE(i.copies, 0) AS inflight
-    FROM object_locations ol
-    LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.managed
-    GROUP BY ol.object_key, i.copies
-)
-SELECT COUNT(*) FILTER (WHERE held + inflight < $1::bigint)::bigint AS under_replicated,
-       COUNT(*) FILTER (WHERE held > $1::bigint)::bigint AS over_replicated
-FROM copies
+const countReplicationQueue = `-- name: CountReplicationQueue :one
+SELECT COUNT(*) FILTER (WHERE direction < 0)::bigint AS under_replicated,
+       COUNT(*) FILTER (WHERE direction > 0)::bigint AS over_replicated
+FROM replication_queue
 `
 
-type CountReplicationBacklogRow struct {
+type CountReplicationQueueRow struct {
 	UnderReplicated int64
 	OverReplicated  int64
 }
 
-// One grouped pass for both directions. Under applies GetUnderReplicatedObjects'
-// in-flight rule; over counts recorded copies only, as GetOverReplicatedObjects
-// does.
-func (q *Queries) CountReplicationBacklog(ctx context.Context, factor int64) (CountReplicationBacklogRow, error) {
-	row := q.db.QueryRow(ctx, countReplicationBacklog, factor)
-	var i CountReplicationBacklogRow
+func (q *Queries) CountReplicationQueue(ctx context.Context) (CountReplicationQueueRow, error) {
+	row := q.db.QueryRow(ctx, countReplicationQueue)
+	var i CountReplicationQueueRow
 	err := row.Scan(&i.UnderReplicated, &i.OverReplicated)
 	return i, err
 }
 
-const getOverReplicatedObjects = `-- name: GetOverReplicatedObjects :many
-WITH over_replicated AS (
-    SELECT object_key
-    FROM object_locations
-    WHERE managed
-    GROUP BY object_key
-    HAVING COUNT(*) > $1::bigint
-    LIMIT $2
-)
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.managed, ol.last_scrubbed_at, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.compression_probe_size, ol.compression_probe_level, ol.etag, ol.content_type, ol.user_metadata, ol.storage_key, ol.form, ol.object_size
-FROM object_locations ol
-JOIN over_replicated orep ON ol.object_key = orep.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC
+const listReplicationQueue = `-- name: ListReplicationQueue :many
+SELECT rq.object_key, rq.direction, rq.attempts, rq.version,
+    ((SELECT COUNT(*) FROM object_locations ol
+      WHERE ol.object_key = rq.object_key AND ol.managed AND ol.backend_name != ALL($1::text[]))
+   + (SELECT COUNT(*) FROM pending_objects p WHERE p.object_key = rq.object_key))::bigint AS live,
+    (SELECT COUNT(*) FROM object_locations ol
+     WHERE ol.object_key = rq.object_key AND ol.managed)::bigint AS held
+FROM replication_queue rq
+WHERE rq.direction = $2::smallint AND rq.next_retry <= NOW()
+ORDER BY rq.direction, rq.next_retry
+LIMIT $3
 `
 
-type GetOverReplicatedObjectsParams struct {
-	Factor  int64
-	MaxKeys int32
+type ListReplicationQueueParams struct {
+	Excluded  []string
+	Direction int16
+	RowLimit  int32
 }
 
-func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverReplicatedObjectsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, getOverReplicatedObjects, arg.Factor, arg.MaxKeys)
+type ListReplicationQueueRow struct {
+	ObjectKey string
+	Direction int16
+	Attempts  int32
+	Version   int64
+	Live      int64
+	Held      int64
+}
+
+// Reads a side's next due keys with each key's count. The replicator's lock
+// keeps one drain at a time, so the read holds nothing.
+func (q *Queries) ListReplicationQueue(ctx context.Context, arg ListReplicationQueueParams) ([]ListReplicationQueueRow, error) {
+	rows, err := q.db.Query(ctx, listReplicationQueue, arg.Excluded, arg.Direction, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []ListReplicationQueueRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i ListReplicationQueueRow
 		if err := rows.Scan(
 			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
-			&i.Form,
-			&i.ObjectSize,
+			&i.Direction,
+			&i.Attempts,
+			&i.Version,
+			&i.Live,
+			&i.Held,
 		); err != nil {
 			return nil, err
 		}
@@ -106,32 +86,43 @@ func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverRepli
 	return items, nil
 }
 
-const getUnderReplicatedObjects = `-- name: GetUnderReplicatedObjects :many
-
-WITH inflight AS (
-    SELECT object_key, COUNT(*) AS copies
-    FROM pending_objects
-    GROUP BY object_key
-),
-under_replicated AS (
-    SELECT ol.object_key
-    FROM object_locations ol
-    LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.backend_name != ALL($1::text[]) AND ol.managed
-    GROUP BY ol.object_key, i.copies
-    HAVING COUNT(*) + COALESCE(i.copies, 0) < $2::bigint
-    LIMIT $3
-)
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.managed, ol.last_scrubbed_at, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.compression_probe_size, ol.compression_probe_level, ol.etag, ol.content_type, ol.user_metadata, ol.storage_key, ol.form, ol.object_size
-FROM object_locations ol
-JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC
+const queueOffFactor = `-- name: QueueOffFactor :exec
+INSERT INTO replication_queue (object_key, direction)
+SELECT counted.object_key, (CASE WHEN counted.live < $1::bigint THEN -1 ELSE 1 END)::smallint
+FROM (
+    SELECT keys.object_key,
+        (SELECT COUNT(*) FROM object_locations ol WHERE ol.object_key = keys.object_key AND ol.managed)
+      + (SELECT COUNT(*) FROM pending_objects p WHERE p.object_key = keys.object_key) AS live
+    FROM unnest($2::text[]) AS keys(object_key)
+) counted
+WHERE counted.live > 0 AND counted.live <> $1::bigint
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1
 `
 
-type GetUnderReplicatedObjectsParams struct {
-	Excluded []string
-	Factor   int64
-	MaxKeys  int32
+type QueueOffFactorParams struct {
+	Factor     int64
+	ObjectKeys []string
+}
+
+// Counts each key and queues those off factor. A key with no copy and no intent
+// is gone and needs nothing.
+func (q *Queries) QueueOffFactor(ctx context.Context, arg QueueOffFactorParams) error {
+	_, err := q.db.Exec(ctx, queueOffFactor, arg.Factor, arg.ObjectKeys)
+	return err
+}
+
+const queueReplication = `-- name: QueueReplication :exec
+
+INSERT INTO replication_queue (object_key, direction)
+SELECT unnest($1::text[]), unnest($2::smallint[])
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1
+`
+
+type QueueReplicationParams struct {
+	ObjectKeys []string
+	Directions []int16
 }
 
 // -----------------------------------------------------------------------------
@@ -139,69 +130,101 @@ type GetUnderReplicatedObjectsParams struct {
 //
 // Author: Alex Freidah
 //
-// sqlc-input definitions backing the replicator and over-replication
-// cleaner: the under- and over-replicated scans and the backlog count.
-// -----------------------------------------------------------------------------
-// A key's copies are the rows it holds plus the intents still uploading one,
+// sqlc-input definitions backing the replication queue: the writes that queue
+// the keys a transaction left off the factor, the rebuild that queues every one
+// the ledger holds, and the drain's read, settle, retry and count.
+//
+// A key's count is its managed copies plus the intents still uploading one,
 // because a write that places its own copies commits them a moment apart and
-// the intent is the statement that the copy is on its way. Counting only the
-// rows makes every such write look under-replicated for that moment, and a
-// scan landing inside it reads the object back to make a copy the write is
-// already placing.
+// the intent is the statement that the copy is on its way. Every live intent
+// counts, whatever its role: the first copy to land may be a companion while the
+// primary is still in flight. One left by a write that never finished holds the
+// key off only until the reaper clears it.
 //
-// Every live intent counts, whatever its role. The role tells the reaper what
-// to do with an abandoned intent; it does not say which copy records the
-// object. That is the first to land, and when it is a companion the write's
-// primary intent is the one still in flight: a count of companions alone read
-// such a key as one copy short, and the worker copied it to the very backend
-// the primary was landing on. An intent a later write to the same key adds
-// counts too, harmlessly, since that write replaces the object; one left by a
-// write that never finished holds replication off only until the reaper
-// clears it.
+// Copies on an excluded backend do not count toward a short key, but an intent
+// there still does: excluding a backend says no copy will be placed there, not
+// that a copy already going there is absent. A key past the factor counts every
+// recorded copy. An empty list excludes nothing.
 //
-// Copies on an excluded backend do not count, but an intent there still does:
-// excluding a backend says the worker will not place a copy there, not that a
-// copy already going there is absent. An empty list excludes nothing.
-func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Excluded, arg.Factor, arg.MaxKeys)
+// Every queue write makes the key due now with fresh attempts and bumps its
+// version, so a drain that read an older version cannot settle it away.
+// -----------------------------------------------------------------------------
+// Queues keys the transaction knows the side of, in the order given.
+func (q *Queries) QueueReplication(ctx context.Context, arg QueueReplicationParams) error {
+	_, err := q.db.Exec(ctx, queueReplication, arg.ObjectKeys, arg.Directions)
+	return err
+}
+
+const rebuildReplicationQueue = `-- name: RebuildReplicationQueue :execrows
+WITH inflight AS (
+    SELECT object_key, COUNT(*) AS copies
+    FROM pending_objects
+    GROUP BY object_key
+),
+counted AS (
+    SELECT ol.object_key,
+           COUNT(*) FILTER (WHERE ol.backend_name != ALL($2::text[])) + COALESCE(i.copies, 0) AS live,
+           COUNT(*) AS held
+    FROM object_locations ol
+    LEFT JOIN inflight i ON i.object_key = ol.object_key
+    WHERE ol.managed
+    GROUP BY ol.object_key, i.copies
+)
+INSERT INTO replication_queue (object_key, direction)
+SELECT object_key, (CASE WHEN live < $1::bigint THEN -1 ELSE 1 END)::smallint
+FROM counted
+WHERE live < $1::bigint OR held > $1::bigint
+ON CONFLICT (object_key) DO UPDATE
+SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1
+`
+
+type RebuildReplicationQueueParams struct {
+	Factor   int64
+	Excluded []string
+}
+
+// One grouped pass over the ledger that queues every key off factor, for a
+// factor or excluded set the queue was not kept against.
+func (q *Queries) RebuildReplicationQueue(ctx context.Context, arg RebuildReplicationQueueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rebuildReplicationQueue, arg.Factor, arg.Excluded)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	items := []ObjectLocation{}
-	for rows.Next() {
-		var i ObjectLocation
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
-			&i.Form,
-			&i.ObjectSize,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
+}
+
+const retryReplicationQueue = `-- name: RetryReplicationQueue :exec
+UPDATE replication_queue
+SET attempts = attempts + 1, next_retry = $1::timestamptz
+WHERE object_key = $2 AND version = $3
+`
+
+type RetryReplicationQueueParams struct {
+	NextRetry pgtype.Timestamptz
+	ObjectKey string
+	Version   int64
+}
+
+// Holds a key the drain left off factor until next_retry, unless a write queued
+// it again since the drain read it.
+func (q *Queries) RetryReplicationQueue(ctx context.Context, arg RetryReplicationQueueParams) error {
+	_, err := q.db.Exec(ctx, retryReplicationQueue, arg.NextRetry, arg.ObjectKey, arg.Version)
+	return err
+}
+
+const settleReplicationQueue = `-- name: SettleReplicationQueue :exec
+DELETE FROM replication_queue
+WHERE object_key = $1 AND version = $2
+`
+
+type SettleReplicationQueueParams struct {
+	ObjectKey string
+	Version   int64
+}
+
+// Drops a key the drain brought back to the factor, unless a write queued it
+// again since the drain read it.
+func (q *Queries) SettleReplicationQueue(ctx context.Context, arg SettleReplicationQueueParams) error {
+	_, err := q.db.Exec(ctx, settleReplicationQueue, arg.ObjectKey, arg.Version)
+	return err
 }

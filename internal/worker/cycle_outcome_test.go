@@ -145,8 +145,8 @@ func (f *replicaFleet) copySucceeds() {
 		Return("", nil).AnyTimes()
 }
 
-// copyOn returns one existing copy row for key, the shape
-// GetUnderReplicatedObjects hands the replicator.
+// copyOn returns one existing copy row for key, the shape the replicator
+// receives a queued key's copies in.
 func copyOn(key, backendName string) core.ObjectLocation {
 	return core.ObjectLocation{ObjectKey: key, BackendName: backendName, SizeBytes: 100}
 }
@@ -353,7 +353,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 
 // cleaner builds the worker under test from the fleet.
 func (f *cleanerFleet) cleaner() *OverReplicationCleaner {
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(f.ops, f.pl), Store: f.store, Config: defaultReplication})
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: fleetOf(f.ops, f.pl), Store: f.store, Queue: NewReplicationQueue(f.store), Config: defaultReplication})
 }
 
 // overReplicatedOn returns one key's copies, one row per backend.

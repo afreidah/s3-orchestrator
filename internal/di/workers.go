@@ -88,6 +88,17 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	return worker.NewRebalancer(worker.RebalancerDeps{Fleet: c.fleet(), Store: c.Stores, Config: c.Live.Rebalance()}), nil
 }
 
+// ProvideReplicationQueue constructs the replication queue the replicator and
+// the over-replication cleaner share.
+func ProvideReplicationQueue(i do.Injector) (*worker.ReplicationQueue, error) {
+	r := NewResolver(i)
+	stores := r.Resolve[metadataStore]()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return worker.NewReplicationQueue(stores), nil
+}
+
 // ProvideReplicator constructs the replication worker. It takes the encryptor
 // and codec because integrity.verify_on_replicate reads a new copy back, and
 // undoing its stored form is what makes the digest comparable to content_hash.
@@ -100,9 +111,14 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
+	queue, err := do.Invoke[*worker.ReplicationQueue](i)
+	if err != nil {
+		return nil, err
+	}
 	return worker.NewReplicator(&worker.ReplicatorDeps{
 		Fleet:     c.fleet(),
 		Store:     c.Stores,
+		Queue:     queue,
 		Config:    c.Live.Replication(),
 		Integrity: c.Live.Integrity(),
 		Encryptor: enc,
@@ -128,7 +144,13 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Fleet: c.fleet(), Store: c.Stores, Config: c.Live.Replication()}), nil
+	queue, err := do.Invoke[*worker.ReplicationQueue](i)
+	if err != nil {
+		return nil, err
+	}
+	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{
+		Fleet: c.fleet(), Store: c.Stores, Queue: queue, Config: c.Live.Replication(),
+	}), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves

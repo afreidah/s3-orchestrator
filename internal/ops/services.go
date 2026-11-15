@@ -12,6 +12,8 @@
 package ops
 
 import (
+	"context"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -86,6 +88,7 @@ func New(d *Deps) *Services {
 			Replicator: d.Replicator,
 			OverRep:    d.OverRep,
 			Backlog:    d.Backlog,
+			Locker:     d.Locker,
 			Config:     cfg,
 		}),
 		Rebalance: NewRebalance(RebalanceDeps{
@@ -112,4 +115,23 @@ func New(d *Deps) *Services {
 			Config:   cfg,
 		}),
 	}
+}
+
+// underLock runs an operator's pass under the advisory lock its scheduled
+// service holds, so the two never overlap, or reports busy without waiting
+// while the lock is held.
+func underLock[S any](ctx context.Context, locker core.AdvisoryLocker, lockID int64, busy error, pass func(context.Context) (S, error)) (S, error) {
+	var sum, zero S
+	acquired, err := locker.WithAdvisoryLock(ctx, lockID, func(lockCtx context.Context) error {
+		var err error
+		sum, err = pass(lockCtx)
+		return err
+	})
+	switch {
+	case err != nil:
+		return zero, err
+	case !acquired:
+		return zero, busy
+	}
+	return sum, nil
 }

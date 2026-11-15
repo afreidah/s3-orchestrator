@@ -201,5 +201,5 @@ func newOverRepFor(
 ) *OverReplicationCleaner {
 	t.Helper()
 	_, f := newFleet(t, store, backends, opts)
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: f, Store: store, Config: defaultReplication})
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Fleet: f, Store: store, Queue: NewReplicationQueue(store), Config: defaultReplication})
 }

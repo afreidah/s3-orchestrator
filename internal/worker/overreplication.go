@@ -17,7 +17,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 
@@ -38,9 +37,9 @@ import (
 // -------------------------------------------------------------------------
 
 // OverReplicationCleanerStore is the narrow persistence surface the
-// over-replication cleaner needs: over-replicated discovery and per-backend
-// quota stats for choosing which copy goes. Declared locally so the worker
-// does not pull in the full MetadataStore.
+// over-replication cleaner needs: the replication queue and per-backend quota
+// stats for choosing which copy goes. Declared locally so the worker does not
+// pull in the full MetadataStore.
 type OverReplicationCleanerStore interface {
 	core.ReplicationStore
 	core.QuotaStore
@@ -59,11 +58,12 @@ type OverReplicationCleaner struct {
 }
 
 // OverReplicationCleanerDeps groups the cleaner's constructor dependencies:
-// the fleet, the metadata store, and the replication section of the running
-// configuration.
+// the fleet, the metadata store, the replication queue it shares with the
+// replicator, and the replication section of the running configuration.
 type OverReplicationCleanerDeps struct {
 	Fleet
 	Store  OverReplicationCleanerStore
+	Queue  *ReplicationQueue
 	Config syncutil.Section[config.ReplicationConfig]
 }
 
@@ -74,6 +74,7 @@ type OverReplicationCleanerDeps struct {
 func NewOverReplicationCleaner(d OverReplicationCleanerDeps) *OverReplicationCleaner {
 	d.mustBeWired()
 	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Queue", d.Queue)
 	must.NotNil("d.Config", d.Config)
 	return &OverReplicationCleaner{Section: d.Config, d: d, log: logfmt.Logger(string(audit.WorkloadOverReplication))}
 }
@@ -82,9 +83,10 @@ func NewOverReplicationCleaner(d OverReplicationCleanerDeps) *OverReplicationCle
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Clean finds over-replicated objects and removes excess copies to reach the
-// target replication factor. Returns the number of copies removed. observer,
-// when non-nil, receives a start and end step per object cleaned.
+// Clean reads a batch of queued over-replicated objects and removes excess
+// copies to reach the target replication factor. Returns the number of copies
+// removed. observer, when non-nil, receives a start and end step per object
+// cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
 	pass := cycle.Pass{Workload: audit.WorkloadOverReplication, Refresh: c.d.Metrics}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (OverReplicationSummary, error) {
@@ -122,13 +124,15 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	locations, err := c.d.Store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
-	if err != nil {
-		return OverReplicationSummary{}, fmt.Errorf("failed to query over-replicated objects: %w", err)
+	excluded := unhealthyBackends(c.d.Ops, c.log, cfg.UnhealthyThreshold)
+	if err := c.d.Queue.prepare(ctx, cfg.Factor, excluded, c.d.Ops.Backends()); err != nil {
+		return OverReplicationSummary{}, err
 	}
-	sets := planCopySets(locations, overBy(cfg.Factor))
-	if len(sets) == 0 {
-		return OverReplicationSummary{}, nil
+	sets, err := c.d.Queue.read(ctx, core.ReplicationOver, cfg.BatchSize, nil, func(q *core.QueuedReplication) int {
+		return q.Held - cfg.Factor
+	})
+	if err != nil || len(sets) == 0 {
+		return OverReplicationSummary{}, err
 	}
 
 	// Pre-fetch quota stats for copy scoring (utilization ratio).
@@ -138,16 +142,16 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 			"error", qErr)
 	}
 
-	// The pending gauge is the fleet snapshot's ledger count, which every
-	// instance serves; this pass's sets are one batch of it.
-	pass := copySetPass{concurrency: cfg.Concurrency, observer: observer}
-	sum, removed := pass.run(ctx, c.d.Ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+	// The pending gauge is the queue's depth, which every instance serves; this
+	// pass's sets are one batch of it.
+	pass := copySetPass{queue: c.d.Queue, concurrency: cfg.Concurrency, observer: observer}
+	sum, removed, err := pass.run(ctx, c.d.Ops, sets, func(ctx context.Context, set *copySet) (int, bool, batch.ItemResult) {
 		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, cfg.Factor, quotaStats)
-		return n, cleanupItemResult(n, failures)
+		return n, n >= set.off, cleanupItemResult(n, failures)
 	})
 
 	telemetry.OverReplicationRemovedTotal.Add(float64(removed))
-	return OverReplicationSummary{Summary: sum, CopiesRemoved: removed}, nil
+	return OverReplicationSummary{Summary: sum, CopiesRemoved: removed}, err
 }
 
 // cleanupItemResult folds one object's surplus-copy removals into the batch

@@ -1155,6 +1155,19 @@ paths:
                                 $ref: '#/components/schemas/ReplicationStatusResponse'
                 "401":
                     description: Missing or invalid SigV4 credentials
+    /admin/api/replication/rebuild:
+        post:
+            summary: Rebuild the replication queue from the object ledger
+            operationId: postReplicationRebuild
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ReplicationRebuildResponse'
+                "401":
+                    description: Missing or invalid SigV4 credentials
     /admin/api/rotate-encryption-key:
         post:
             summary: Re-wrap sealed DEKs under the current primary key
@@ -2358,6 +2371,23 @@ components:
             required:
                 - status
                 - copies_created
+            type: object
+        ReplicationRebuildResponse:
+            properties:
+                factor:
+                    format: int64
+                    type: integer
+                queued:
+                    format: int64
+                    type: integer
+                reason:
+                    type: string
+                status:
+                    type: string
+            required:
+                - status
+                - factor
+                - queued
             type: object
         ReplicationStatusResponse:
             properties:

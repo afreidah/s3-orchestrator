@@ -42,6 +42,7 @@ window.s3oDiagram = {
     '        pending_objects[pending_objects]:::cleanup',
     '        cleanup_queue[cleanup_queue]:::cleanup',
     '        cleanup_dlq[cleanup_dlq]:::cleanup',
+    '        replication_queue[replication_queue]:::cleanup',
     '        notification_outbox[notification_outbox]:::cleanup',
     '    end',
     '    subgraph ACCESS [Access control]',
@@ -62,6 +63,7 @@ window.s3oDiagram = {
     '    cleanup_queue -->|graduates| cleanup_dlq',
     '    multipart_uploads -->|parts| multipart_parts',
     '    object_locations -->|tag set| object_tags',
+    '    object_locations -->|keys off the factor| replication_queue',
     '    users -->|keypairs| credentials',
     '    users -->|grants| grants'
   ].join('\n'),
@@ -148,9 +150,9 @@ window.s3oDiagram = {
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr>' +
         '<tr><td>form</td><td>BIGINT</td><td>Generated from the columns above: the layers the stored bytes carry, compressed (1), encrypted (2), hashed (4) and keyed (8) when the row holds the key to its envelope. The rewrite passes, hash backfill, the unreadable purge and the ledger figures select on it with masks Go passes in, so what each bit means is defined once</td></tr>' +
         '<tr><td>object_size</td><td>BIGINT</td><td>Generated: the size the client wrote, which is logical_size for an encoded copy, plaintext_size for an encrypted one and size_bytes otherwise. Listings report it</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C") for the reconcile walk &bull; idx_object_locations_backend_storage_key_unique UNIQUE (backend_name, storage_key) &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag) &bull; idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed, for the drain walk &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
-        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), fleet snapshot (LedgerStats, CountReplicationBacklog), drain (ListObjectsByBackend), reconcile import (ListedPathStates), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
-        '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats, LedgerStats, CountReplicationBacklog, ListedPathStates</p>'
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C") for the reconcile walk &bull; idx_object_locations_backend_storage_key_unique UNIQUE (backend_name, storage_key) &bull; idx_object_locations_listing (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, object_size, etag, managed) for key range listings &bull; idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed, for the drain walk &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
+        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replication</a> (RebuildReplicationQueue, and the counts ListReplicationQueue reads), fleet snapshot (LedgerStats), drain (ListObjectsByBackend), reconcile import (ListedPathStates), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
+        '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, RebuildReplicationQueue, BackendObjectStats, LedgerStats, ListedPathStates</p>'
     },
     object_tags: {
       title: 'object_tags',
@@ -265,6 +267,22 @@ window.s3oDiagram = {
         '<p>Admin routes: <code>GET /admin/api/cleanup-dlq</code> lists the rows, optionally for one backend. <code>POST /admin/api/cleanup-dlq/requeue</code> moves rows back into <code>cleanup_queue</code> in one statement, with attempts reset, so the worker retries them.</p>' +
         '<p class="ac-metric">Key queries: MoveCleanupToDLQ, CountCleanupDLQ, ListCleanupDLQ, RequeueCleanupDLQ</p>' +
         '<p class="ac-metric">Metrics: s3o_cleanup_dlq_depth (gauge), s3o_cleanup_dlq_enqueued_total{backend} (counter)</p>'
+    },
+    replication_queue: {
+      title: 'replication_queue',
+      badge: 'cleanup', badgeText: 'work queue',
+      body: '<p>The keys whose copies plus live intents are off the replication factor, so the <a href="../background-services/">replication</a> drain works through them instead of scanning <code>object_locations</code>. A transaction that leaves a key off the factor queues it before it commits: one that knows the count the key ends with decides it outright, and one that only moved the count has the database count the key in the same statement. A rebuild queues every key the ledger holds off the factor in one grouped query.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">object_key</td><td>TEXT</td><td>PRIMARY KEY</td></tr>' +
+        '<tr><td>direction</td><td>SMALLINT</td><td>-1 for a key short of the factor, 1 for one past it</td></tr>' +
+        '<tr><td>attempts</td><td>INT</td><td>Passes that left the key off the factor since it was last queued</td></tr>' +
+        '<tr><td>next_retry</td><td>TIMESTAMPTZ</td><td>Earliest time a drain reads the key; backs off from one minute to an hour</td></tr>' +
+        '<tr><td>version</td><td>BIGINT</td><td>Bumped by every queue write; a settle or retry acts only at the version the drain read</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>First enqueue time</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on object_key &bull; idx_replication_queue_due (direction, next_retry)</p>' +
+        '<p>Written by: every transaction that changes a key\'s copies or intents, the rebuild on the first pass after a start or a change to the factor, excluded backends or fleet, and <code>POST /admin/api/replication/rebuild</code>. Drained one pass at a time under the replicator\'s advisory lock.</p>' +
+        '<p class="ac-metric">Key queries: QueueReplication, QueueOffFactor, RebuildReplicationQueue, ListReplicationQueue, SettleReplicationQueue, RetryReplicationQueue, CountReplicationQueue</p>' +
+        '<p class="ac-metric">Metrics: s3o_replication_pending, s3o_over_replication_pending</p>'
     },
     pending_objects: {
       title: 'pending_objects',
@@ -411,6 +429,7 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | **backend_usage** | Hourly API/bandwidth counters per backend and workload | `(backend_name, bucket_start, workload)` |
 | **cleanup_queue** | Bytes waiting to be deleted, queued by the transaction that stopped recording them | `id` (auto-increment) |
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
+| **replication_queue** | Keys off the replication factor, queued by the transaction that left them there | `object_key` |
 | **pending_objects** | In-flight write intents, claimed by every write before its bytes land (admission and crash recovery) | `intent_id` (UUID) |
 | **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
 | **buckets** | Virtual buckets declared through the provisioning API rather than the config file | `name` |
@@ -470,3 +489,6 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | `00045_notification_outbox_pending_index` | Rebuild `idx_notification_outbox_pending` on `next_retry` without the `attempts < 10` filter, since the notifier removes a row at its endpoint's `max_retries` and a higher limit left rows stuck. Built `CONCURRENTLY` outside a transaction. SQLite (0032) rebuilds the same index |
 | `00046_usage_workload` | Add `workload` to the primary keys of `backend_usage` and `backend_request_usage`, so usage is split by what caused it. Existing rows become `unknown`. SQLite (0033) rebuilds both tables |
 | `00047_usage_buckets` | Key `backend_usage` and `backend_request_usage` by `bucket_start`, the UTC hour of the charge, instead of a monthly period, so each backend's cycle can start on its own day and zone. Each monthly row becomes one bucket at the start of its month. SQLite (0034) rebuilds both tables |
+| `00048_pending_tagging` | Add `tagging` to `pending_objects`, so the pending reaper promotes an object with the tag set its write carried. SQLite (0035) |
+| `00049_listing_key_ranges` | Replace `idx_object_locations_key_pattern` and `idx_object_locations_key_collate_c_covering` with `idx_object_locations_listing (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, object_size, etag, managed)`, and `idx_multipart_uploads_key_pattern` with `idx_multipart_uploads_key_collate_c`, for listings that state a byte range rather than a LIKE pattern |
+| `00050_replication_queue` | Add `replication_queue` and `idx_replication_queue_due (direction, next_retry)`, so the replicator and the over-replication cleaner drain the keys off the factor instead of scanning `object_locations`. SQLite (0036) |

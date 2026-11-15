@@ -39,6 +39,7 @@ type TxAdapter interface {
 	QuotaTxAdapter
 	TagsTxAdapter
 	MultipartTxAdapter
+	ReplicationTxAdapter
 
 	AcquireKeyLock(ctx context.Context, objectKeys ...string) error
 	AcquireBackendLock(ctx context.Context, backendNames ...string) error
@@ -143,4 +144,18 @@ type TagsTxAdapter interface {
 // the charges in the order given, each on its own row.
 type QuotaTxAdapter interface {
 	AdjustQuotaStripes(ctx context.Context, charges ...StripeCharge) error
+}
+
+// -------------------------------------------------------------------------
+// REPLICATION
+// -------------------------------------------------------------------------
+
+// ReplicationTxAdapter queues the keys a transaction left off the replication
+// factor, a key already queued taking the new direction and a fresh, unclaimed
+// retry. QueueReplication queues keys the transaction knows the side of;
+// QueueOffFactor counts each key's managed copies plus its live intents and
+// queues those off factor, a key with neither being gone.
+type ReplicationTxAdapter interface {
+	QueueReplication(ctx context.Context, keys []string, directions []ReplicationDirection) error
+	QueueOffFactor(ctx context.Context, factor int, keys ...string) error
 }

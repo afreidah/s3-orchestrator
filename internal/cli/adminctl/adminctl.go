@@ -82,6 +82,7 @@ var adminCommands = []verb{
 	{"cleanup-dlq", verbList(cleanupDLQVerbs) + " dead-lettered cleanups", nounCommand("cleanup-dlq", cleanupDLQVerbs)},
 	{"usage-flush", "Force flush usage counters to database", cmdUsageFlush},
 	{"replicate", "Trigger one replication cycle", cmdReplicate},
+	{"replication-rebuild", "Rebuild the replication queue from the object ledger", cmdReplicationRebuild},
 	{"rebalance", "Trigger one rebalance cycle to redistribute objects across backends", cmdRebalance},
 	{"over-replication", "Show or clean over-replicated objects (use --execute to clean)", cmdOverReplication},
 	{"unreadable", "List copies encrypted with no key (use --execute to delete them)", cmdUnreadable},
