@@ -730,11 +730,11 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	ts := httptest.NewServer(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{{
+	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,
 		Credentials:         []config.CredentialConfig{testCredential()},
-	}}), 10*1024*1024))
+	}}), 10*1024*1024)))
 	t.Cleanup(ts.Close)
 	return ts, mockStore
 }
