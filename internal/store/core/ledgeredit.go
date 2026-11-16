@@ -113,12 +113,15 @@ func (e *ledgerEdit) removeCopy(ctx context.Context, reason string, c *ExistingC
 }
 
 // dropIntent deletes an intent the transaction claimed and queues the bytes its
-// upload may have left under reason.
+// upload may have left under reason. An empty reason queues nothing, for an
+// intent whose upload is known to have left no bytes.
 func (e *ledgerEdit) dropIntent(ctx context.Context, p *PendingObject, reason string) error {
 	if err := e.resolveIntent(ctx, p.ObjectKey, p.IntentID); err != nil {
 		return err
 	}
-	e.queueIntent(p, reason)
+	if reason != "" {
+		e.queueIntent(p, reason)
+	}
 	return nil
 }
 

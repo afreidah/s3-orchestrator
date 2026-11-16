@@ -63,7 +63,6 @@ func Permissive(m *MockMetadataStore) {
 	r.GetObjectTags(a, a).Return(nil, nil).AnyTimes()
 	r.ReplaceObjectTags(a, a, a).Return(nil).AnyTimes()
 	r.DeleteObjectsBatch(a, a).Return(nil, nil).AnyTimes()
-	r.DeletePending(a, a).Return(nil).AnyTimes()
 	r.DiscardPending(a, a, a).Return(nil, nil).AnyTimes()
 	r.ApplyUsageBatch(a, a).Return(nil).AnyTimes()
 	r.GetActiveMultipartCounts(a).Return(map[string]int64{}, nil).AnyTimes()

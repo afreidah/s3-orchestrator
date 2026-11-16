@@ -82,7 +82,7 @@ func TestPgAdapter_ClearPendingForKey_ReportsEachKey(t *testing.T) {
 		}, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending: %v", err)
 		}
-		defer func() { _ = s.DeletePending(ctx, id) }()
+		defer func() { _ = s.direct().DeletePending(ctx, id) }()
 	}
 	keep := uniqueKey(t, "i-keep")
 	withPgAdapter(t, s, func(a *pgTxAdapter) {

@@ -267,7 +267,7 @@ func TestCompleteDrain_WaitsForAnUploadAdmittedBefore(t *testing.T) {
 	if completes(t, s, drainBackendName) {
 		t.Fatal("completed while a write admitted before the drain was still uploading")
 	}
-	if err := s.DeletePending(context.Background(), "in-flight"); err != nil {
+	if err := s.direct().DeletePending(context.Background(), "in-flight"); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 	if !completes(t, s, drainBackendName) {

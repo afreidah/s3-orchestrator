@@ -25,12 +25,6 @@ import (
 // PENDING OBJECT OPERATIONS
 // -------------------------------------------------------------------------
 
-// DeletePending removes a pending intent outside any transaction, which the
-// reaper does when a HEAD finds the intent's bytes never landed.
-func (s *Store) DeletePending(ctx context.Context, intentID string) error {
-	return s.direct().DeletePending(ctx, intentID)
-}
-
 // GetStalePending returns pending intents whose created_at is at or before
 // olderThan, oldest first, capped at limit rows. Used by the reaper to
 // resolve intents that have outlived their original PUT's commit window.

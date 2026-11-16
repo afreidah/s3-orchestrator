@@ -244,7 +244,7 @@ func TestPending_ReaperRespectsMinAge(t *testing.T) {
 	// Wait briefly to keep the test fast; explicit cleanup avoids
 	// leaking the row into later tests if resetState ordering changes.
 	_ = time.Now()
-	if err := testStore.DeletePending(ctx, intent.IntentID); err != nil {
-		t.Fatalf("DeletePending cleanup: %v", err)
+	if _, err := testStore.DiscardPending(ctx, intent, ""); err != nil {
+		t.Fatalf("DiscardPending cleanup: %v", err)
 	}
 }

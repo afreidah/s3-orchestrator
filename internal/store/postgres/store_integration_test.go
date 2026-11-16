@@ -382,7 +382,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
-		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+		defer func(id string) { _ = s.direct().DeletePending(ctx, id) }(p.IntentID)
 	}
 	// The second write commits the copy that answered its client, which clears
 	// the first write's intent and keeps its own still-running one.
@@ -442,7 +442,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
-		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+		defer func(id string) { _ = s.direct().DeletePending(ctx, id) }(p.IntentID)
 	}
 	// The write that placed them committed its first copy on backend-a and
 	// then died; both companions outlived it.
@@ -674,7 +674,7 @@ func TestStoreInt_RecordPart_LostIntentQueuesTheUpload(t *testing.T) {
 	ctx := context.Background()
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
 	intent := partIntent(t, s, uploadID, 1, "lost", 64)
-	if err := s.DeletePending(ctx, intent.IntentID); err != nil {
+	if err := s.direct().DeletePending(ctx, intent.IntentID); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 
@@ -1036,7 +1036,7 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		if fits, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil || !fits {
 			t.Fatalf("InsertPendingIfFits %s: fits=%v err=%v", p.IntentID, fits, err)
 		}
-		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+		defer func(id string) { _ = s.direct().DeletePending(ctx, id) }(p.IntentID)
 	}
 	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Size: 1024,
@@ -1604,7 +1604,7 @@ func TestStoreInt_DeleteObjectsBatch_ClearsIntentsOfAKeyWithNoCopies(t *testing.
 	if _, err := s.InsertPendingIfFits(ctx, &p, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPendingIfFits: %v", err)
 	}
-	defer func() { _ = s.DeletePending(ctx, p.IntentID) }()
+	defer func() { _ = s.direct().DeletePending(ctx, p.IntentID) }()
 
 	got, err := s.DeleteObjectsBatch(ctx, []string{key})
 	if err != nil {

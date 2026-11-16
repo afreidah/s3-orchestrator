@@ -208,20 +208,6 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectsBatch(ctx, keys any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectsBatch", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectsBatch), ctx, keys)
 }
 
-// DeletePending mocks base method.
-func (m *MockCoordinatorStores) DeletePending(ctx context.Context, intentID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeletePending", ctx, intentID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeletePending indicates an expected call of DeletePending.
-func (mr *MockCoordinatorStoresMockRecorder) DeletePending(ctx, intentID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePending", reflect.TypeOf((*MockCoordinatorStores)(nil).DeletePending), ctx, intentID)
-}
-
 // DiscardPending mocks base method.
 func (m *MockCoordinatorStores) DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()

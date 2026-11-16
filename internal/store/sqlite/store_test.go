@@ -1474,7 +1474,7 @@ func TestRecordPart_LostIntentQueuesTheUpload(t *testing.T) {
 	path := core.PartPath(uploadID, 1)
 	written := path + "!lost"
 	intent := mustClaimCopyIntent(t, s, path, "backend-a", written, 64, core.AcceptForPart)
-	if err := s.DeletePending(ctx, intent.IntentID); err != nil {
+	if err := s.direct().DeletePending(ctx, intent.IntentID); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 

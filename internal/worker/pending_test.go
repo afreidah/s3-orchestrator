@@ -106,8 +106,8 @@ func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 }
 
 // TestProcessPendingQueue_HeadNotFoundDropsIntent verifies a 404 from the
-// backend HEAD removes the pending row: bytes never landed, nothing to
-// recover.
+// backend HEAD discards the pending row with no cleanup reason: bytes never
+// landed, nothing to recover, and the discard counts the key again.
 func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	t.Parallel()
 	r, ops, _, be, ms := setupReaper(t)
@@ -123,8 +123,8 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
-	if len(ms.deletedPendingIDs) != 1 {
-		t.Errorf("deletedPendingIDs = %v, want one entry", ms.deletedPendingIDs)
+	if len(ms.deletedPendingIDs) != 1 || ms.discardReasons[0] != "" {
+		t.Errorf("discarded %v with reasons %q, want one entry with no reason", ms.deletedPendingIDs, ms.discardReasons)
 	}
 }
 
@@ -496,17 +496,17 @@ func TestDropIntent_Head404(t *testing.T) {
 }
 
 // failingDeleteStore wraps mockMetadataStore and returns an error from
-// DeletePending so we can exercise dropIntent's failure branch.
+// DiscardPending so we can exercise dropIntent's failure branch.
 type failingDeleteStore struct {
 	*mockMetadataStore
 	deleteErr error
 }
 
-// DeletePending returns the configured deleteErr unconditionally so
+// DiscardPending returns the configured deleteErr unconditionally so
 // the reaper's drop-intent path can be exercised against a transient
 // DB failure without standing up a real database.
-func (f *failingDeleteStore) DeletePending(_ context.Context, _ string) error {
-	return f.deleteErr
+func (f *failingDeleteStore) DiscardPending(context.Context, *core.PendingObject, string) ([]core.CleanupItem, error) {
+	return nil, f.deleteErr
 }
 
 // TestDropIntent_DeleteFailureCountedAsFailed verifies that when the

@@ -258,7 +258,7 @@ func TestPgAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
 	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
-	defer func() { _ = s.DeletePending(ctx, intentID) }()
+	defer func() { _ = s.direct().DeletePending(ctx, intentID) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		got, err := a.ClaimPending(ctx, intentID)
@@ -308,7 +308,7 @@ func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
 	if _, err := s.InsertPendingIfFits(ctx, &want, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
-	defer func() { _ = s.DeletePending(ctx, intentID) }()
+	defer func() { _ = s.direct().DeletePending(ctx, intentID) }()
 
 	rows, err := s.GetStalePending(ctx, time.Now().Add(time.Hour), 1000)
 	if err != nil {
@@ -348,7 +348,7 @@ func TestPgInsertPending_NullableFieldsOmitted(t *testing.T) {
 	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
-	defer func() { _ = s.DeletePending(ctx, intentID) }()
+	defer func() { _ = s.direct().DeletePending(ctx, intentID) }()
 
 	rows, err := s.GetStalePending(ctx, time.Now().Add(time.Hour), 1000)
 	if err != nil {
