@@ -1,12 +1,13 @@
 // -------------------------------------------------------------------------------
-// Usage Flush Fleet Snapshot Tests
+// Capacity Warning Tests
 //
 // Author: Alex Freidah
 //
-// Covers the fleet snapshot across two instances sharing one Redis. The fleet
-// snapshot service computes the fleet gauges and the replication status on
-// one instance; every other instance must serve that result, not whatever it
-// last computed itself, and must not recompute a snapshot that is still fresh.
+// Covers capacity warnings across two instances sharing one Redis. Every
+// instance refreshes the gauges on its own flush tick, so without the shared
+// marker each one would warn for a full backend on every tick; with it the
+// fleet warns once per window. The tests capture the event emitter, so none
+// run in parallel.
 // -------------------------------------------------------------------------------
 
 package di
@@ -27,11 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
-	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // -------------------------------------------------------------------------
@@ -148,104 +148,93 @@ func (failingPipeline) Exec(context.Context) ([]redis.Cmder, error) {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// redisInstance is one instance's usage tracker and metrics collector.
-type redisInstance struct {
-	usage   *counter.UsageTracker
-	metrics *metrics.Collector
-}
-
-// newRedisInstance builds one instance's collector through
-// ProvideMetricsCollector, the provider production uses, with Redis configured
-// and backed by shared.
-func newRedisInstance(t *testing.T, shared *memoryRedis) redisInstance {
+// newCollector builds one instance's collector through ProvideMetricsCollector,
+// the provider production uses. With shared set, Redis is configured and
+// backed by it; without, the instance runs alone.
+func newCollector(t *testing.T, shared *memoryRedis) *metrics.Collector {
 	t.Helper()
-	cfg := &config.Config{Redis: &config.RedisConfig{
-		Address:          "memory",
-		KeyPrefix:        "fleet-test",
-		FailureThreshold: 3,
-		OpenTimeout:      time.Second,
-	}}
+	cfg := &config.Config{}
 	names := []string{"b1"}
+	inj := do.New()
+	if shared != nil {
+		cfg.Redis = &config.RedisConfig{Address: "memory", KeyPrefix: "fleet-test", FailureThreshold: 3, OpenTimeout: time.Second}
+		rb := counter.NewRedisCounterBackend(shared, cfg.Redis, names)
+		t.Cleanup(func() { _ = rb.Close() })
+		do.ProvideValue(inj, rb)
+	}
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(store)
 
-	rb := counter.NewRedisCounterBackend(shared, cfg.Redis, names)
-	t.Cleanup(func() { _ = rb.Close() })
-
-	inj := do.New()
 	do.ProvideValue(inj, cfg)
 	do.ProvideValue(inj, config.NewLive(cfg))
 	do.ProvideValue(inj, &BackendsResult{Backends: map[string]backend.ObjectBackend{}, Order: names})
 	do.ProvideValue[metrics.Deps](inj, store)
-	do.ProvideValue(inj, rb)
 	do.ProvideValue(inj, instanceid.ID(t.Name()))
 	do.Provide(inj, ProvideSharedState)
 	do.Provide(inj, ProvideUsageTracker)
+	do.Provide(inj, ProvideBackendRuntime)
 
 	mc, err := ProvideMetricsCollector(inj)
 	if err != nil {
 		t.Fatalf("ProvideMetricsCollector: %v", err)
 	}
-	return redisInstance{usage: do.MustInvoke[*counter.UsageTracker](inj), metrics: mc}
+	return mc
 }
+
+// capacityWarnings counts the capacity warnings published while the test runs.
+func capacityWarnings(t *testing.T) *int {
+	t.Helper()
+	var n int
+	event.SetEmitter(func(ev event.Event) {
+		if ev.Type == event.BackendCapacityWarning {
+			n++
+		}
+	})
+	t.Cleanup(func() { event.SetEmitter(nil) })
+	return &n
+}
+
+// fullBackend is a quota read with b1 past the capacity threshold.
+var fullBackend = map[string]core.QuotaStat{"b1": {BackendName: "b1", BytesUsed: 900, BytesLimit: 1000}}
 
 // -------------------------------------------------------------------------
 // TESTS
 // -------------------------------------------------------------------------
 
-// fleetTick runs one fleet snapshot service tick on mc under locker.
-func fleetTick(mc *metrics.Collector, locker core.AdvisoryLocker) {
-	NewFleetSnapshotService(mc, locker, time.Minute).(*tickrunner.Service).Tick(context.Background())
-}
-
-// TestUsageFlushService_ServesPublishedFleetSnapshot computes the snapshot on
-// one instance and runs a flush tick on another, both sharing a Redis. The second must then report the first's replication
-// status. Serving its own instead is how the admin API, and every client
-// behind a load balancer, saw the replication counts flip between instances.
-func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
-	t.Parallel()
+// TestCapacityWarning_OncePerFleet refreshes the gauges on two instances
+// sharing a Redis, twice each. The first refresh warns and sets the marker,
+// and every other one finds it standing.
+func TestCapacityWarning_OncePerFleet(t *testing.T) {
+	warnings := capacityWarnings(t)
 	shared := newMemoryRedis()
-	computer := newRedisInstance(t, shared)
-	other := newRedisInstance(t, shared)
+	instances := []*metrics.Collector{newCollector(t, shared), newCollector(t, shared)}
 
-	fleetTick(computer.metrics, testx.Locker{})
-	if err := newUsageFlush(&UsageFlushDeps{
-		Flusher: sharedCounterFlusher{},
-		Tracker: other.usage,
-		Fleet:   other.metrics,
-		States:  noStates{},
-		Config:  defaultFlush,
-	}).flushTick(context.Background()); err != nil {
-		t.Fatalf("flushTick: %v", err)
+	for range 2 {
+		for _, mc := range instances {
+			if err := mc.RefreshGauges(context.Background(), fullBackend); err != nil {
+				t.Fatalf("RefreshGauges: %v", err)
+			}
+		}
 	}
-
-	want := computer.metrics.ReplicationSnapshot(context.Background())
-	got := other.metrics.ReplicationSnapshot(context.Background())
-	if !want.Ready {
-		t.Fatalf("fleet tick computed no replication snapshot: %+v", want)
-	}
-	if !got.Ready || !got.ComputedAt.Equal(want.ComputedAt) {
-		t.Errorf("flush tick serves %+v, want the published %+v", got, want)
+	if *warnings != 1 {
+		t.Errorf("capacity warnings = %d, want 1 across the fleet", *warnings)
 	}
 }
 
-// TestFleetSnapshotService_FreshSnapshotIsNotRecomputed runs the fleet tick on
-// two instances in turn. The second finds a snapshot younger than half the
-// interval and applies it, so the ledger is scanned once per interval however
-// many instances take the lock.
-func TestFleetSnapshotService_FreshSnapshotIsNotRecomputed(t *testing.T) {
-	t.Parallel()
-	shared := newMemoryRedis()
-	first := newRedisInstance(t, shared)
-	second := newRedisInstance(t, shared)
+// TestCapacityWarning_SingleInstanceWarnsEachRefresh verifies an instance
+// without shared state keeps no marker, and leaves spacing the events to the
+// notifier's dampener.
+func TestCapacityWarning_SingleInstanceWarnsEachRefresh(t *testing.T) {
+	warnings := capacityWarnings(t)
+	mc := newCollector(t, nil)
 
-	fleetTick(first.metrics, testx.Locker{})
-	published := first.metrics.ReplicationSnapshot(context.Background())
-	fleetTick(second.metrics, testx.Locker{})
-
-	got := second.metrics.ReplicationSnapshot(context.Background())
-	if !published.Ready || !got.ComputedAt.Equal(published.ComputedAt) {
-		t.Errorf("second tick published %+v, want the fresh snapshot %+v left in place", got, published)
+	for range 2 {
+		if err := mc.RefreshGauges(context.Background(), fullBackend); err != nil {
+			t.Fatalf("RefreshGauges: %v", err)
+		}
+	}
+	if *warnings != 2 {
+		t.Errorf("capacity warnings = %d, want one per refresh", *warnings)
 	}
 }

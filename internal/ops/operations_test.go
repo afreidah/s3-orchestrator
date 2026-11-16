@@ -103,11 +103,6 @@ func (emptyEncAdmin) ListCopiesByForm(context.Context, *core.FormFilter, int, co
 	return nil, nil
 }
 
-// CountCopiesByForm counts no locations.
-func (emptyEncAdmin) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, nil
-}
-
 // UpdateCopyMetadata is a no-op.
 func (emptyEncAdmin) UpdateCopyMetadata(_ context.Context, _ *core.ObjectLocation, _ *core.CopyPatch) error {
 	return nil
@@ -1153,9 +1148,9 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 	}
 }
 
-// TestCountSurplus_ReportsBacklog asserts the surplus count is the queue's over
-// side, reported with the running factor.
-func TestCountSurplus_ReportsBacklog(t *testing.T) {
+// TestCountBacklog_ReportsBothSides asserts the backlog is the queue's two
+// sides, reported with the running factor.
+func TestCountBacklog_ReportsBothSides(t *testing.T) {
 	t.Parallel()
 	svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
 		opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
@@ -1163,12 +1158,33 @@ func TestCountSurplus_ReportsBacklog(t *testing.T) {
 			return core.ReplicationBacklog{Under: 3, Over: 7}, nil
 		}))
 
-	res, err := svc.CountSurplus(context.Background())
+	res, err := svc.CountBacklog(context.Background())
 	if err != nil {
-		t.Fatalf("CountSurplus: %v", err)
+		t.Fatalf("CountBacklog: %v", err)
 	}
-	if res.Factor != 2 || res.Pending != 7 {
-		t.Errorf("res = %+v, want factor=2 pending=7", res)
+	if res != (Backlog{Factor: 2, Under: 3, Over: 7}) {
+		t.Errorf("res = %+v, want factor=2 under=3 over=7", res)
+	}
+}
+
+// TestCountBacklog_DisabledReportsTheFactor asserts a disabled replication
+// reports its factor with ErrReplicationDisabled and reads nothing.
+func TestCountBacklog_DisabledReportsTheFactor(t *testing.T) {
+	t.Parallel()
+	svc := NewReplication(ReplicationDeps{
+		Replicator: opstest.NewMockReplicator(gomock.NewController(t)),
+		OverRep:    opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
+		Backlog: backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
+			t.Error("a disabled backlog read the queue")
+			return core.ReplicationBacklog{}, nil
+		}),
+		Locker: testx.Locker{},
+		Config: config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 1}}),
+	})
+
+	res, err := svc.CountBacklog(context.Background())
+	if !errors.Is(err, ErrReplicationDisabled) || res != (Backlog{Factor: 1}) {
+		t.Errorf("CountBacklog = %+v, %v; want factor 1 with ErrReplicationDisabled", res, err)
 	}
 }
 
@@ -1520,7 +1536,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 		}
 	})
 
-	t.Run("count surplus", func(t *testing.T) {
+	t.Run("count backlog", func(t *testing.T) {
 		t.Parallel()
 		svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
 			opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
@@ -1528,7 +1544,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 				return core.ReplicationBacklog{}, errBackend
 			}))
 
-		if _, err := svc.CountSurplus(context.Background()); !errors.Is(err, errBackend) {
+		if _, err := svc.CountBacklog(context.Background()); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the store failure", err)
 		}
 	})

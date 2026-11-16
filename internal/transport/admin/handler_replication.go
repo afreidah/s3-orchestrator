@@ -14,11 +14,11 @@
 package admin
 
 import (
-	"context"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -60,7 +60,7 @@ func (h *Handler) handleReplicationRebuild(w http.ResponseWriter, r *http.Reques
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	res, err := h.d.Ops.Replication.CountSurplus(r.Context())
+	res, err := h.d.Ops.Replication.CountBacklog(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
 			Outcome: adminapi.Outcome{Status: adminstream.OutcomeSkipped, Reason: reason},
@@ -75,7 +75,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
 		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
 		Factor:  res.Factor,
-		Pending: res.Pending,
+		Pending: res.Over,
 	})
 }
 
@@ -89,30 +89,20 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	h.servePass(w, r, CleanExcessPass(h.d.Ops, batchSize))
 }
 
-// -------------------------------------------------------------------------
-// CONSUMER INTERFACE
-// -------------------------------------------------------------------------
-
-// replicationSnapshotter is the narrow view of the metrics collector the
-// replication-status endpoint needs; *metrics.Collector satisfies it.
-type replicationSnapshotter interface {
-	ReplicationSnapshot(ctx context.Context) metrics.ReplicationSnapshot
-}
-
-// handleReplicationStatus returns the last-computed replication backlog
-// (under-replicated and over-replicated counts plus the factor), served from
-// the fleet snapshot so it can be polled cheaply and every instance gives the
-// same answer. Returns 503 when no snapshot has been computed yet.
+// handleReplicationStatus returns the replication backlog, the under- and
+// over-replicated counts plus the factor, read from the replication queue so
+// every instance gives the same answer. With replication disabled the counts
+// are zero.
 func (h *Handler) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	snap := h.d.ReplMetrics.ReplicationSnapshot(r.Context())
-	if !snap.Ready {
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "replication status not yet computed")
+	backlog, err := h.d.Ops.Replication.CountBacklog(r.Context())
+	if err != nil && !errors.Is(err, ops.ErrReplicationDisabled) {
+		httputil.InternalError(r.Context(), h.log, w, "failed to count the replication backlog", err)
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicationStatusResponse{
-		Factor:          snap.Factor,
-		UnderReplicated: snap.UnderReplicated,
-		OverReplicated:  snap.OverReplicated,
-		ComputedAt:      snap.ComputedAt,
+		Factor:          backlog.Factor,
+		UnderReplicated: backlog.Under,
+		OverReplicated:  backlog.Over,
+		ComputedAt:      time.Now(),
 	})
 }

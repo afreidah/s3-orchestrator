@@ -26,14 +26,20 @@ CREATE TABLE IF NOT EXISTS backend_quotas (
     updated_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
--- A backend's stored byte total, split across stripe rows so concurrent writers
--- take different row locks. The total is the sum; an individual stripe is
--- signed and carries no meaning on its own.
+-- A backend's ledger figures, split across stripe rows so concurrent writers
+-- take different row locks, and by the stored form and managed flag of the
+-- copies each row counts. A figure is the sum over a backend's rows; an
+-- individual row is signed and carries no meaning on its own.
 CREATE TABLE IF NOT EXISTS backend_quota_stripes (
-    backend_name TEXT    NOT NULL REFERENCES backend_quotas(backend_name) ON DELETE CASCADE,
-    stripe_id    INTEGER NOT NULL,
-    bytes_used   INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (backend_name, stripe_id)
+    backend_name   TEXT    NOT NULL REFERENCES backend_quotas(backend_name) ON DELETE CASCADE,
+    stripe_id      INTEGER NOT NULL,
+    form           INTEGER NOT NULL DEFAULT 0,
+    managed        INTEGER NOT NULL DEFAULT 1,
+    copies         INTEGER NOT NULL DEFAULT 0,
+    bytes_used     INTEGER NOT NULL DEFAULT 0,
+    object_bytes   INTEGER NOT NULL DEFAULT 0,
+    never_scrubbed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (backend_name, stripe_id, form, managed)
 );
 
 -- Track which backend stores which object (composite PK supports replication).
@@ -453,4 +459,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (36);
+INSERT INTO schema_version (version) VALUES (37);

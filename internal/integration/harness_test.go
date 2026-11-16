@@ -269,7 +269,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 	// zero ceiling. Production primes it from backend_quotas before serving;
 	// the harness has to do the same or the limits SyncQuotaLimits just wrote
 	// are invisible to routing.
-	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+	if _, err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 		t.Fatalf("prime harness quota baselines: %v", err)
 	}
 	if spec.Integrity != nil {
@@ -388,7 +388,7 @@ func (h *harness) compressionAlgorithm(key string) string {
 // the usage service does on its own tick.
 func (h *harness) refreshQuota() {
 	h.t.Helper()
-	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+	if _, err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 		h.t.Fatalf("refreshQuota: %v", err)
 	}
 }
@@ -494,7 +494,7 @@ func (h *harness) setQuota(backendName string, limit int64) {
 	}
 	// Admission reads the ceiling from the tracker, not the row, so the new
 	// limit means nothing until the baseline is reloaded.
-	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+	if _, err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 		h.t.Fatalf("setQuota(%s, %d): refresh baselines: %v", backendName, limit, err)
 	}
 }

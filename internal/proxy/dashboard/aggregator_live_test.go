@@ -8,7 +8,7 @@
 // along, and which are refusing any call. Drain progress is best-effort, so
 // the interesting cases are the ones where a dependency is absent or errors.
 //
-// These exercise the aggregator directly against the DashboardStore and
+// These exercise the aggregator directly against the DirectoryLister and
 // FleetView mocks and a fixed snapshot instead of standing up a full proxy
 // stack.
 // -------------------------------------------------------------------------------
@@ -32,18 +32,18 @@ import (
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// newStubStore returns a DashboardStore mock whose reads the aggregator makes
+// newStubStore returns a DirectoryLister mock whose reads the aggregator makes
 // succeed with an empty result, so each test states only the calls it cares
 // about.
-func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
-	store := storetest.NewMockDashboardStore(ctrl)
+func newStubStore(ctrl *gomock.Controller) *storetest.MockDirectoryLister {
+	store := storetest.NewMockDirectoryLister(ctrl)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	return store
 }
 
-// emptySnapshot is a complete fleet snapshot of an empty fleet: every map
-// present and empty, so the aggregator does not treat it as incomplete.
+// emptySnapshot is a fleet snapshot of an empty fleet, with every map present
+// and empty.
 func emptySnapshot() *metrics.FleetSnapshot {
 	return &metrics.FleetSnapshot{
 		Quota:     map[string]core.QuotaStat{},

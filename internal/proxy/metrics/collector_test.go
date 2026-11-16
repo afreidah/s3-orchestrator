@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// Metrics Collector - Replication Snapshot Tests
+// Metrics Collector - Test Doubles and Plaintext Gauge Tests
 //
 // Author: Alex Freidah
 //
-// Covers the replication snapshot the collector retains for the admin endpoint:
-// under- and over-replicated counts when replication is enabled, and a ready,
-// zeroed snapshot when it is disabled.
+// Holds the canned store and scrub sweep the collector tests read through, and
+// covers the plaintext-copies gauge: published on the periodic path, and left
+// as it was when the ledger read behind it fails.
 // -------------------------------------------------------------------------------
 
 package metrics
@@ -27,90 +27,82 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// fakeReplicationDeps is a metrics.Deps returning canned replication and
-// plaintext figures, and nothing for the other reads.
-type fakeReplicationDeps struct {
-	under     int64
-	over      int64
-	plaintext int64
-	countErr  error
+// fakeStore is a metrics.Deps returning canned fleet figures: its quota stats,
+// ledger, multipart counts and the scrub queue's head, or ledgerErr from the
+// ledger read. The capacity lock is free unless lockBusy is set.
+type fakeStore struct {
+	stats     map[string]core.QuotaStat
+	ledger    core.LedgerStats
+	multipart map[string]int64
+	head      []core.ObjectLocation
+	ledgerErr error
+	lockBusy  bool
+	reached   *[]string
 }
 
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-func (fakeReplicationDeps) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
-	return nil, nil
+func (f *fakeStore) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
+	return f.stats, nil
 }
-func (f fakeReplicationDeps) LedgerStats(context.Context) (core.LedgerStats, error) {
-	if f.countErr != nil {
-		return nil, f.countErr
+
+func (f *fakeStore) LedgerStats(context.Context) (core.LedgerStats, error) {
+	return f.ledger, f.ledgerErr
+}
+
+func (f *fakeStore) GetActiveMultipartCounts(context.Context) (map[string]int64, error) {
+	return f.multipart, nil
+}
+
+// GetLeastRecentlyScrubbedObjects returns the canned head and records the
+// backends the read was scoped to in reached.
+func (f *fakeStore) GetLeastRecentlyScrubbedObjects(_ context.Context, _ int, backends []string, _ time.Time) ([]core.ObjectLocation, error) {
+	if f.reached != nil {
+		*f.reached = backends
 	}
-	return core.LedgerStats{"b1": {Plaintext: f.plaintext}}, nil
-}
-func (fakeReplicationDeps) GetActiveMultipartCounts(context.Context) (map[string]int64, error) {
-	return nil, nil
-}
-func (fakeReplicationDeps) GetUsageSince(context.Context, map[string]time.Time) (map[string]core.WorkloadUsage, error) {
-	return nil, nil
-}
-func (f fakeReplicationDeps) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
-	return core.ReplicationBacklog{Under: f.under, Over: f.over}, nil
+	return f.head, nil
 }
 
-// testCollector builds a collector over d as given, without the fleet interval
-// New defaults, so a test that never ticks leaves it zero.
+func (*fakeStore) GetUsageSince(context.Context, map[string]time.Time) (map[string]core.WorkloadUsage, error) {
+	return nil, nil
+}
+
+// WithAdvisoryLock runs fn unless the lock is held elsewhere.
+func (f *fakeStore) WithAdvisoryLock(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+	if f.lockBusy {
+		return false, nil
+	}
+	return true, fn(ctx)
+}
+
+// scrubReach is a ScrubSweep over fixed backends, sweeping or not.
+type scrubReach struct {
+	reachable []string
+	sweeping  bool
+}
+
+func (s scrubReach) ReachableBackends() []string { return s.reachable }
+func (s scrubReach) Sweeping() bool              { return s.sweeping }
+
+// testCollector builds a collector over d, scoping coverage to b1 with the
+// sweep running when d names no scrub sweep of its own.
 func testCollector(d CollectorDeps) *Collector {
+	if d.Scrub == nil {
+		d.Scrub = scrubReach{reachable: []string{"b1"}, sweeping: true}
+	}
 	return &Collector{d: d, log: slog.Default()}
 }
 
-func TestCollector_ReplicationSnapshot(t *testing.T) {
-	t.Parallel()
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 2, over: 5},
-		ReplicationFactor: func() int { return 2 },
-	})
-
-	if mc.ReplicationSnapshot(context.Background()).Ready {
-		t.Error("snapshot should not be ready before the first compute")
-	}
-
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-	snap := mc.ReplicationSnapshot(context.Background())
-	if !snap.Ready || snap.Factor != 2 || snap.UnderReplicated != 2 || snap.OverReplicated != 5 {
-		t.Errorf("snapshot = %+v", snap)
-	}
-	if snap.ComputedAt.IsZero() {
-		t.Error("ComputedAt should be set")
-	}
-}
-
-func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
-	t.Parallel()
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{},
-		ReplicationFactor: func() int { return 1 },
-	})
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-	snap := mc.ReplicationSnapshot(context.Background())
-	if !snap.Ready || snap.Factor != 1 || snap.UnderReplicated != 0 || snap.OverReplicated != 0 {
-		t.Errorf("disabled snapshot = %+v", snap)
-	}
-}
+// -------------------------------------------------------------------------
+// TESTS
+// -------------------------------------------------------------------------
 
 // TestCollector_PublishesPlaintextCopies keeps the figure refreshing on the
 // periodic path. Computing it only when the web UI asks would leave a
 // Prometheus-only deployment reading a gauge that never moves.
 func TestCollector_PublishesPlaintextCopies(t *testing.T) {
-	mc := testCollector(CollectorDeps{Store: fakeReplicationDeps{plaintext: 17}})
+	mc := testCollector(CollectorDeps{Store: &fakeStore{ledger: core.LedgerStats{"b1": {Plaintext: 17}}}})
 
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
+	if err := mc.refreshFleet(context.Background(), nil); err != nil {
+		t.Fatalf("refreshFleet: %v", err)
 	}
 
 	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 17 {
@@ -123,10 +115,10 @@ func TestCollector_PublishesPlaintextCopies(t *testing.T) {
 // would read as a fully encrypted fleet.
 func TestCollector_PlaintextCountFailureLeavesGauge(t *testing.T) {
 	telemetry.EncryptionPlaintextCopies.Set(9)
-	mc := testCollector(CollectorDeps{Store: fakeReplicationDeps{plaintext: 0, countErr: errors.New("ledger unavailable")}})
+	mc := testCollector(CollectorDeps{Store: &fakeStore{ledgerErr: errors.New("ledger unavailable")}})
 
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
+	if err := mc.refreshFleet(context.Background(), nil); err == nil {
+		t.Fatal("refreshFleet succeeded without a ledger")
 	}
 
 	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 9 {

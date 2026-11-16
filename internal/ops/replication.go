@@ -34,11 +34,12 @@ const maxCleanBatchSize = 10000
 // TYPES
 // -------------------------------------------------------------------------
 
-// SurplusCount reports how many objects currently hold more copies than the
-// running factor calls for.
-type SurplusCount struct {
-	Factor  int
-	Pending int64
+// Backlog reports the queued replication backlog at the running factor: how
+// many objects hold fewer copies than it calls for, and how many hold more.
+type Backlog struct {
+	Factor int
+	Under  int64
+	Over   int64
 }
 
 // QueueRebuild reports a rebuild of the replication queue: the factor it
@@ -91,19 +92,19 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	})
 }
 
-// CountSurplus reports the queued over-replication backlog at the running
-// factor.
-func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
-	runCfg, err := r.runConfig()
-	if err != nil {
-		return SurplusCount{}, err
+// CountBacklog reports the queued replication backlog at the running factor.
+// With replication disabled it reports the factor alone, with
+// ErrReplicationDisabled.
+func (r *Replication) CountBacklog(ctx context.Context) (Backlog, error) {
+	factor := r.d.Config.Load().Replication.Factor
+	if factor <= 1 {
+		return Backlog{Factor: factor}, ErrReplicationDisabled
 	}
-
 	backlog, err := r.d.Backlog.CountReplicationQueue(ctx)
 	if err != nil {
-		return SurplusCount{}, err
+		return Backlog{}, err
 	}
-	return SurplusCount{Factor: runCfg.Factor, Pending: backlog.Over}, nil
+	return Backlog{Factor: factor, Under: backlog.Under, Over: backlog.Over}, nil
 }
 
 // RebuildQueue rebuilds the replication queue from the ledger at the running

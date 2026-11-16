@@ -39,7 +39,7 @@ All UI API endpoints are mounted under the configured UI path (default: `/ui`). 
 
 ### GET /ui/api/dashboard
 
-Returns the full dashboard data. Quota, object, multipart, integrity, plaintext and compression figures come from the fleet snapshot and can be up to one `telemetry.metrics.fleet_interval` old; usage, drain and health figures are live.
+Returns the full dashboard data. Every figure is read for the request: quota, object, multipart, integrity, plaintext and compression figures from the counters the writes keep, and usage, drain and health figures from the running fleet.
 
 **Response:**
 

@@ -114,7 +114,7 @@ type RebalanceSummary struct {
 // caller can report progress as the cycle runs. A cycle that attempted a move
 // publishes RebalanceCompleted, whether a tick or an operator ran it.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadRebalance, Refresh: r.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadRebalance}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (RebalanceSummary, error) {
 		audit.Log(ctx, "rebalance.start",
 			slog.String("strategy", string(cfg.Strategy)),

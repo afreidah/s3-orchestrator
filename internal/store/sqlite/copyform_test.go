@@ -230,25 +230,24 @@ func TestListCopiesByForm_Masks(t *testing.T) {
 	}
 }
 
-// TestCountCopiesByForm_MatchesTheListing verifies the count reports exactly
-// what the listing would return for the same masks, so a dashboard figure and
-// the pass it describes cannot disagree.
-func TestCountCopiesByForm_MatchesTheListing(t *testing.T) {
+// TestLedgerStats_CountsEveryForm verifies the counters each write charged
+// agree with a recount of the rows, so a dashboard figure and the pass it
+// describes cannot disagree: reconcile finds no drift, and the unreadable and
+// plaintext figures name the forms the listing would return.
+func TestLedgerStats_CountsEveryForm(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
-	if n, err := s.CountCopiesByForm(ctx, 0, 0); err != nil || n != 0 {
-		t.Fatalf("empty store count = %d, %v; want 0", n, err)
-	}
 	seedForms(t, s)
-	for _, tc := range formMaskCases {
-		n, err := s.CountCopiesByForm(ctx, tc.with, tc.without)
-		if err != nil {
-			t.Fatalf("CountCopiesByForm: %v", err)
-		}
-		if n != int64(len(tc.want)) {
-			t.Errorf("with %s without %s counted %d, want %d", tc.with, tc.without, n, len(tc.want))
-		}
+
+	if drift, err := s.ReconcileUsage(context.Background()); err != nil || len(drift) != 0 {
+		t.Fatalf("ReconcileUsage = %v, %v; want no drift", drift, err)
+	}
+	ledger := ledgerOf(t, s)
+	if n := ledger.UnreadableCopies(); n != 1 {
+		t.Errorf("unreadable copies = %d, want %s alone", n, keyLost)
+	}
+	if n := ledger.PlaintextCopies(); n != 3 {
+		t.Errorf("plaintext copies = %d, want %s, %s and %s", n, keyPlain, keyHashed, keyPacked)
 	}
 }
 

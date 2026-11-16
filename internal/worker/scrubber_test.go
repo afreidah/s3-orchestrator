@@ -26,14 +26,11 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -443,6 +440,7 @@ func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
 		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true},
 		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 102, Encrypted: true},
 	}
+	ms.ledger = core.LedgerStats{"b1": {Objects: 2, Unreadable: 2}}
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/a", "unreadable_purged", int64(508)))
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/b", "unreadable_purged", int64(102)))
 
@@ -584,29 +582,6 @@ func TestScrub_StampsEveryAttempt(t *testing.T) {
 	}
 }
 
-// TestScrub_ReportsCoverage verifies the cycle publishes how far behind
-// verification is, which is the figure operators alert on.
-// Deliberately not parallel: the assertions read process-wide gauges that
-// every other scrub test overwrites through reportCoverage, so running
-// alongside them reads whichever cycle finished last.
-func TestScrub_ReportsCoverage(t *testing.T) {
-	s, _, _, _, ms := setupScrubber(t)
-
-	ms.ledger = core.LedgerStats{"b1": {
-		Verifiable: 42, NeverVerified: 42, OldestTouched: time.Now().Add(-36 * time.Hour),
-	}}
-
-	passOf(t)(s.Scrub(context.Background(), 10, "", nil))
-
-	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 42 {
-		t.Errorf("never-verified gauge = %v, want 42", got)
-	}
-	want := (36 * time.Hour).Seconds()
-	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got < want || got > want+60 {
-		t.Errorf("oldest-unverified gauge = %v, want about %v", got, want)
-	}
-}
-
 // TestScrub_SurvivesBookkeepingFailures verifies the cycle still completes when
 // the ledger writes that follow a verification fail. The scrub result is what
 // matters; a failed stamp or row removal is logged and retried next sweep
@@ -620,7 +595,6 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 	}
 	ms.markScrubbedErr = errors.New("stamp failed")
 	ms.deleteLocationErr = errors.New("row removal failed")
-	ms.ledgerErr = errors.New("coverage query failed")
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
@@ -772,8 +746,10 @@ func reserveScrubber(t *testing.T, spent int64, reserve *float64) (*Scrubber, *c
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, tracker)
 
-	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
-	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve})
+	s := NewScrubber(&ScrubberDeps{
+		Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms,
+		Config: syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve}),
+	})
 	return s, tracker, ms
 }
 
@@ -820,7 +796,7 @@ func TestScrubber_ReachableBackendsHonourTheReserve(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s, _, _ := reserveScrubber(t, tc.spent, tc.reserve)
-			if got := s.ReachableBackends(); !slices.Equal(got, tc.want) {
+			if got := s.budget.ReachableBackends(); !slices.Equal(got, tc.want) {
 				t.Errorf("ReachableBackends = %v, want %v", got, tc.want)
 			}
 		})
@@ -830,7 +806,7 @@ func TestScrubber_ReachableBackendsHonourTheReserve(t *testing.T) {
 		t.Parallel()
 		s, tracker, _ := reserveScrubber(t, 900, nil)
 		tracker.SetBaselines(nil)
-		if got := s.ReachableBackends(); !slices.Equal(got, []string{"b1", "b2"}) {
+		if got := s.budget.ReachableBackends(); !slices.Equal(got, []string{"b1", "b2"}) {
 			t.Errorf("ReachableBackends = %v, want both once the month resets", got)
 		}
 	})
@@ -856,42 +832,23 @@ func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
 	}
 }
 
-// TestScrub_DeferredCopiesReportSeparately checks that deferred copies get
-// their own gauge: they are not reported as verified, and are kept out of the
-// age gauge, which they would otherwise peg to wall clock.
+// TestScrub_DeferredCopiesReportSeparately checks that the due copies on a
+// backend the sweep cannot afford are reported as deferred rather than as
+// verified.
 func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
-	ms := &mockMetadataStore{
-		deferredCandidates: 40,
-		ledger: core.LedgerStats{
-			"b1": {Verifiable: 1, NeverVerified: 1, OldestTouched: time.Now().Add(-time.Hour)},
-			"b2": {Verifiable: 40, NeverVerified: 40, OldestTouched: time.Now().Add(-72 * time.Hour)},
-		},
-	}
+	ms := &mockMetadataStore{deferredCandidates: 40}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	expectUsage(ops, limitedUsage(t))
 
 	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, NewMockPlacement(ctrl)), Store: ms, Config: defaultIntegrity})
-	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := passOf(t)(s.Scrub(context.Background(), 10, "", nil))
 	if sum.Deferred != 40 {
 		t.Fatalf("Deferred = %d, want 40", sum.Deferred)
-	}
-
-	// Coverage is scoped to exactly the backends the batch drew from. Any
-	// wider and it would count copies no sweep can stamp, which pegs the age
-	// gauge to wall clock and leaves it there.
-	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got >= (72 * time.Hour).Seconds() {
-		t.Errorf("age gauge = %v, want the unreachable b2 backlog excluded", got)
-	}
-
-	// The backlog the deferred copies represent is still reported, on its own
-	// gauge: a fleet nobody can afford to verify must not read as a clean one.
-	if got := promtest.ToFloat64(telemetry.IntegrityDeferredCopies); got != 40 {
-		t.Errorf("deferred gauge = %v, want 40: the sweep could not reach those copies", got)
 	}
 }
 
@@ -1129,10 +1086,12 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 		{ObjectKey: "bucket/big", BackendName: "b1", SizeBytes: 4096, ContentHash: hashString("x")},
 	}
 
-	s := NewScrubber(&ScrubberDeps{Fleet: fleetOf(ops, pl), Store: ms, Config: defaultIntegrity})
 	// No reserve, so the backend passes the batch split and only the copy's own
 	// size is refused.
-	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)})
+	s := NewScrubber(&ScrubberDeps{
+		Fleet: fleetOf(ops, pl), Store: ms,
+		Config: syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)}),
+	})
 
 	sum := passOf(t)(s.Scrub(context.Background(), 10, "", nil))
 	if sum.Failed != 0 {

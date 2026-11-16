@@ -11,43 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const backendObjectStats = `-- name: BackendObjectStats :one
-SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
-FROM object_locations
-WHERE backend_name = $1
-`
-
-type BackendObjectStatsRow struct {
-	ObjectCount int64
-	TotalBytes  int64
-}
-
-func (q *Queries) BackendObjectStats(ctx context.Context, backendName string) (BackendObjectStatsRow, error) {
-	row := q.db.QueryRow(ctx, backendObjectStats, backendName)
-	var i BackendObjectStatsRow
-	err := row.Scan(&i.ObjectCount, &i.TotalBytes)
-	return i, err
-}
-
-const countCopiesByForm = `-- name: CountCopiesByForm :one
-SELECT count(*) FROM object_locations
-WHERE (form & $1::bigint) = $1::bigint
-  AND (form & $2::bigint) = 0
-`
-
-type CountCopiesByFormParams struct {
-	WithFlags    int64
-	WithoutFlags int64
-}
-
-// How many copies carry every bit of with_flags and none of without_flags.
-func (q *Queries) CountCopiesByForm(ctx context.Context, arg CountCopiesByFormParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countCopiesByForm, arg.WithFlags, arg.WithoutFlags)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
 SELECT count(DISTINCT object_key)
 FROM object_locations
@@ -257,7 +220,8 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 }
 
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
-SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
+SELECT object_key, backend_name, storage_key, size_bytes, created_at, form,
+    managed, object_size, (last_scrubbed_at IS NOT NULL)::bool AS scrubbed
 FROM object_locations
 WHERE object_key = ANY($1::text[])
 FOR UPDATE
@@ -270,10 +234,13 @@ type GetExistingCopiesForUpdateRow struct {
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
 	Form        int64
+	Managed     bool
+	ObjectSize  int64
+	Scrubbed    bool
 }
 
 // Every copy of the listed keys, locked so the same transaction can delete the
-// rows and move their quota. storage_key comes along because the caller that
+// rows and move their counters. storage_key comes along because the caller that
 // deletes these rows also deletes their bytes, and a per-write path cannot be
 // derived from the object key.
 func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKeys []string) ([]GetExistingCopiesForUpdateRow, error) {
@@ -292,6 +259,9 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKeys []s
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.Form,
+			&i.Managed,
+			&i.ObjectSize,
+			&i.Scrubbed,
 		); err != nil {
 			return nil, err
 		}

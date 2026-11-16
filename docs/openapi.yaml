@@ -1144,7 +1144,7 @@ paths:
                     description: Missing or invalid SigV4 credentials
     /admin/api/replication:
         get:
-            summary: Replication backlog snapshot
+            summary: Replication backlog
             operationId: getReplication
             responses:
                 "200":

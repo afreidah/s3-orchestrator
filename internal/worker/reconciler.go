@@ -58,13 +58,6 @@ func (r ReconcileResult) AuditAttrs() []slog.Attr {
 	)
 }
 
-// Changed says the pass imported or removed a ledger row.
-//
-//nolint:gocritic // hugeParam: value receiver, as every cycle.Result has, so a pass can return its zero result alongside an error.
-func (r ReconcileResult) Changed() bool {
-	return r.Imported > 0 || r.Removed > 0
-}
-
 // add folds one backend's scan into the result.
 func (r *ReconcileResult) add(s *ReconcileResult) {
 	r.Imported += s.Imported
@@ -110,15 +103,13 @@ type Reconciler struct {
 }
 
 // ReconcilerDeps groups what a pass draws on: the diff engine, the fleet it
-// walks, the buckets it recognises, the counters it corrects once the diff has
-// landed, and the quota gauges it refreshes once a pass changed what they
-// report.
+// walks, the buckets it recognises, and the counters it corrects once the diff
+// has landed.
 type ReconcilerDeps struct {
 	Syncer  BackendSyncer
 	Fleet   FleetOps
 	Usage   UsageReconciler
 	Buckets BucketNamer
-	Metrics cycle.Refresher
 }
 
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
@@ -129,7 +120,6 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.Usage", d.Usage)
 	must.NotNil("d.Buckets", d.Buckets)
-	must.NotNil("d.Metrics", d.Metrics)
 	return &Reconciler{d: *d, log: logfmt.Logger(string(audit.WorkloadReconcile))}
 }
 
@@ -144,7 +134,7 @@ var errNoBuckets = errors.New("no buckets declared")
 // any object the ledger does not track is imported. It then corrects the
 // usage counters' drift.
 func (r *Reconciler) Run(ctx context.Context) (ReconcileResult, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadReconcile}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (ReconcileResult, error) {
 		buckets, err := r.declared()
 		if err != nil {
@@ -169,7 +159,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	pass := cycle.Pass{Workload: audit.WorkloadReconcile, Refresh: r.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadReconcile}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (ReconcileResult, error) {
 		return r.pass(ctx, backends, buckets, observer, r.reconcileFully), nil
 	})

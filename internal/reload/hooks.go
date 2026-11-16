@@ -5,8 +5,8 @@
 //
 // One Hook implementation per subsystem that rebuilds state from a reload: TLS
 // cert rotator, the provisioning view (bucket set, credentials, CORS rules),
-// rate limiter, quota sync, per-backend usage limits, slog level, and the quota
-// gauges. Settings a component reads straight from the running configuration
+// rate limiter, quota sync, per-backend usage limits, and slog level. Settings
+// a component reads straight from the running configuration
 // need no hook. Each hook resolves its dependencies through the injector (or a
 // coordinator-owned handle for the cert reloader) so the coordinator stays a
 // plain orchestrator that does not import any individual subsystem.
@@ -24,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -53,7 +52,6 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 		&quotaSyncHook{inj: inj},
 		&usageLimitsHook{inj: inj},
 		&logLevelHook{level: logLevel},
-		&quotaMetricsHook{inj: inj},
 	}
 }
 
@@ -215,21 +213,4 @@ func (h *logLevelHook) Apply(_ context.Context, cfg *config.Config) (HookStatus,
 	level, _ := config.ParseLogLevel(cfg.Server.LogLevel)
 	h.level.Set(level)
 	return HookApplied, nil
-}
-
-// -------------------------------------------------------------------------
-// QUOTA METRICS
-// -------------------------------------------------------------------------
-
-// quotaMetricsHook refreshes the quota gauges, which the new limits and
-// replication factor change.
-type quotaMetricsHook struct {
-	inj do.Injector
-}
-
-func (*quotaMetricsHook) Name() string { return "quota_metrics" }
-func (h *quotaMetricsHook) Apply(ctx context.Context, _ *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "metrics collector", func(mc *metrics.Collector) error {
-		return mc.UpdateQuotaMetrics(ctx)
-	})
 }

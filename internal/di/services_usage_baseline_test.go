@@ -23,6 +23,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -33,9 +35,11 @@ import (
 // configured, so the flush tick takes the multi-instance path.
 type sharedCounterFlusher struct{}
 
-func (sharedCounterFlusher) RedisCounterConfigured() bool                  { return true }
-func (sharedCounterFlusher) FlushUsage(_ context.Context) error            { return nil }
-func (sharedCounterFlusher) RefreshQuotaBaselines(_ context.Context) error { return nil }
+func (sharedCounterFlusher) RedisCounterConfigured() bool       { return true }
+func (sharedCounterFlusher) FlushUsage(_ context.Context) error { return nil }
+func (sharedCounterFlusher) RefreshQuotaBaselines(_ context.Context) (map[string]core.QuotaStat, error) {
+	return nil, nil
+}
 
 // -------------------------------------------------------------------------
 // TESTS
@@ -70,9 +74,12 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 	svc := newUsageFlush(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
 		Tracker: rt.Usage(),
-		Fleet:   metrics.New(&metrics.CollectorDeps{Store: store, Usage: rt.Usage()}),
-		States:  noStates{},
-		Config:  defaultFlush,
+		Fleet: metrics.New(&metrics.CollectorDeps{
+			Store: store, Usage: rt.Usage(),
+			Scrub: worker.NewScrubBudget(rt, syncutil.Fixed(&config.IntegrityConfig{})),
+		}),
+		States: noStates{},
+		Config: defaultFlush,
 	})
 	if err := svc.flushTick(context.Background()); err != nil {
 		t.Fatalf("flushTick: %v", err)

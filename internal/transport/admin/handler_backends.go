@@ -141,7 +141,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
-	objectCount, totalBytes, err := h.d.StateStore.BackendObjectStats(r.Context(), name)
+	ledger, err := h.d.StateStore.LedgerStats(r.Context())
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "backend not found or stats unavailable")
 		return
@@ -151,8 +151,8 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, adminapi.RemoveBackendPreview{
 		Status:       "confirmation required",
 		Backend:      name,
-		ObjectCount:  objectCount,
-		TotalBytes:   totalBytes,
+		ObjectCount:  ledger[name].Objects,
+		TotalBytes:   ledger[name].StoredBytes,
 		ConfirmToken: token,
 		ExpiresIn:    int(removeConfirmTTL.Seconds()),
 	})

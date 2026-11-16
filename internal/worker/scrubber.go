@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -66,6 +65,7 @@ type Scrubber struct {
 	d      ScrubberDeps
 	log    *slog.Logger
 	hasher *storedHasher
+	budget *ScrubBudget
 }
 
 // ScrubberDeps groups the scrubber's constructor dependencies. Encryptor and
@@ -91,6 +91,7 @@ func NewScrubber(d *ScrubberDeps) *Scrubber {
 		d:       *d,
 		hasher:  newStoredHasher(d.Ops, d.Encryptor, d.Codec),
 		log:     logfmt.Logger(string(audit.WorkloadScrub)),
+		budget:  NewScrubBudget(d.Ops, d.Config),
 	}
 }
 
@@ -143,7 +144,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, obs
 
 // scrub is the body of Scrub after the span is open.
 func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
-	affordable, declined := s.affordableBackends()
+	affordable, declined := s.budget.split()
 	affordable = restrictToBackend(affordable, backend)
 
 	// One cutoff for both queries, so the deferred count and the batch describe
@@ -157,12 +158,6 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 
 	deferred := s.countDeferred(ctx, declined, scrubbedBefore)
 
-	// Published after the cycle so the gauges reflect the work just done.
-	// Deferred copies get their own gauge rather than being folded into the
-	// coverage age: the sweep cannot stamp them, so counting them there would
-	// pin the age to wall clock and no amount of scrubbing would lower it.
-	defer s.reportCoverage(ctx, affordable)
-
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
 	// object body, so a wider window can hammer the backends.
 	runner := batch.Runner[core.ObjectLocation]{
@@ -174,7 +169,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 		Key: func(l core.ObjectLocation) string { return l.ObjectKey + " [" + l.BackendName + "]" },
 	}
 	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-		return scrubResult(s.checkCopy(ctx, &loc, s.admits))
+		return scrubResult(s.checkCopy(ctx, &loc, s.budget.admits))
 	})
 	sum.Deferred = deferred
 	return sum, nil
@@ -201,36 +196,6 @@ func scrubResult(outcome CopyOutcome) batch.ItemResult {
 // value must not turn every pass into a full re-read of each backend.
 func (s *Scrubber) scrubbedBefore() time.Time {
 	return s.Config().ScrubbedBefore(time.Now())
-}
-
-// ReachableBackends returns the backends the scrub queue draws from right now,
-// so the dashboard scopes coverage to exactly the copies the sweep can stamp.
-func (s *Scrubber) ReachableBackends() []string {
-	affordable, _ := s.affordableBackends()
-	return affordable
-}
-
-// affordableBackends splits the fleet into the backends the scrubber can still
-// read from and the ones it has to leave alone. It checks only for headroom,
-// since no object is known yet; verifyOne re-checks against the real size.
-func (s *Scrubber) affordableBackends() (affordable, declined []string) {
-	for _, name := range s.d.Ops.BackendOrder() {
-		if s.admits(name, 0) {
-			affordable = append(affordable, name)
-		} else {
-			declined = append(declined, name)
-		}
-	}
-	return affordable, declined
-}
-
-// admits reports whether the sweep may read egress bytes from a backend. The
-// read is checked as if it also spent the scrub reserve, so the sweep stops
-// while that share of the monthly egress limit is still free for client reads,
-// which are checked against the whole limit.
-func (s *Scrubber) admits(backend string, egress int64) bool {
-	reserve := s.Config().ScrubReserve(s.d.Ops.Usage().GetLimits()[backend].EgressByteLimit)
-	return s.d.Ops.Acct().Allow(backend, s3op.GetObject, egress+reserve, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -262,24 +227,6 @@ func (s *Scrubber) countDeferred(ctx context.Context, declined []string, scrubbe
 	s.log.WarnContext(ctx, "scrub deferred copies on backends past their usage limit or scrub reserve",
 		"backends", declined, "copies", n)
 	return int(n)
-}
-
-// reportCoverage publishes how far behind verification is, which is what says
-// whether the scrubber is keeping up with the fleet rather than merely running.
-// reachable scopes the age and the never-verified count to the copies this
-// cycle could have read; the rest are published as deferred.
-func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
-	ledger, err := s.d.Store.LedgerStats(ctx)
-	if err != nil {
-		s.log.WarnContext(ctx, "failed to read scrub coverage", "error", err)
-		return
-	}
-	stat := ledger.Coverage(reachable, time.Now())
-	s.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourceScrubber, telemetry.WorkerGauges{
-		OldestUnverifiedSeconds: new(stat.OldestUnverifiedAge.Seconds()),
-		NeverVerifiedCopies:     &stat.NeverVerified,
-		DeferredCopies:          &stat.Deferred,
-	})
 }
 
 // checkCopy verifies one copy against its own stored hash, admitting the read
@@ -346,11 +293,11 @@ func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.Object
 	if err != nil {
 		return nil, 0, err
 	}
-	count, err := s.d.Store.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without)
+	ledger, err := s.d.Store.LedgerStats(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	return locs, count, nil
+	return locs, ledger.UnreadableCopies(), nil
 }
 
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize

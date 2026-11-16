@@ -178,7 +178,7 @@ Reading the detail:
 - **instance** - the instance that answered. Breaker state is each instance's own view, so behind a load balancer it can differ from one refresh to the next.
 - **usage** - storage and every usage limit as a bar against its ceiling, counted over the backend's own cycle, which starts on its `usage_reset_day` in its `usage_reset_timezone`. A request budget names the calls it charges, and those names turn red once the budget is used up, because the backend refuses them until the cycle resets.
 
-The pane polls every 10 seconds; press `r` to poll now. Quota and object counts can be up to one `telemetry.metrics.fleet_interval` old, while the usage counters are current. This is the interactive equivalent of `s3-orchestrator admin status`.
+The pane polls every 10 seconds; press `r` to poll now. Every figure is read on each poll. This is the interactive equivalent of `s3-orchestrator admin status`.
 
 ## Step 5: Watch recent activity
 

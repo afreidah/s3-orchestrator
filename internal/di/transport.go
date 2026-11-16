@@ -257,7 +257,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	states := r.Resolve[*backendstate.Manager]()
 	opsSvc := r.Resolve[*ops.Services]()
 	aggregator := r.Resolve[*dashboard.Aggregator]()
-	collector := r.Resolve[*metrics.Collector]()
 	live := r.Resolve[*config.Live]()
 	id := r.Resolve[instanceid.ID]()
 	shared := r.Resolve[*sharedstate.Shared]()
@@ -276,7 +275,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Dashboard:    aggregator,
 		Ops:          opsSvc,
 		States:       states,
-		ReplMetrics:  collector,
 		StateStore:   stores,
 		DBHealthy:    cb.IsHealthy,
 		WorkerHealth: func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) },

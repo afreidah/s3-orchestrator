@@ -328,7 +328,7 @@ func (h *Handler) routes() []route {
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathReplication, Handler: h.handleReplicationStatus,
-			Summary:  "Replication backlog snapshot",
+			Summary:  "Replication backlog",
 			Response: adminapi.ReplicationStatusResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},

@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -111,7 +112,9 @@ func newFleet(
 	return rt, Fleet{
 		Ops:       rt,
 		Placement: writepath.New(rt, store),
-		Metrics:   metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
+		Metrics: metrics.New(&metrics.CollectorDeps{
+			Store: store, Usage: usage, Scrub: NewScrubBudget(rt, syncutil.Fixed(&config.IntegrityConfig{})),
+		}),
 	}
 }
 

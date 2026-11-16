@@ -114,7 +114,7 @@ type ReplicationSummary struct {
 // attempted anything publishes ReplicationCompleted, whether a tick or an
 // operator ran it.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadReplication, Refresh: r.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadReplication}
 	sum, err := cycle.Run(ctx, pass, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
@@ -138,12 +138,6 @@ func (r *Replicator) RebuildQueue(ctx context.Context, cfg config.ReplicationCon
 // AuditAttrs adds the copies created to the tally's attributes.
 func (s ReplicationSummary) AuditAttrs() []slog.Attr {
 	return append(s.Summary.AuditAttrs(), slog.Int("copies_created", s.CopiesCreated))
-}
-
-// Changed says the cycle created a copy. An object can succeed without one,
-// when its copies reached the factor some other way.
-func (s ReplicationSummary) Changed() bool {
-	return s.CopiesCreated > 0
 }
 
 // replicate is the body of Replicate after observe.Run sets up the span.

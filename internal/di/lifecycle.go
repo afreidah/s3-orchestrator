@@ -143,7 +143,6 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		States:  states,
 		Config:  live.UsageFlush(),
 	}))
-	sm.Register(NewFleetSnapshotService(collector, locker, cfg.Telemetry.Metrics.FleetInterval))
 	sm.Register(breaker.NewWatchdog(registry))
 	if fr := Optional[*debug.FlightRecorderService](i).Get(ctx); fr != nil {
 		sm.Register(fr)

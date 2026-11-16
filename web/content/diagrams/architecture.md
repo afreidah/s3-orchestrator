@@ -7,7 +7,7 @@ weight: -1
 
 High-level architecture of the S3 Orchestrator showing the request path, storage layer, background services, and observability. **Hover over any component** for implementation details.
 
-The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush, the fleet snapshot and the circuit breaker watchdog, which run in every mode, plus the flight recorder when enabled and, with Redis, the provisioning watch, the cache watch and the instance report.
+The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush and the circuit breaker watchdog, which run in every mode, plus the flight recorder when enabled and, with Redis, the provisioning watch, the cache watch and the instance report.
 
 {{< diagram >}}
 
@@ -196,12 +196,12 @@ window.s3oDiagram = {
     WORKERS: {
       title: 'Background Workers',
       badge: 'background', badgeText: 'background workers',
-      body: '<p>The replicator, rebalancer, drainer, over-replication cleaner, cleanup queue, pending reaper, scrubber, reconciler, lifecycle expiration, multipart cleanup and fleet snapshot. Each runs on its own interval under an advisory lock, so only one instance works a given task at a time.</p><p>They read and write the metadata store, and move or delete bytes through backend selection and the per-backend circuit breakers. Most run only in <code>worker</code> or <code>all</code> mode.</p><p><a href="../background-services/">Background services diagram &rarr;</a></p>'
+      body: '<p>The replicator, rebalancer, drainer, over-replication cleaner, cleanup queue, pending reaper, scrubber, reconciler, lifecycle expiration and multipart cleanup. Each runs on its own interval under an advisory lock, so only one instance works a given task at a time.</p><p>They read and write the metadata store, and move or delete bytes through backend selection and the per-backend circuit breakers. Most run only in <code>worker</code> or <code>all</code> mode.</p><p><a href="../background-services/">Background services diagram &rarr;</a></p>'
     },
     PROM: {
       title: 'Prometheus Metrics',
       badge: 'observability', badgeText: 'observability',
-      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. The fleet-wide gauges are set by the fleet snapshot every <code>fleet_interval</code>. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open).</p>'
+      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. The fleet-wide gauges are read from the ledger counters on every usage flush. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open).</p>'
     },
     TEMPO: {
       title: 'OpenTelemetry Tracing',

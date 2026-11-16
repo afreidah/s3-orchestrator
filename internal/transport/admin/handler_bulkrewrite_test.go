@@ -47,11 +47,6 @@ func (emptyCompressionStore) ListCopiesByForm(context.Context, *core.FormFilter,
 	return nil, nil
 }
 
-// CountCopiesByForm counts no rows.
-func (emptyCompressionStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, nil
-}
-
 // UpdateCopyMetadata is never reached: the listing is empty.
 func (emptyCompressionStore) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil

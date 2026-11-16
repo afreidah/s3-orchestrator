@@ -911,10 +911,16 @@ func pgLedger(t *testing.T, s *Store) core.LedgerStats {
 	return ledger
 }
 
-// pgCoverage reads verification coverage over the reachable backends as of now.
+// pgCoverage reads verification coverage over the reachable backends as of
+// now, aged from the head of the scrub queue as the metrics collector does.
 func pgCoverage(t *testing.T, s *Store, reachable []string) core.CoverageStat {
 	t.Helper()
-	return pgLedger(t, s).Coverage(reachable, time.Now())
+	now := time.Now()
+	oldest, err := core.OldestTouched(context.Background(), s, reachable, now)
+	if err != nil {
+		t.Fatalf("OldestTouched: %v", err)
+	}
+	return pgLedger(t, s).Coverage(reachable, oldest, now)
 }
 
 // TestStoreInt_LedgerStats_CountsAndUnhashed verifies the grouped pass counts a
@@ -1968,13 +1974,16 @@ func TestStoreInt_LedgerStats_PlaintextCopies(t *testing.T) {
 		t.Errorf("count = %d after encrypting the copy, want %d", encrypted, before)
 	}
 
-	// The count and the list describe the same set.
+	// The count and the list describe the same set: the copy that left the
+	// count also left the listing encrypt-existing works through. The suite
+	// shares one database that other tests seed with raw SQL, so the totals
+	// themselves are not compared.
 	listed, err := s.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredEncrypted}, 10000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListCopiesByForm: %v", err)
 	}
-	if int64(len(listed)) != encrypted {
-		t.Errorf("count = %d but list returned %d rows", encrypted, len(listed))
+	if slices.ContainsFunc(listed, func(l core.ObjectLocation) bool { return l.ObjectKey == key }) {
+		t.Errorf("the encrypted copy of %s is still in the plaintext listing", key)
 	}
 }
 
@@ -2042,17 +2051,19 @@ func TestStoreInt_LedgerStats_CountsNeverVerifiedCopies(t *testing.T) {
 	reachable := []string{"backend-a", "backend-b"}
 
 	key := uniqueKey(t, "unverified-age")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	// Hashed at write rather than by backfill, which stamps, so the copy is
+	// hashed and unverified: the state the coverage figures are about.
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100, Form: &core.StoredForm{ContentHash: "abc123"},
+	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
-	// Hashed at write rather than by backfill, which stamps, so the copy is
-	// hashed and unverified: the state the coverage figures are about.
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE object_locations SET content_hash = 'abc123', created_at = NOW() - INTERVAL '48 hours'
+		`UPDATE object_locations SET created_at = NOW() - INTERVAL '48 hours'
 		 WHERE object_key = $1 AND backend_name = $2`, key, "backend-a",
 	); err != nil {
-		t.Fatalf("hashing at write and backdating created_at: %v", err)
+		t.Fatalf("backdating created_at: %v", err)
 	}
 
 	stat := pgCoverage(t, s, reachable)

@@ -5,20 +5,17 @@
 //
 // Owns Prometheus metric recording for manager operations and periodic gauge
 // refreshes from the metadata store. The monthly usage gauges and the usage
-// baselines limit checks compare against live here; the fleet-wide gauges and
-// the snapshot shared between instances live in fleet.go.
+// baselines limit checks compare against live here; the fleet-wide gauges live
+// in fleet.go.
 // -------------------------------------------------------------------------------
 
 package metrics
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -40,84 +37,61 @@ type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error)
 	core.UsageReader
-	CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error)
+	core.AdvisoryLocker
+}
+
+// ScrubSweep names the backends the scrub queue draws from right now, and says
+// whether the sweep runs at all. *worker.Scrubber satisfies it.
+type ScrubSweep interface {
+	ReachableBackends() []string
+	Sweeping() bool
 }
 
 // Collector records Prometheus metrics for manager-level operations and
-// periodically refreshes gauge values from the metadata store. snapMu guards
-// repSnap, the last-computed replication state served to admin, and lastSnap,
-// the last snapshot applied here, computed or loaded.
+// periodically refreshes gauge values from the metadata store.
 type Collector struct {
-	d        CollectorDeps
-	log      *slog.Logger
-	snapMu   sync.RWMutex
-	repSnap  ReplicationSnapshot
-	lastSnap *FleetSnapshot
+	d   CollectorDeps
+	log *slog.Logger
 }
 
-// CollectorDeps groups the metrics collector's constructor parameters.
-// ReplicationFactor returns 0 when replication is disabled. Shared is where
-// the fleet snapshot and worker gauges are published and read; nil, or one
-// without a store, is a single instance. FleetInterval is the snapshot
-// recompute cadence; zero means config.DefaultFleetInterval.
+// CollectorDeps groups the metrics collector's constructor parameters. Scrub
+// scopes the coverage figures. Shared is where worker gauges and capacity
+// warning markers are published and read; nil, or one without a store, is a
+// single instance.
 type CollectorDeps struct {
-	Store             Deps
-	Usage             *counter.UsageTracker
-	ReplicationFactor func() int
-	Shared            *sharedstate.Shared
-	FleetInterval     time.Duration
+	Store  Deps
+	Usage  *counter.UsageTracker
+	Scrub  ScrubSweep
+	Shared *sharedstate.Shared
 }
 
 // New creates a Collector with references to the store and usage tracker
 // needed for gauge refreshes.
 func New(d *CollectorDeps) *Collector {
-	mc := &Collector{d: *d, log: logfmt.Logger("metrics_collector")}
-	mc.d.FleetInterval = cmp.Or(d.FleetInterval, config.DefaultFleetInterval)
-	return mc
+	return &Collector{d: *d, log: logfmt.Logger("metrics_collector")}
 }
 
 // -------------------------------------------------------------------------
 // PERIODIC REFRESH
 // -------------------------------------------------------------------------
 
-// UpdateQuotaMetrics runs a full refresh: the fleet gauges and this
-// instance's usage baselines.
-func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
-	stats, err := mc.d.Store.GetQuotaStats(ctx)
-	if err != nil {
-		return err
+// RefreshGauges republishes the gauges the store backs: the fleet-wide figures,
+// the capacity warnings due, and this instance's usage with the baselines its
+// limit checks compare against. stats is a quota read the caller already made,
+// or nil to read it here.
+func (mc *Collector) RefreshGauges(ctx context.Context, stats map[string]core.QuotaStat) error {
+	if stats == nil {
+		read, err := mc.d.Store.GetQuotaStats(ctx)
+		if err != nil {
+			return err
+		}
+		stats = read
 	}
-	mc.refreshFleet(ctx, stats)
+	fleetErr := mc.refreshFleet(ctx, stats)
 	mc.updateUsageGauges(ctx, stats)
-	return nil
-}
-
-// UpdateFleetMetrics computes the fleet snapshot - quota bytes, object and
-// multipart counts, replication state and plaintext copies - applies it, and
-// publishes it for the other instances, which load it with LoadFleetMetrics.
-// Every instance would read the same values from the store, so with several
-// instances only one runs it.
-func (mc *Collector) UpdateFleetMetrics(ctx context.Context) error {
-	stats, err := mc.d.Store.GetQuotaStats(ctx)
-	if err != nil {
-		return err
-	}
-	mc.refreshFleet(ctx, stats)
-	return nil
-}
-
-// RefreshUsageBaselines reloads this period's usage from the store into the
-// tracker's baselines and republishes the usage gauges. Limit checks compare
-// against these baselines, so every instance must run it, whether or not it
-// flushed the counters itself.
-func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
-	stats, err := mc.d.Store.GetQuotaStats(ctx)
-	if err != nil {
-		return err
-	}
-	mc.updateUsageGauges(ctx, stats)
-	return nil
+	return fleetErr
 }
 
 // updateUsageGauges refreshes the tracker's cycle baselines, which the
@@ -129,16 +103,9 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 		return
 	}
 	usage := core.Totals(byWorkload)
-	for name := range stats {
-		telemetry.UsageAPIRequests.WithLabelValues(name).Set(0)
-		telemetry.UsageEgressBytes.WithLabelValues(name).Set(0)
-		telemetry.UsageIngressBytes.WithLabelValues(name).Set(0)
-	}
-	for name, u := range usage {
-		telemetry.UsageAPIRequests.WithLabelValues(name).Set(float64(u.APIRequests))
-		telemetry.UsageEgressBytes.WithLabelValues(name).Set(float64(u.EgressBytes))
-		telemetry.UsageIngressBytes.WithLabelValues(name).Set(float64(u.IngressBytes))
-	}
+	applyPerBackend(telemetry.UsageAPIRequests, stats, usage, func(u core.Usage) int64 { return u.APIRequests })
+	applyPerBackend(telemetry.UsageEgressBytes, stats, usage, func(u core.Usage) int64 { return u.EgressBytes })
+	applyPerBackend(telemetry.UsageIngressBytes, stats, usage, func(u core.Usage) int64 { return u.IngressBytes })
 	mc.updateLimitGauges(usage)
 	updateWorkloadGauges(byWorkload)
 }

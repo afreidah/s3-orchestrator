@@ -68,22 +68,25 @@ func stubOps(tx TxAdapter) TxOps {
 	return NewTxOps(&stubRunner{tx: tx}, 1)
 }
 
-// stripeRecordingTxStub captures each stripe charge statement: the rows it
-// wrote, their signed deltas and what they added up to.
+// stripeRecordingTxStub captures each counter charge statement: the rows it
+// wrote, their signed stored-byte deltas and what they added up to, and the
+// charges whole.
 type stripeRecordingTxStub struct {
 	noopTxAdapter
-	calls  int
-	rows   []stripeRow
-	deltas []int64
-	total  int64
+	calls   int
+	rows    []stripeCell
+	deltas  []int64
+	total   int64
+	charges []StripeCharge
 }
 
 func (s *stripeRecordingTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
 	s.calls++
 	for _, c := range charges {
-		s.rows = append(s.rows, stripeRow{c.Backend, c.Stripe})
-		s.deltas = append(s.deltas, c.Delta)
-		s.total += c.Delta
+		s.rows = append(s.rows, stripeCell{c.Backend, c.Stripe, c.Form, c.Managed})
+		s.deltas = append(s.deltas, c.StoredBytes)
+		s.total += c.StoredBytes
+		s.charges = append(s.charges, c)
 	}
 	return nil
 }
@@ -124,8 +127,8 @@ func TestLedgerEdit_RemovedCopiesQueueTheirOwnPaths(t *testing.T) {
 	tx := &stripeRecordingTxStub{}
 	e := newLedgerEdit(tx, 0)
 	old := []ExistingCopy{
-		{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old", SizeBytes: 100},
-		{ObjectKey: "k", BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
+		{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old", SizeBytes: 100, ObjectSize: 100},
+		{ObjectKey: "k", BackendName: "b2", StorageKey: "k!b", SizeBytes: 200, ObjectSize: 200},
 	}
 	if err := e.removeCopies(ctx, CleanupReasonOverwritten, []string{"k"}, old); err != nil {
 		t.Fatalf("removeCopies: %v", err)
@@ -248,7 +251,7 @@ func TestLedgerEdit_ChargesEachKeyOnItsStripeInOrder(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 	stripe := StripeFor("bucket/key")
-	want := []stripeRow{{"b1", stripe}, {"b2", stripe}, {"b3", stripe}}
+	want := []stripeCell{{"b1", stripe, 0, true}, {"b2", stripe, 0, true}, {"b3", stripe, 0, true}}
 	if tx.calls != 1 || !slices.Equal(tx.rows, want) || !slices.Equal(tx.deltas, []int64{50, -75, 100}) {
 		t.Errorf("calls=%d rows=%v deltas=%v, want one statement over %v with deltas [50 -75 100]", tx.calls, tx.rows, tx.deltas, want)
 	}
@@ -268,7 +271,7 @@ func TestLedgerEdit_NothingChangedWritesNothing(t *testing.T) {
 	if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 5}); err != nil {
 		t.Fatalf("insertCopy: %v", err)
 	}
-	e.debit(&ExistingCopy{ObjectKey: "k", BackendName: "b1", SizeBytes: 5})
+	e.debit(&ExistingCopy{ObjectKey: "k", BackendName: "b1", SizeBytes: 5, ObjectSize: 5})
 	if _, err := e.commit(ctx); err != nil || tx.calls != 0 {
 		t.Errorf("cancelled edit: calls=%d err=%v, want no statement", tx.calls, err)
 	}
@@ -308,24 +311,109 @@ func TestStripeDeltas_ChargeWritesEachRowOnceInOrder(t *testing.T) {
 	deltas := stripeDeltas{}
 	for i := range keys {
 		key := "bucket/key-" + strconv.Itoa(i)
-		deltas.add(key, "b", -1)
-		deltas.add(key, "a", -1)
+		deltas.add(key, copyGroup("b", 0, false, 1, 1, false), -1)
+		deltas.add(key, copyGroup("a", StoredHashed, true, 1, 1, false), -1)
+		deltas.add(key, copyGroup("a", StoredHashed, false, 1, 1, false), -1)
 	}
 
 	tx := &stripeRecordingTxStub{}
 	if err := deltas.charge(context.Background(), tx); err != nil {
 		t.Fatalf("charge: %v", err)
 	}
-	if len(tx.rows) != 2*QuotaStripeCount {
-		t.Fatalf("wrote %d rows, want %d: one per stripe of each backend", len(tx.rows), 2*QuotaStripeCount)
+	if len(tx.rows) != 3*QuotaStripeCount {
+		t.Fatalf("wrote %d rows, want %d: one per stripe of each counter", len(tx.rows), 3*QuotaStripeCount)
 	}
 	for i := 1; i < len(tx.rows); i++ {
-		prev, cur := tx.rows[i-1], tx.rows[i]
-		if prev.backend > cur.backend || (prev.backend == cur.backend && prev.stripe >= cur.stripe) {
+		if prev, cur := tx.rows[i-1], tx.rows[i]; compareCells(prev, cur) >= 0 {
 			t.Errorf("row %d out of order: %+v after %+v", i, cur, prev)
 		}
 	}
-	if tx.total != -2*keys {
-		t.Errorf("total = %d, want %d", tx.total, -2*keys)
+	if tx.total != -3*keys {
+		t.Errorf("total = %d, want %d", tx.total, -3*keys)
+	}
+}
+
+// TestLedgerEdit_CountsEachCopyItsOwnCounter verifies a recorded copy counts
+// in the group its recorded form names, never scrubbed, and a removed copy
+// comes off the group its locked row names: a stray key on an unencrypted copy
+// does not make it keyed, and a scrubbed copy takes no never-scrubbed count.
+func TestLedgerEdit_CountsEachCopyItsOwnCounter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tx := &stripeRecordingTxStub{}
+	e := newLedgerEdit(tx, 0)
+	stray := &ObjectLocation{
+		ObjectKey: "k", BackendName: "b1", SizeBytes: 40, Unmanaged: true,
+		ContentHash: "h", EncryptionKey: []byte("stray"), CompressionAlgorithm: "zstd", LogicalSize: 100,
+	}
+	if err := e.insertCopy(ctx, stray); err != nil {
+		t.Fatalf("insertCopy: %v", err)
+	}
+	e.debit(&ExistingCopy{ObjectKey: "k", BackendName: "b2", SizeBytes: 30, ObjectSize: 60, Form: StoredEncrypted, Scrubbed: true})
+	if _, err := e.commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	stripe := StripeFor("k")
+	want := []StripeCharge{
+		{Stripe: stripe, Backend: "b1", Form: StoredCompressed | StoredHashed, Managed: false,
+			Copies: 1, StoredBytes: 40, ObjectBytes: 100, NeverScrubbed: 1},
+		{Stripe: stripe, Backend: "b2", Form: StoredEncrypted, Managed: true,
+			Copies: -1, StoredBytes: -30, ObjectBytes: -60},
+	}
+	if !slices.Equal(tx.charges, want) {
+		t.Errorf("charges = %+v, want %+v", tx.charges, want)
+	}
+}
+
+// TestLedgerEdit_RestateMovesOnlyWhatChanged verifies a patch that backfills a
+// hash moves the copy to the hashed counter and clears its never-scrubbed
+// count, and one that changes neither its form nor its scrub state writes
+// nothing.
+func TestLedgerEdit_RestateMovesOnlyWhatChanged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	held := &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 10}
+
+	tx := &stripeRecordingTxStub{}
+	e := newLedgerEdit(tx, 0)
+	before, after := existingCopyOf(held), existingCopyOf((&CopyPatch{ContentHash: "h", Scrubbed: true}).applied(held))
+	e.restate(&before, &after)
+	if _, err := e.commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	stripe := StripeFor("k")
+	want := []stripeCell{{"b1", stripe, 0, true}, {"b1", stripe, StoredHashed, true}}
+	if !slices.Equal(tx.rows, want) || tx.charges[0].NeverScrubbed != -1 || tx.charges[1].NeverScrubbed != 0 {
+		t.Errorf("charges = %+v, want the copy moved to the hashed, scrubbed counter", tx.charges)
+	}
+
+	probe := &stripeRecordingTxStub{}
+	e = newLedgerEdit(probe, 0)
+	before, after = existingCopyOf(held), existingCopyOf((&CopyPatch{Probe: &CompressionProbe{Size: 5}}).applied(held))
+	e.restate(&before, &after)
+	if _, err := e.commit(ctx); err != nil || probe.calls != 0 {
+		t.Errorf("probe patch: calls=%d err=%v, want no statement", probe.calls, err)
+	}
+}
+
+// TestUpdateCopyMetadata_RefusesAChangedCopy verifies a patch to a copy gone
+// from its backend, or replaced there by a newer write, is ErrCopyChanged and
+// writes nothing, so a late scrub never stamps a newer write's row.
+func TestUpdateCopyMetadata_RefusesAChangedCopy(t *testing.T) {
+	t.Parallel()
+	loc := &ObjectLocation{ObjectKey: "key", BackendName: "b1", StorageKey: "key!a"}
+	for name, copies := range map[string][]ExistingCopy{
+		"gone":     nil,
+		"replaced": {{ObjectKey: "key", BackendName: "b1", StorageKey: "key!b"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tx := &statementCountTx{copies: copies}
+			err := stubOps(tx).UpdateCopyMetadata(context.Background(), loc, &CopyPatch{Scrubbed: true})
+			if !errors.Is(err, ErrCopyChanged) || len(tx.order) != 0 {
+				t.Errorf("err = %v after writes %v, want ErrCopyChanged and no write", err, tx.order)
+			}
+		})
 	}
 }

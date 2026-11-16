@@ -92,8 +92,8 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 	}
 
 	ctx := context.Background()
-	if err := b.metrics.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "initial quota metrics refresh failed",
+	if err := b.metrics.RefreshGauges(ctx, nil); err != nil {
+		slog.WarnContext(ctx, "initial gauge refresh failed",
 			logfmt.Component("runtime"),
 			"error", err,
 		)

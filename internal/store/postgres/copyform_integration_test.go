@@ -165,16 +165,6 @@ var pgMaskCases = []struct {
 	{0, core.StoredHashed, []string{suffixLost, suffixPlain}},
 }
 
-// pgCountByForm reads CountCopiesByForm, failing the test on error.
-func pgCountByForm(t *testing.T, s *Store, with, without core.StoredFlags) int64 {
-	t.Helper()
-	n, err := s.CountCopiesByForm(context.Background(), with, without)
-	if err != nil {
-		t.Fatalf("CountCopiesByForm: %v", err)
-	}
-	return n
-}
-
 // -------------------------------------------------------------------------
 // GENERATED COLUMNS
 // -------------------------------------------------------------------------
@@ -238,20 +228,27 @@ func TestStoreInt_ListCopiesByForm_Masks(t *testing.T) {
 	}
 }
 
-// TestStoreInt_CountCopiesByForm_MatchesTheListing verifies the count moves by
-// exactly what the listing returns for the same masks, so a dashboard figure
-// and the pass it describes cannot disagree.
-func TestStoreInt_CountCopiesByForm_MatchesTheListing(t *testing.T) {
+// TestStoreInt_LedgerStats_CountsEveryForm verifies the counters each write
+// charged move by exactly what the listing returns for the same forms, so a
+// dashboard figure and the pass it describes cannot disagree.
+func TestStoreInt_LedgerStats_CountsEveryForm(t *testing.T) {
 	s := adapterPgStore(t)
-	before := make([]int64, len(pgMaskCases))
-	for i, tc := range pgMaskCases {
-		before[i] = pgCountByForm(t, s, tc.with, tc.without)
-	}
-	seedMaskForms(t, s)
-	for i, tc := range pgMaskCases {
-		if delta := pgCountByForm(t, s, tc.with, tc.without) - before[i]; delta != int64(len(tc.want)) {
-			t.Errorf("with %s without %s counted %d more, want %d", tc.with, tc.without, delta, len(tc.want))
+	figures := func() (unreadable, plaintext int64) {
+		t.Helper()
+		ledger, err := s.LedgerStats(context.Background())
+		if err != nil {
+			t.Fatalf("LedgerStats: %v", err)
 		}
+		return ledger.UnreadableCopies(), ledger.PlaintextCopies()
+	}
+	unreadable, plaintext := figures()
+	seedMaskForms(t, s)
+	afterUnreadable, afterPlaintext := figures()
+	if got := afterUnreadable - unreadable; got != 1 {
+		t.Errorf("unreadable copies moved by %d, want %s alone", got, suffixLost)
+	}
+	if got := afterPlaintext - plaintext; got != 3 {
+		t.Errorf("plaintext copies moved by %d, want %s, %s and %s", got, suffixPlain, suffixHashed, suffixPacked)
 	}
 }
 

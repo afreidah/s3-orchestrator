@@ -128,6 +128,15 @@ func (f *StoredForm) ClientSize(stored int64) int64 {
 	}
 }
 
+// LastTouched is when the scrub queue last saw the copy: its last scrub, or
+// its write for a copy never scrubbed, the order the queue reads copies in.
+func (l *ObjectLocation) LastTouched() time.Time {
+	if l.LastScrubbedAt != nil {
+		return *l.LastScrubbedAt
+	}
+	return l.CreatedAt
+}
+
 // CopyAt returns this copy as it reads once its bytes are copied verbatim to
 // storageKey on backend. Every other column carries over, including the write
 // time clients see as Last-Modified, because the bytes are the same bytes.
@@ -143,7 +152,8 @@ func (l *ObjectLocation) CopyAt(backend, storageKey string) *ObjectLocation {
 // groups the rows of a batch by key.
 //
 // Form lets a caller choosing which copy to drop avoid destroying the last row
-// able to decrypt the object.
+// able to decrypt the object. Form, Unmanaged, ObjectSize and Scrubbed together
+// name the counters a removed copy is taken off.
 type ExistingCopy struct {
 	ObjectKey   string
 	BackendName string
@@ -151,6 +161,19 @@ type ExistingCopy struct {
 	SizeBytes   int64
 	CreatedAt   time.Time
 	Form        StoredFlags
+	Unmanaged   bool
+	ObjectSize  int64
+	Scrubbed    bool
+}
+
+// existingCopyOf projects a locked row read in full onto the fields a removal
+// takes off the ledger.
+func existingCopyOf(l *ObjectLocation) ExistingCopy {
+	return ExistingCopy{
+		ObjectKey: l.ObjectKey, BackendName: l.BackendName, StorageKey: l.StorageKey, SizeBytes: l.SizeBytes,
+		CreatedAt: l.CreatedAt, Form: l.Form(), Unmanaged: l.Unmanaged, ObjectSize: l.ObjectSize(),
+		Scrubbed: l.LastScrubbedAt != nil,
+	}
 }
 
 // The labels the store queues bytes under when the caller does not name one.
@@ -553,6 +576,23 @@ type CopyPatch struct {
 	ContentHash   string
 	Scrubbed      bool
 	Probe         *CompressionProbe
+}
+
+// applied returns the copy as the patch leaves it, for the counters the patch
+// moves it between. A field the patch leaves unset keeps the copy's own value.
+func (p *CopyPatch) applied(l *ObjectLocation) *ObjectLocation {
+	out := *l
+	if p.EncryptionKey != nil {
+		out.EncryptionKey = p.EncryptionKey
+	}
+	if p.ContentHash != "" {
+		out.ContentHash = p.ContentHash
+	}
+	if p.Scrubbed && out.LastScrubbedAt == nil {
+		stamped := time.Now()
+		out.LastScrubbedAt = &stamped
+	}
+	return &out
 }
 
 // -------------------------------------------------------------------------

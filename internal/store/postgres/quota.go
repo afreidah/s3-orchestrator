@@ -80,8 +80,8 @@ func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	}), nil
 }
 
-// LedgerStats returns every per-backend ledger figure from one grouped pass
-// over object_locations, folded by core.
+// LedgerStats returns every per-backend ledger figure from the ledger's
+// counters, folded by core.
 func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	rows, err := s.queries.LedgerGroups(ctx)
 	if err != nil {
@@ -91,14 +91,8 @@ func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	for i := range rows {
 		r := &rows[i]
 		groups[i] = core.LedgerGroup{
-			Backend:       r.BackendName,
-			Form:          core.StoredFlags(r.Form),
-			Managed:       r.Managed,
-			Copies:        r.Copies,
-			StoredBytes:   r.StoredBytes,
-			ObjectBytes:   r.ObjectBytes,
-			NeverScrubbed: r.NeverScrubbed,
-			OldestTouched: r.OldestTouched.Time,
+			Backend: r.BackendName, Form: core.StoredFlags(r.Form), Managed: r.Managed,
+			Copies: r.Copies, StoredBytes: r.StoredBytes, ObjectBytes: r.ObjectBytes, NeverScrubbed: r.NeverScrubbed,
 		}
 	}
 	return core.FoldLedger(groups), nil

@@ -481,10 +481,10 @@ func TestBrowser_OpensReplicationView(t *testing.T) {
 
 	waitForText(t, tm, "readme")
 	tm.Type("p") // jump to the replication section
-	// The snapshot-age line re-renders every auto-refresh tick, so it is the
+	// The read-at line re-renders every auto-refresh tick, so it is the
 	// reliable proof the stats (not the spinner) are on screen; the static
 	// lines render once and get diffed away on later frames.
-	waitForText(t, tm, "snapshot age")
+	waitForText(t, tm, "read at")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the sidebar
 
 	tm.Type("q")

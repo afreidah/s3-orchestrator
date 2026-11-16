@@ -63,7 +63,7 @@ func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Servi
 		worker.NewReplicationService(f.replicator, f.overRep, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
-			Buckets: declared, Metrics: f.stack.Metrics,
+			Buckets: declared,
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 		worker.NewDrainerService(f.stack.Drainer, locker),

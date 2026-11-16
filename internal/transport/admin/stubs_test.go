@@ -110,7 +110,7 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 	h.d.Ops.Replication = ops.NewReplication(ops.ReplicationDeps{
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
-		Backlog:    backlogStub{over: over.count, err: over.countErr},
+		Backlog:    backlogStub{under: repl.pending, over: over.count, err: over.countErr},
 		Locker:     testx.Locker{},
 		Config:     config.NewLive(running),
 	})
@@ -125,15 +125,16 @@ func backendsConfig(names ...string) *config.Live {
 	return config.NewLive(cfg)
 }
 
-// backlogStub reports a fixed over-replicated count, or err.
+// backlogStub reports fixed under- and over-replicated counts, or err.
 type backlogStub struct {
-	over int64
-	err  error
+	under int64
+	over  int64
+	err   error
 }
 
-// CountReplicationQueue returns the stub's count.
+// CountReplicationQueue returns the stub's counts.
 func (b backlogStub) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
-	return core.ReplicationBacklog{Over: b.over}, b.err
+	return core.ReplicationBacklog{Under: b.under, Over: b.over}, b.err
 }
 
 // rebalanceWith installs rebalance operations built from cfg, so a test can
@@ -188,6 +189,7 @@ type replicatorStub struct {
 	created int
 	failed  int
 	queued  int64
+	pending int64
 	err     error
 }
 

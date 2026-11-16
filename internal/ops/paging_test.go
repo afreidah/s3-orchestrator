@@ -33,7 +33,6 @@ func cursorAfter(key, backend string, after core.Cursor) bool {
 // rotation records the new key id, which takes the copy out of the listing for
 // the old one.
 type rotatingStore struct {
-	emptyEncAdmin
 	locs []core.ObjectLocation
 }
 

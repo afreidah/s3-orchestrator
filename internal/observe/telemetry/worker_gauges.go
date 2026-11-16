@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Some gauges describe state every instance shares - a queue's depth, how far
-// verification is behind - but only the instance holding the worker's advisory
-// lock on a tick computes them. WorkerGauges carries one worker's figures so
+// Some gauges describe state every instance shares - a queue's depth - but
+// only the instance holding the worker's advisory lock on a tick computes
+// them. WorkerGauges carries one worker's figures so
 // that instance can publish them and every instance serve the same values,
 // instead of each one exporting whatever it last computed before the lock
 // moved elsewhere.
@@ -20,7 +20,7 @@ import "context"
 const (
 	GaugeSourceCleanup       = "cleanup"
 	GaugeSourcePendingReaper = "pending_reaper"
-	GaugeSourceScrubber      = "scrubber"
+	GaugeSourceReplication   = "replication"
 	GaugeSourceRebalancer    = "rebalancer"
 	GaugeSourceNotifier      = "notifier"
 )
@@ -30,7 +30,7 @@ const (
 var GaugeSources = []string{
 	GaugeSourceCleanup,
 	GaugeSourcePendingReaper,
-	GaugeSourceScrubber,
+	GaugeSourceReplication,
 	GaugeSourceRebalancer,
 	GaugeSourceNotifier,
 }
@@ -38,14 +38,13 @@ var GaugeSources = []string{
 // WorkerGauges is one worker's published figures. A nil field is one that
 // worker does not own, and applying the value leaves that gauge untouched.
 type WorkerGauges struct {
-	CleanupQueueDepth       *int64   `json:"cleanup_queue_depth,omitempty"`
-	CleanupDLQDepth         *int64   `json:"cleanup_dlq_depth,omitempty"`
-	PendingIntentsDepth     *int64   `json:"pending_intents_depth,omitempty"`
-	OldestUnverifiedSeconds *float64 `json:"oldest_unverified_seconds,omitempty"`
-	NeverVerifiedCopies     *int64   `json:"never_verified_copies,omitempty"`
-	DeferredCopies          *int64   `json:"deferred_copies,omitempty"`
-	RebalancePending        *int64   `json:"rebalance_pending,omitempty"`
-	NotificationQueueDepth  *int64   `json:"notification_queue_depth,omitempty"`
+	CleanupQueueDepth      *int64 `json:"cleanup_queue_depth,omitempty"`
+	CleanupDLQDepth        *int64 `json:"cleanup_dlq_depth,omitempty"`
+	PendingIntentsDepth    *int64 `json:"pending_intents_depth,omitempty"`
+	ReplicationPending     *int64 `json:"replication_pending,omitempty"`
+	OverReplicationPending *int64 `json:"over_replication_pending,omitempty"`
+	RebalancePending       *int64 `json:"rebalance_pending,omitempty"`
+	NotificationQueueDepth *int64 `json:"notification_queue_depth,omitempty"`
 }
 
 // Apply sets every gauge the value carries.
@@ -53,9 +52,8 @@ func (g *WorkerGauges) Apply() {
 	setIf(CleanupQueueDepth.Set, g.CleanupQueueDepth)
 	setIf(CleanupDLQDepth.Set, g.CleanupDLQDepth)
 	setIf(PendingIntentsDepth.Set, g.PendingIntentsDepth)
-	setIf(IntegrityOldestUnverifiedSeconds.Set, g.OldestUnverifiedSeconds)
-	setIf(IntegrityNeverVerifiedCopies.Set, g.NeverVerifiedCopies)
-	setIf(IntegrityDeferredCopies.Set, g.DeferredCopies)
+	setIf(ReplicationPending.Set, g.ReplicationPending)
+	setIf(OverReplicationPending.Set, g.OverReplicationPending)
 	setIf(RebalancePending.Set, g.RebalancePending)
 	setIf(NotificationQueueDepth.Set, g.NotificationQueueDepth)
 }
@@ -66,9 +64,9 @@ type GaugePublisher interface {
 	PublishWorkerGauges(ctx context.Context, source string, g WorkerGauges)
 }
 
-// setIf sets a gauge from a value the snapshot carries, leaving it alone when
-// the snapshot has none.
-func setIf[T int64 | float64](set func(float64), v *T) {
+// setIf sets a gauge from a value the published figures carry, leaving it
+// alone when they have none.
+func setIf(set func(float64), v *int64) {
 	if v != nil {
 		set(float64(*v))
 	}

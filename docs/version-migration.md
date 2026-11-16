@@ -62,7 +62,27 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.180.x (current)
+### v0.181.x (current)
+
+**Fleet figures are counters the writes keep ([#1883](https://github.com/afreidah/s3-orchestrator/issues/1883), v0.181.0)**
+
+The fleet-wide gauges, the dashboard and `/admin/api/status` used to read their per-backend figures from a grouped pass over the whole ledger, which one instance ran every `telemetry.metrics.fleet_interval` and shared with the others. The transaction that changes a copy now charges the counters it counts in, so every instance reads the figures from a few rows on each usage flush, and the fleet snapshot service is gone. One migration (Postgres `00051`, SQLite `0037`) splits `backend_quota_stripes` by stored form and managed flag and rebuilds it from one grouped pass over `object_locations`.
+
+**Operator action items before upgrade:**
+
+- **Stop every instance on an older version before the first new one starts.** The migration changes the stripe table's primary key, so an older instance's writes fail once it has run.
+
+**Operator action items after upgrade:**
+
+- **`telemetry.metrics.fleet_interval` is removed.** The fleet gauges refresh on every `usage_flush.interval` (default 30s), and the dashboard and `/admin/api/status` read the counters on each request. A config that still sets it is accepted and the setting ignored.
+- **The `fleet_snapshot` service is gone** from `/admin/api/workers`, the TUI Workers pane and the worker metrics. Advisory lock `1013` is now held briefly by the instance raising capacity warnings.
+- **Capacity warnings are raised once an hour per backend across the fleet** with Redis, instead of once per hour by each instance that computed the snapshot.
+- **`s3o_replication_pending` and `s3o_over_replication_pending` are published after each replication tick** rather than every `fleet_interval`, and only while replication runs.
+- **The verification coverage gauges are published only while the scrubber runs** (`integrity.scrubber_interval` above zero).
+- **`/admin/api/replication` counts the replication queue on each request.** It no longer answers `503` before a first snapshot, and `computed_at` is the time of the read. The TUI Replication pane shows that time as `read at`.
+- **`ReconcileUsage` corrects every counter**, so a reconcile can now report a backend whose copy counts drifted with a byte correction of zero.
+
+### v0.180.x
 
 **Replication drains a queue instead of scanning the ledger ([#1903](https://github.com/afreidah/s3-orchestrator/issues/1903), v0.180.0)**
 

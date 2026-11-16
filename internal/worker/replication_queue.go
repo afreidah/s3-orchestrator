@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
 )
@@ -156,4 +157,18 @@ func (q *ReplicationQueue) finish(ctx context.Context, queued *core.QueuedReplic
 		return fmt.Errorf("release queued key %s: %w", queued.Key, err)
 	}
 	return nil
+}
+
+// publishDepths shares how many keys wait on each side of the queue with every
+// instance, at the end of a tick. A failed count leaves the gauges as they
+// were, since the depths are informational.
+func (q *ReplicationQueue) publishDepths(ctx context.Context, gauges telemetry.GaugePublisher) {
+	backlog, err := q.store.CountReplicationQueue(ctx)
+	if err != nil {
+		q.log.WarnContext(ctx, "failed to count the replication queue", "error", err)
+		return
+	}
+	gauges.PublishWorkerGauges(ctx, telemetry.GaugeSourceReplication, telemetry.WorkerGauges{
+		ReplicationPending: &backlog.Under, OverReplicationPending: &backlog.Over,
+	})
 }

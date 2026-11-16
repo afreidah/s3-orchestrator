@@ -52,7 +52,7 @@ window.s3oDiagram = {
     '        grants[grants]:::access',
     '    end',
     '',
-    '    backend_quotas -->|striped byte total| backend_quota_stripes',
+    '    backend_quotas -->|striped ledger counters| backend_quota_stripes',
     '    backend_quotas -->|tracks objects| object_locations',
     '    backend_quotas -->|tracks uploads| multipart_uploads',
     '    backend_quotas -->|hourly usage| backend_usage',
@@ -85,15 +85,20 @@ window.s3oDiagram = {
     backend_quota_stripes: {
       title: 'backend_quota_stripes',
       badge: 'core', badgeText: 'core table',
-      body: '<p>A backend\'s stored byte total, split across rows so concurrent writes do not queue. Row locks are per row, so writers landing on different stripes never wait on one another; the backend holds <code>QuotaStripeCount</code> (16) of them.</p>' +
+      body: '<p>A backend\'s ledger figures, split across rows so concurrent writes do not queue, and by the stored form and managed flag of the copies each row counts. Row locks are per row, so writers landing on different stripes never wait on one another; the backend holds <code>QuotaStripeCount</code> (16) stripes. The dashboard, the fleet gauges, drain progress and the removal preview sum these rows instead of scanning <code>object_locations</code>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY, FK to backend_quotas</td></tr>' +
         '<tr><td class="pk">stripe_id</td><td>SMALLINT</td><td>PRIMARY KEY; chosen from the object key, so a charge and the credit reversing it meet on one row</td></tr>' +
-        '<tr><td>bytes_used</td><td>BIGINT</td><td>Signed. A stripe carries no meaning alone and may sit negative; the backend total is the SUM, clamped at zero when read</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, stripe_id)</p>' +
-        '<p>Charged inside the same transaction that writes the <code>object_locations</code> rows it summarizes, so it cannot drift from the ledger. Usage reconciliation is an audit rather than a repair the counter depends on.</p>' +
+        '<tr><td class="pk">form</td><td>BIGINT</td><td>PRIMARY KEY; the stored form of the copies counted, as <code>object_locations.form</code></td></tr>' +
+        '<tr><td class="pk">managed</td><td>BOOLEAN</td><td>PRIMARY KEY; whether the copies counted are managed</td></tr>' +
+        '<tr><td>copies</td><td>BIGINT</td><td>Signed copy count</td></tr>' +
+        '<tr><td>bytes_used</td><td>BIGINT</td><td>Signed stored bytes. A row carries no meaning alone and may sit negative; the backend total is the SUM, clamped at zero when read</td></tr>' +
+        '<tr><td>object_bytes</td><td>BIGINT</td><td>Signed client-facing bytes, as <code>object_locations.object_size</code></td></tr>' +
+        '<tr><td>never_scrubbed</td><td>BIGINT</td><td>Signed count of copies with no scrub stamp</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, stripe_id, form, managed)</p>' +
+        '<p>Charged inside the same transaction that writes the <code>object_locations</code> rows it summarizes, so it cannot drift from the ledger. A metadata patch that changes a copy\'s form or first stamps it scrubbed moves it between rows in its own transaction. Usage reconciliation compares every figure to a grouped pass and is an audit rather than a repair the counters depend on.</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (admission and charging), <a href="../usage-quotas/">quota reporting</a>, <a href="../background-services/">reconcile</a>.</p>' +
-        '<p class="ac-metric">Key queries: AdjustQuotaStripe, ListBackendQuotaUsage, GetAllQuotaStats, ReconcileUsage (one statement that adds each backend\'s drift from the ledger to stripe zero), LockBackendsForClaim</p>'
+        '<p class="ac-metric">Key queries: AdjustQuotaStripes, GetAllQuotaStats, LedgerGroups, ReconcileUsage (one statement that adds each counter\'s drift from the ledger to stripe zero), LockBackendsForClaim</p>'
     },
     backend_request_usage: {
       title: 'backend_request_usage',
@@ -151,8 +156,8 @@ window.s3oDiagram = {
         '<tr><td>form</td><td>BIGINT</td><td>Generated from the columns above: the layers the stored bytes carry, compressed (1), encrypted (2), hashed (4) and keyed (8) when the row holds the key to its envelope. The rewrite passes, hash backfill, the unreadable purge and the ledger figures select on it with masks Go passes in, so what each bit means is defined once</td></tr>' +
         '<tr><td>object_size</td><td>BIGINT</td><td>Generated: the size the client wrote, which is logical_size for an encoded copy, plaintext_size for an encrypted one and size_bytes otherwise. Listings report it</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C") for the reconcile walk &bull; idx_object_locations_backend_storage_key_unique UNIQUE (backend_name, storage_key) &bull; idx_object_locations_listing (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, object_size, etag, managed) for key range listings &bull; idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed, for the drain walk &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
-        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replication</a> (RebuildReplicationQueue, and the counts ListReplicationQueue reads), fleet snapshot (LedgerStats), drain (ListObjectsByBackend), reconcile import (ListedPathStates), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
-        '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, RebuildReplicationQueue, BackendObjectStats, LedgerStats, ListedPathStates</p>'
+        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replication</a> (RebuildReplicationQueue, and the counts ListReplicationQueue reads), usage reconcile (ReconcileUsage), drain (ListObjectsByBackend), reconcile import (ListedPathStates), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
+        '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, RebuildReplicationQueue, ReconcileUsage, ListedPathStates</p>'
     },
     object_tags: {
       title: 'object_tags',
@@ -420,7 +425,7 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | Table | Purpose | Primary Key |
 |-------|---------|-------------|
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
-| **backend_quota_stripes** | A backend's stored byte total, split across rows so concurrent writes take different row locks | `(backend_name, stripe_id)` |
+| **backend_quota_stripes** | A backend's ledger counters (copies, stored bytes, object bytes, never-scrubbed copies), split across rows so concurrent writes take different row locks, and by stored form and managed flag | `(backend_name, stripe_id, form, managed)` |
 | **backend_request_usage** | Hourly call counts per named request budget, which is what admission charges against | `(backend_name, bucket_start, workload, pool)` |
 | **object_locations** | Maps objects to backends (supports replication) and records the path each copy occupies | `(object_key, backend_name)` |
 | **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
@@ -492,3 +497,4 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | `00048_pending_tagging` | Add `tagging` to `pending_objects`, so the pending reaper promotes an object with the tag set its write carried. SQLite (0035) |
 | `00049_listing_key_ranges` | Replace `idx_object_locations_key_pattern` and `idx_object_locations_key_collate_c_covering` with `idx_object_locations_listing (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, object_size, etag, managed)`, and `idx_multipart_uploads_key_pattern` with `idx_multipart_uploads_key_collate_c`, for listings that state a byte range rather than a LIKE pattern |
 | `00050_replication_queue` | Add `replication_queue` and `idx_replication_queue_due (direction, next_retry)`, so the replicator and the over-replication cleaner drain the keys off the factor instead of scanning `object_locations`. SQLite (0036) |
+| `00051_ledger_counters` | Split `backend_quota_stripes` by stored `form` and `managed` flag and add `copies`, `object_bytes` and `never_scrubbed` beside `bytes_used`, with the primary key grown to `(backend_name, stripe_id, form, managed)` and the counters rebuilt from one grouped pass onto stripe zero, so the ledger figures are read from a few rows instead of a scan of `object_locations`. SQLite (0037) rebuilds the table and recreates `backend_capacity` over it |

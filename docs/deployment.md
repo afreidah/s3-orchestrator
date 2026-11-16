@@ -55,7 +55,7 @@ By default, every instance runs both the HTTP API and all background workers (`-
 | Mode | HTTP API | Background workers | Use case |
 |------|----------|-------------------|----------|
 | `all` (default) | Yes | All background services | Single-instance or small deployments |
-| `api` | Yes | Usage flush, fleet snapshot and CB watchdog only | Scale-out API instances behind a load balancer |
+| `api` | Yes | Usage flush and CB watchdog only | Scale-out API instances behind a load balancer |
 | `worker` | Health, metrics and the admin API only | All background services | Dedicated background processing |
 
 ```bash
@@ -68,7 +68,7 @@ s3-orchestrator -config config.yaml -mode worker
 
 **How it works:**
 
-- **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing counters on restart and the fleet-snapshot service that feeds the fleet gauges and dashboard, but skip every other advisory-locked background task.
+- **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service, which keeps counters from being lost on restart and republishes the fleet gauges, but skip every advisory-locked background task.
 - **Worker instances** run all background services and expose `/health`, `/health/ready`, `/metrics` and the admin API, but don't serve S3 traffic or the web UI.
 - Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** - only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held. The circuit breaker watchdog runs on all instances without a lock (it operates on per-instance circuit state).
 

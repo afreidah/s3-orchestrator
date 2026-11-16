@@ -685,31 +685,17 @@ func (r *recountRun) stored(stage string, c ledgerCopy) []byte {
 	return got
 }
 
-// checkQuota requires every backend's stripes to sum to the bytes its ledger
-// rows record.
+// checkQuota requires every ledger counter, bytes, copies, object bytes and
+// never-scrubbed copies, to agree with a recount of the copies, which a
+// reconcile that finds nothing to correct shows.
 func (r *recountRun) checkQuota(stage string) {
 	r.t.Helper()
-	rows, err := r.h.db.Query(`SELECT q.backend_name, COALESCE(s.total, 0), COALESCE(l.total, 0)
-		FROM backend_quotas q
-		LEFT JOIN (SELECT backend_name, SUM(bytes_used) AS total FROM backend_quota_stripes GROUP BY 1) s USING (backend_name)
-		LEFT JOIN (SELECT backend_name, SUM(size_bytes) AS total FROM object_locations GROUP BY 1) l USING (backend_name)
-		ORDER BY 1`)
+	drift, err := r.h.store.ReconcileUsage(context.Background())
 	if err != nil {
-		r.t.Fatalf("%s: recount quota: %v", stage, err)
+		r.t.Fatalf("%s: reconcile counters: %v", stage, err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var name string
-		var charged, recorded int64
-		if err := rows.Scan(&name, &charged, &recorded); err != nil {
-			r.t.Fatalf("%s: recount quota: %v", stage, err)
-		}
-		if charged != recorded {
-			r.t.Errorf("%s: %s is charged %d bytes, its copies record %d", stage, name, charged, recorded)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		r.t.Fatalf("%s: recount quota: %v", stage, err)
+	for name, bytes := range drift {
+		r.t.Errorf("%s: %s's counters drifted from its copies, by %d stored bytes", stage, name, bytes)
 	}
 }
 

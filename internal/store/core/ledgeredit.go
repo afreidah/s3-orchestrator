@@ -5,11 +5,11 @@
 //
 // Every transaction that changes copies, intents or parts makes those changes
 // through one edit, and each change records what it costs: a copy recorded is
-// charged to its key's quota stripe, a copy removed is debited and its bytes
-// queued for deletion, and an intent or upload given up on has its bytes
-// queued. The edit writes those at commit, every cleanup row in one statement
-// and then every stripe charge in another, so the charge is always the
-// transaction's last statement and holds its rows only until the commit.
+// charged to its key's stripe of the ledger counters, a copy removed is debited
+// and its bytes queued for deletion, and an intent or upload given up on has
+// its bytes queued. The edit writes those at commit, every cleanup row in one
+// statement and then every counter charge in another, so the charge is always
+// the transaction's last statement and holds its rows only until the commit.
 //
 // The cleanup rows are queued already claimed by this instance, which deletes
 // them once the transaction commits; a claim it never settles is taken over by
@@ -31,8 +31,8 @@ import (
 // LEDGER EDIT
 // -------------------------------------------------------------------------
 
-// ledgerEdit gathers what one transaction changes: the signed bytes its copy
-// changes move on each stripe row, the bytes it stopped recording, and for the
+// ledgerEdit gathers what one transaction changes: what its copy changes move
+// on each counter row, the bytes it stopped recording, and for the
 // replication queue how each key's copies plus live intents moved, or the count
 // a key ends with where the transaction knows it outright.
 type ledgerEdit struct {
@@ -51,27 +51,32 @@ func newLedgerEdit(tx TxAdapter, factor int) *ledgerEdit {
 	return &ledgerEdit{tx: tx, factor: factor, charges: stripeDeltas{}, moved: map[string]int{}, counts: map[string]int{}}
 }
 
-// insertCopy records a copy and charges its bytes to its key's stripe on its
-// backend.
+// insertCopy records a copy and charges it to its key's stripe on its backend.
 func (e *ledgerEdit) insertCopy(ctx context.Context, loc *ObjectLocation) error {
 	if err := e.tx.InsertObjectLocation(ctx, loc); err != nil {
 		return fmt.Errorf("insert copy on %s: %w", loc.BackendName, err)
 	}
-	e.charges.add(loc.ObjectKey, loc.BackendName, loc.SizeBytes)
-	e.moved[loc.ObjectKey]++
+	e.credit(loc)
 	return nil
 }
 
 // insertCopyIfAbsent records a copy unless its backend already holds one of the
-// key, and charges its bytes only when it was recorded.
+// key, and charges it only when it was recorded.
 func (e *ledgerEdit) insertCopyIfAbsent(ctx context.Context, loc *ObjectLocation) (bool, error) {
 	inserted, err := e.tx.InsertObjectLocationIfNotExists(ctx, loc)
 	if err != nil || !inserted {
 		return false, err
 	}
-	e.charges.add(loc.ObjectKey, loc.BackendName, loc.SizeBytes)
-	e.moved[loc.ObjectKey]++
+	e.credit(loc)
 	return true, nil
+}
+
+// restate moves a copy whose row a patch changed off the counters it held and
+// onto the ones it holds now. A patch that changes neither its form nor its
+// scrub state moves nothing.
+func (e *ledgerEdit) restate(before, after *ExistingCopy) {
+	e.charges.add(before.ObjectKey, before.group(), -1)
+	e.charges.add(after.ObjectKey, after.group(), 1)
 }
 
 // know records the count of copies plus live intents key ends with, for a
@@ -168,10 +173,16 @@ func (e *ledgerEdit) queue(key, reason, backend, path string, size int64) {
 	})
 }
 
-// debit takes a removed copy's bytes off its key's stripe on its backend, so a
-// later credit for the same key cancels it exactly.
+// credit charges a recorded copy to its key's stripe on its backend.
+func (e *ledgerEdit) credit(loc *ObjectLocation) {
+	e.charges.add(loc.ObjectKey, insertedGroup(loc), 1)
+	e.moved[loc.ObjectKey]++
+}
+
+// debit takes a removed copy off its key's stripe on its backend, so a later
+// credit for the same key cancels it exactly.
 func (e *ledgerEdit) debit(c *ExistingCopy) {
-	e.charges.add(c.ObjectKey, c.BackendName, -c.SizeBytes)
+	e.charges.add(c.ObjectKey, c.group(), -1)
 	e.moved[c.ObjectKey]--
 }
 
@@ -269,50 +280,67 @@ func finish[R any](ctx context.Context, e *ledgerEdit, result R, refusal error) 
 }
 
 // -------------------------------------------------------------------------
-// QUOTA STRIPES
+// COUNTER STRIPES
 // -------------------------------------------------------------------------
 
-// stripeRow names one row of a backend's byte counter.
-type stripeRow struct {
+// stripeCell names one counter row: the copies of one stored form, managed or
+// not, on one stripe of a backend.
+type stripeCell struct {
 	backend string
 	stripe  int16
+	form    StoredFlags
+	managed bool
 }
 
-// StripeCharge is a signed byte change to one row of a backend's byte counter.
+// StripeCharge is a signed change to one counter row: the group's counts, added
+// on the stripe named.
 type StripeCharge struct {
-	Backend string
-	Stripe  int16
-	Delta   int64
+	Stripe int16
+	LedgerGroup
 }
 
-// stripeDeltas is the signed byte change a transaction makes to each stripe
-// row, gathered so a row is written once however many keys land on it.
-type stripeDeltas map[stripeRow]int64
+// stripeDeltas is the signed change a transaction makes to each counter row,
+// gathered so a row is written once however many keys land on it.
+type stripeDeltas map[stripeCell]LedgerCounts
 
-// add accumulates a signed delta for one key on one backend, on the stripe the
-// key's name selects.
-func (d stripeDeltas) add(key, backend string, delta int64) {
-	d[stripeRow{backend, StripeFor(key)}] += delta
+// add accumulates n times the group's counts for one key, on the stripe the
+// key's name selects, so n of -1 takes a removed copy off.
+func (d stripeDeltas) add(key string, g LedgerGroup, n int64) {
+	cell := stripeCell{g.Backend, StripeFor(key), g.Form, g.Managed}
+	d[cell] = d[cell].plus(g.LedgerCounts, n)
 }
 
-// charge writes every changed row, ordered by backend and then stripe. Every
-// transaction holding more than one row takes them in this order, so concurrent
-// transactions queue rather than deadlock.
+// charge writes every changed row, ordered by backend, stripe, form and then
+// managed flag. Every transaction holding more than one row takes them in this
+// order, so concurrent transactions queue rather than deadlock.
 func (d stripeDeltas) charge(ctx context.Context, tx TxAdapter) error {
-	rows := slices.SortedFunc(maps.Keys(d), func(a, b stripeRow) int {
-		return cmp.Or(cmp.Compare(a.backend, b.backend), cmp.Compare(a.stripe, b.stripe))
-	})
-	charges := make([]StripeCharge, 0, len(rows))
-	for _, row := range rows {
-		if d[row] != 0 {
-			charges = append(charges, StripeCharge{Backend: row.backend, Stripe: row.stripe, Delta: d[row]})
+	charges := make([]StripeCharge, 0, len(d))
+	for _, cell := range slices.SortedFunc(maps.Keys(d), compareCells) {
+		if counts := d[cell]; counts != (LedgerCounts{}) {
+			g := LedgerGroup{Backend: cell.backend, Form: cell.form, Managed: cell.managed, LedgerCounts: counts}
+			charges = append(charges, StripeCharge{Stripe: cell.stripe, LedgerGroup: g})
 		}
 	}
 	if len(charges) == 0 {
 		return nil
 	}
 	if err := tx.AdjustQuotaStripes(ctx, charges...); err != nil {
-		return fmt.Errorf("charge quota stripes: %w", err)
+		return fmt.Errorf("charge ledger counters: %w", err)
 	}
 	return nil
+}
+
+// compareCells orders counter rows the way every counter write takes them,
+// with an unmanaged row ahead of a managed one as SQL orders false first.
+func compareCells(a, b stripeCell) int {
+	return cmp.Or(cmp.Compare(a.backend, b.backend), cmp.Compare(a.stripe, b.stripe),
+		cmp.Compare(a.form, b.form), cmp.Compare(boolRank(a.managed), boolRank(b.managed)))
+}
+
+// boolRank orders false before true.
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

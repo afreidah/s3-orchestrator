@@ -243,7 +243,7 @@ func (t *quotaTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCha
 		if c.Backend == t.failOn {
 			return t.failErr
 		}
-		op := quotaOp{backend: c.Backend, delta: c.Delta}
+		op := quotaOp{backend: c.Backend, delta: c.StoredBytes}
 		t.ops = append(t.ops, op)
 		t.adjustments = append(t.adjustments, op)
 	}

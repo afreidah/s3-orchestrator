@@ -126,12 +126,6 @@ func (s Summary) Reported() bool {
 	return s.Planned > 0 || s.Deferred > 0
 }
 
-// Changed says the cycle completed any item. A summary whose items do not all
-// change what backends hold overrides it.
-func (s Summary) Changed() bool {
-	return s.Succeeded > 0
-}
-
 // Outcome classifies the cycle for its cycle metric: success (work done,
 // no failures), partial (some succeeded, some failed), failed (only failures),
 // or empty (nothing succeeded or failed).

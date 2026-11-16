@@ -121,7 +121,8 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		return nil, nil
 	}
 	rows, err := a.q.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
+		SELECT object_key, backend_name, storage_key, size_bytes, created_at, form,
+		       managed, object_size, last_scrubbed_at IS NOT NULL
 		FROM object_locations
 		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
 	if err != nil {
@@ -131,10 +132,13 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		var (
 			ec        core.ExistingCopy
 			createdAt string
+			managed   bool
 		)
-		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form); err != nil {
+		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form,
+			&managed, &ec.ObjectSize, &ec.Scrubbed); err != nil {
 			return core.ExistingCopy{}, fmt.Errorf("scan existing copy: %w", err)
 		}
+		ec.Unmanaged = !managed
 		var err error
 		if ec.CreatedAt, err = parseTime(createdAt); err != nil {
 			return core.ExistingCopy{}, err
@@ -387,18 +391,21 @@ func (a *sqliteTxAdapter) exec(ctx context.Context, what, query string, args ...
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// AdjustQuotaStripes applies signed deltas to a backend's byte-counter stripes,
-// materializing each row on first use so nothing has to seed a backend's
-// stripes up front. No clamp: a stripe is signed, and the total it contributes
-// to is what gets clamped when read.
+// AdjustQuotaStripes applies signed deltas to a backend's ledger counter rows,
+// materializing each row on first use so nothing has to seed a backend's rows
+// up front. No clamp: a row is signed, and the total it contributes to is what
+// gets clamped when read.
 func (a *sqliteTxAdapter) AdjustQuotaStripes(ctx context.Context, charges ...core.StripeCharge) error {
 	for _, c := range charges {
-		if err := a.exec(ctx, "adjust quota stripe for "+c.Backend, `
-			INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-			VALUES (?, ?, ?)
-			ON CONFLICT (backend_name, stripe_id) DO UPDATE
-			SET bytes_used = bytes_used + excluded.bytes_used`,
-			c.Backend, c.Stripe, c.Delta); err != nil {
+		if err := a.exec(ctx, "adjust ledger counters for "+c.Backend, `
+			INSERT INTO backend_quota_stripes
+			    (backend_name, stripe_id, form, managed, copies, bytes_used, object_bytes, never_scrubbed)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (backend_name, stripe_id, form, managed) DO UPDATE
+			SET copies = copies + excluded.copies, bytes_used = bytes_used + excluded.bytes_used,
+			    object_bytes = object_bytes + excluded.object_bytes,
+			    never_scrubbed = never_scrubbed + excluded.never_scrubbed`,
+			c.Backend, c.Stripe, int64(c.Form), c.Managed, c.Copies, c.StoredBytes, c.ObjectBytes, c.NeverScrubbed); err != nil {
 			return err
 		}
 	}

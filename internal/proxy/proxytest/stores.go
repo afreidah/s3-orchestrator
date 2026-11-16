@@ -174,8 +174,8 @@ func (s *Stack) Fleet() worker.Fleet {
 }
 
 // Dashboard builds the dashboard aggregator over the stack and store, as di
-// wires it, with the integrity figures scoped to every backend.
-func (s *Stack) Dashboard(store core.DashboardStore) *dashboard.Aggregator {
+// wires it.
+func (s *Stack) Dashboard(store core.DirectoryLister) *dashboard.Aggregator {
 	return dashboard.New(&dashboard.Deps{
 		Store: store, Usage: s.Runtime.Usage(),
 		Fleet: s.Runtime, Snapshots: s.Metrics, Drain: s.States,
@@ -205,7 +205,9 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	// pass against a shape that cannot exist.
 	live := config.NewLive(&config.Config{})
 	coord := writepath.New(rt, store)
-	collector := metrics.New(&metrics.CollectorDeps{Store: store, Usage: rt.Usage()})
+	collector := metrics.New(&metrics.CollectorDeps{
+		Store: store, Usage: rt.Usage(), Scrub: worker.NewScrubBudget(rt, live.Integrity()),
+	})
 	detached := writepath.NewDetachedUploads(detachedUploadCeiling)
 
 	mp := multipart.New(&multipart.Deps{

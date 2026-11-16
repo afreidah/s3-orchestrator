@@ -220,7 +220,6 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
-	collector := r.Resolve[*metrics.Collector]()
 	declared := r.Resolve[*provisioning.Declared]()
 	rec := r.Resolve[*reconcile.Manager]()
 	usageSvc := r.Resolve[*usage.Service]()
@@ -232,7 +231,6 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 		Fleet:   rt,
 		Usage:   usageSvc,
 		Buckets: declared,
-		Metrics: collector,
 	}), nil
 }
 

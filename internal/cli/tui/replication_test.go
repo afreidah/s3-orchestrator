@@ -118,7 +118,7 @@ func TestReplicationBody(t *testing.T) {
 		Factor: 2, UnderReplicated: 143, OverReplicated: 12, ComputedAt: time.Now(),
 	}}}
 	got := bodyText(m.replicationBody())
-	for _, want := range []string{"factor", "143", "under-replicated", "12", "over-replicated", "ago"} {
+	for _, want := range []string{"factor", "143", "under-replicated", "12", "over-replicated", "read at"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stats body %q missing %q", got, want)
 		}
@@ -134,11 +134,11 @@ func TestReplicationStats_Disabled(t *testing.T) {
 	}
 }
 
-// TestReplicationAge_ZeroTimeIsUnknown covers a snapshot with no computed
-// time, which has no age to report.
-func TestReplicationAge_ZeroTimeIsUnknown(t *testing.T) {
+// TestReplicationReadAt_ZeroTimeIsUnknown covers a response with no read time,
+// which has none to report.
+func TestReplicationReadAt_ZeroTimeIsUnknown(t *testing.T) {
 	t.Parallel()
-	if got := replicationAge(time.Time{}); got != "unknown" {
-		t.Errorf("zero-time age = %q, want unknown", got)
+	if got := replicationReadAt(time.Time{}); got != "unknown" {
+		t.Errorf("zero-time read = %q, want unknown", got)
 	}
 }

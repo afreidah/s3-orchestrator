@@ -75,7 +75,7 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.RefreshQuotaBaselines(ctx); err != nil {
+	if _, err := s.RefreshQuotaBaselines(ctx); err != nil {
 		return adjustments, err
 	}
 	return adjustments, nil
@@ -86,21 +86,20 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 // -------------------------------------------------------------------------
 
 // RefreshQuotaBaselines reloads each backend's ceiling and occupancy from the
-// store into the tracker. Called at startup before the listener opens, so the
-// first write is judged against real rows rather than an empty snapshot, and
-// after every flush so the deltas just written are not counted twice.
-func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
+// store into the tracker, and returns the read for the gauges. Called at
+// startup before the listener opens, so the first write is judged against real
+// rows rather than an empty snapshot, and on every flush tick.
+func (s *Service) RefreshQuotaBaselines(ctx context.Context) (map[string]core.QuotaStat, error) {
 	stats, err := s.d.Stores.GetQuotaStats(ctx)
 	if err != nil {
-		return fmt.Errorf("read backend quota usage: %w", err)
+		return nil, fmt.Errorf("read backend quota usage: %w", err)
 	}
 	s.d.Quota.SetBaselines(stats)
-	return nil
+	return stats, nil
 }
 
 // RedisCounterConfigured reports whether the counters live in Redis, whatever
-// their health. The fleet snapshot and worker gauges are then shared through
-// it too.
+// their health. The worker gauges are then shared through it too.
 func (s *Service) RedisCounterConfigured() bool {
 	_, ok := s.d.Usage.Backend().(counter.SharedBackend)
 	return ok

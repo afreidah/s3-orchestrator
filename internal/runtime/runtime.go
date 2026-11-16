@@ -177,7 +177,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	// Before anything can be written: admission judges every write against the
 	// baseline this loads, and an instance that started with an empty one would
 	// refuse each write as though no backend had room.
-	if err := r.svc.usage.RefreshQuotaBaselines(ctx); err != nil {
+	if _, err := r.svc.usage.RefreshQuotaBaselines(ctx); err != nil {
 		return fmt.Errorf("prime quota baselines: %w", err)
 	}
 

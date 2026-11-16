@@ -65,14 +65,6 @@ func between[T number](path string, v, lo, hi T) error {
 	return fmt.Errorf("%s %w: want %v to %v (got %v)", path, ErrOutOfRange, lo, hi, v)
 }
 
-// atLeast reports path when v is below lo.
-func atLeast[T number](path string, v, lo T) error {
-	if v >= lo {
-		return nil
-	}
-	return fmt.Errorf("%s %w: want at least %v (got %v)", path, ErrOutOfRange, lo, v)
-}
-
 // failed keeps the checks that failed, so a section lists its field checks in
 // one call and adds only the real errors to what it reports.
 func failed(checks ...error) []error {

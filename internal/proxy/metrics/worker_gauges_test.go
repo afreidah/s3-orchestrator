@@ -89,7 +89,7 @@ func TestWorkerGauges_WithoutSharedState(t *testing.T) {
 // publish without losing the local value.
 func TestWorkerGauges_Errors(t *testing.T) {
 	shared, mem := newShared()
-	if err := mem.PutShared(context.Background(), "worker_gauges:"+telemetry.GaugeSourceScrubber, []byte("not json"), 0); err != nil {
+	if err := mem.PutShared(context.Background(), "worker_gauges:"+telemetry.GaugeSourceReplication, []byte("not json"), 0); err != nil {
 		t.Fatal(err)
 	}
 	mc := testCollector(CollectorDeps{Shared: shared})
