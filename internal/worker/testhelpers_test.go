@@ -324,6 +324,7 @@ type mockMetadataStore struct {
 
 	stalePending      []core.PendingObject
 	deletedPendingIDs []string
+	discardReasons    []string
 	promotedPending   []core.PendingObject
 	promoteResult     core.PendingPromoteResult
 	promoteCleanup    []core.CleanupItem
@@ -765,10 +766,12 @@ func (m *mockMetadataStore) GetStalePending(_ context.Context, _ time.Time, _ in
 	return withIntentPaths(m.stalePending), nil
 }
 
-// DeletePending records the intent ID so tests can assert reaper deletions.
-func (m *mockMetadataStore) DeletePending(_ context.Context, intentID string) error {
-	m.deletedPendingIDs = append(m.deletedPendingIDs, intentID)
-	return nil
+// DiscardPending records the intent ID so tests can assert the reaper's drops,
+// and the reason, which a drop leaves empty so no cleanup is queued.
+func (m *mockMetadataStore) DiscardPending(_ context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
+	m.deletedPendingIDs = append(m.deletedPendingIDs, p.IntentID)
+	m.discardReasons = append(m.discardReasons, reason)
+	return nil, nil
 }
 
 // PromotePending captures the input and returns the test's preconfigured

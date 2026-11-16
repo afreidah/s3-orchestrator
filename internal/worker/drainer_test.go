@@ -465,7 +465,8 @@ func TestDrain_WaitsForAnUploadAdmittedBeforeTheDrain(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := newDrainStore(t, "b1", "b2")
-	if ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "in-flight", ObjectKey: "bkt/k", BackendName: "b1", SizeBytes: 1}, core.AcceptForWrite); err != nil || !ok {
+	intent := &core.PendingObject{IntentID: "in-flight", ObjectKey: "bkt/k", BackendName: "b1", SizeBytes: 1}
+	if ok, err := store.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil || !ok {
 		t.Fatalf("InsertPendingIfFits = %v, %v", ok, err)
 	}
 	startDrain(t, store, "b1")
@@ -478,8 +479,8 @@ func TestDrain_WaitsForAnUploadAdmittedBeforeTheDrain(t *testing.T) {
 		t.Fatalf("record = %+v, want still draining", rec)
 	}
 
-	if err := store.DeletePending(ctx, "in-flight"); err != nil {
-		t.Fatalf("DeletePending: %v", err)
+	if _, err := store.DiscardPending(ctx, intent, ""); err != nil {
+		t.Fatalf("DiscardPending: %v", err)
 	}
 	if sum, err := d.Drain(ctx, nil); err != nil || sum.Completed != 1 {
 		t.Fatalf("Drain = %+v, %v; want the drain completed", sum, err)

@@ -183,15 +183,17 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 	}
 }
 
-// dropIntent deletes a pending row that has no recoverable bytes: the
-// backend is gone, or HEAD returned 404. reason is recorded on the audit
-// entry so operators can tell the two apart.
+// dropIntent discards a pending row that has no recoverable bytes: the backend
+// is gone, or HEAD returned 404. The discard queues no cleanup, since there are
+// no bytes, and counts the key again, so one the intent was holding at the
+// factor is queued for replication. reason is recorded on the audit entry so
+// operators can tell the two apart.
 func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, reason string) batch.ItemOutcome {
 	if reason == "backend_removed" {
 		r.log.WarnContext(ctx, "backend not registered, dropping intent",
 			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID)
 	}
-	if err := r.d.Store.DeletePending(ctx, p.IntentID); err != nil {
+	if _, err := r.d.Store.DiscardPending(ctx, p, ""); err != nil {
 		r.log.ErrorContext(ctx, "delete pending intent",
 			"intent_id", p.IntentID, "error", err)
 		return batch.ItemFailed

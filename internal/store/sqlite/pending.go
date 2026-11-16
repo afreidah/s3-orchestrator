@@ -60,11 +60,6 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 	)
 }
 
-// DeletePending removes a pending intent.
-func (s *Store) DeletePending(ctx context.Context, intentID string) error {
-	return s.direct().DeletePending(ctx, intentID)
-}
-
 // GetStalePending returns pending intents at or older than olderThan,
 // oldest first, capped at limit.
 func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {

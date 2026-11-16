@@ -130,7 +130,9 @@ func recordIntent(ctx context.Context, e *ledgerEdit, p *PendingObject) error {
 // -------------------------------------------------------------------------
 
 // DiscardPending drops an intent whose upload will not be recorded and queues
-// its bytes under reason, for a write that gave up after uploading. An intent
+// its bytes under reason, for a write that gave up after uploading. An empty
+// reason queues nothing, for an upload known to have left no bytes. Either way
+// the key is counted again, so one left off the factor is queued. An intent
 // already gone was resolved by whoever removed it, which queued its bytes, so
 // nothing is returned for it.
 func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error) {

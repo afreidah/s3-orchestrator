@@ -150,32 +150,47 @@ func TestPending_PromotionAppliesTheWritesTags(t *testing.T) {
 	storetest.CheckPromotedTags(t, newTestStore(t), "backend-a")
 }
 
-// TestPending_DeleteRemovesRow verifies DeletePending decrements depth and
-// removes the matching row.
-func TestPending_DeleteRemovesRow(t *testing.T) {
+// TestPending_DiscardWithoutReasonRequeuesTheKey verifies an intent discarded
+// with no reason, as the reaper drops one whose bytes never landed, leaves no
+// cleanup row and queues its key again. A replication pass settled the key
+// while the intent counted as a copy in flight, so without the recount it
+// would stay a copy short with nothing queued.
+func TestPending_DiscardWithoutReasonRequeuesTheKey(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
+	s.UseReplicationFactor(func() int { return 2 })
 
+	mustRecordObject(t, s, "bucket/k1", "backend-b", 100)
 	intent := pendingFixture("intent-1", "bucket/k1")
 	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
-	if err := s.DeletePending(ctx, "intent-1"); err != nil {
-		t.Fatalf("DeletePending: %v", err)
+	queued := dueKeys(t, s, core.ReplicationShort, nil)["bucket/k1"]
+	if err := s.SettleReplicationQueue(ctx, &queued); err != nil {
+		t.Fatalf("SettleReplicationQueue: %v", err)
+	}
+
+	items, err := s.DiscardPending(ctx, &intent, "")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("DiscardPending = %+v, %v; want no cleanup rows", items, err)
 	}
 	if got := queryPendingCount(t, s); got != 0 {
-		t.Errorf("rows after delete = %d, want 0", got)
+		t.Errorf("rows after the discard = %d, want 0", got)
+	}
+	if _, requeued := dueKeys(t, s, core.ReplicationShort, nil)["bucket/k1"]; !requeued {
+		t.Error("the key a copy short was not queued again")
 	}
 }
 
-// TestPending_DeleteUnknownIntentIsNoOp verifies deleting a non-existent
+// TestPending_DiscardUnknownIntentIsNoOp verifies discarding a non-existent
 // intent does not error  -  important for reaper retries.
-func TestPending_DeleteUnknownIntentIsNoOp(t *testing.T) {
+func TestPending_DiscardUnknownIntentIsNoOp(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	if err := s.DeletePending(context.Background(), "does-not-exist"); err != nil {
-		t.Errorf("DeletePending on missing row: %v", err)
+	intent := pendingFixture("does-not-exist", "bucket/k1")
+	if items, err := s.DiscardPending(context.Background(), &intent, ""); err != nil || len(items) != 0 {
+		t.Errorf("DiscardPending on missing row = %+v, %v; want nothing", items, err)
 	}
 }
 

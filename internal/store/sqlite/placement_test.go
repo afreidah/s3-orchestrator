@@ -174,7 +174,7 @@ func TestPlaceCopy_SupersededIntentIsCopyChanged(t *testing.T) {
 	s := newTestStore(t)
 	recordWrite(t, s, firstWritePath, 100)
 	intent := claimFor(t, s, "backend-b", replicaPath, 100)
-	if err := s.DeletePending(context.Background(), intent.IntentID); err != nil {
+	if err := s.direct().DeletePending(context.Background(), intent.IntentID); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)

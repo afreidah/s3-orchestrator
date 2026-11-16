@@ -286,7 +286,7 @@ func TestPgInsertPendingIfFits_AcceptMask(t *testing.T) {
 			if got != want {
 				t.Errorf("flags %s, accepts %s: admits = %v, want %v", tc.flag, accepts, got, want)
 			}
-			_ = s.DeletePending(ctx, id)
+			_ = s.direct().DeletePending(ctx, id)
 		}
 	}
 }

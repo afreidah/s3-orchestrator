@@ -22,7 +22,7 @@ import (
 // CopyClaimer is the slice of a store CheckCopyClaims drives.
 type CopyClaimer interface {
 	ClaimPendingCopies(ctx context.Context, intents []*core.PendingObject, ranked []string, accepts core.BackendFlags) (core.CopyClaims, error)
-	DeletePending(ctx context.Context, intentID string) error
+	DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error)
 }
 
 // CheckCopyClaims claims two copies over full, roomy and spare, in that
@@ -40,7 +40,7 @@ func CheckCopyClaims(t *testing.T, s CopyClaimer, full, roomy, spare string) {
 		t.Fatalf("ClaimPendingCopies: %v", err)
 	}
 	for _, p := range claims.Claimed {
-		t.Cleanup(func() { _ = s.DeletePending(context.Background(), p.IntentID) })
+		t.Cleanup(func() { _, _ = s.DiscardPending(context.Background(), p, "") })
 	}
 	got := make([]string, len(claims.Claimed))
 	for i, p := range claims.Claimed {

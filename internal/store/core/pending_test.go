@@ -925,9 +925,15 @@ type discardTxStub struct {
 	lockErr   error
 	deleteErr error
 	deleted   []string
+	counted   []string
 }
 
 func (s *discardTxStub) AcquireKeyLock(context.Context, ...string) error { return s.lockErr }
+
+func (s *discardTxStub) QueueOffFactor(_ context.Context, _ int, keys ...string) error {
+	s.counted = append(s.counted, keys...)
+	return nil
+}
 
 func (s *discardTxStub) ClaimPending(context.Context, string) (bool, error) {
 	return !s.lost, s.claimErr
@@ -962,6 +968,23 @@ func TestDiscardPending_DropsAndQueues(t *testing.T) {
 	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!i-9", Reason: "put_failed", SizeBytes: 42}}
 	if !slices.Equal(cleanup, want) {
 		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestDiscardPending_NoReasonCountsTheKey verifies a discard with no reason, as
+// the reaper makes for an upload that left no bytes, queues no cleanup row and
+// still counts the key, so one the intent held at the factor is queued.
+func TestDiscardPending_NoReasonCountsTheKey(t *testing.T) {
+	t.Parallel()
+	stub := &discardTxStub{}
+	ops := stubOps(stub)
+	ops.UseReplicationFactor(func() int { return 2 })
+	cleanup, err := ops.DiscardPending(context.Background(), discardedIntent(), "")
+	if err != nil || len(cleanup) != 0 {
+		t.Fatalf("DiscardPending = %+v, %v; want no cleanup", cleanup, err)
+	}
+	if !slices.Equal(stub.deleted, []string{"i-9"}) || !slices.Equal(stub.counted, []string{"k"}) {
+		t.Errorf("deleted = %v, counted = %v; want the intent deleted and k counted", stub.deleted, stub.counted)
 	}
 }
 

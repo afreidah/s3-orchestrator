@@ -161,7 +161,7 @@ func BenchmarkQuotaClaim_HasRoom(b *testing.B) {
 				b.Errorf("claim declined on a backend with room")
 				return
 			}
-			if err := s.DeletePending(ctx, intentID); err != nil {
+			if err := s.direct().DeletePending(ctx, intentID); err != nil {
 				b.Errorf("DeletePending: %v", err)
 				return
 			}

@@ -190,7 +190,7 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 	if _, err := s.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
-	defer func() { _ = s.DeletePending(ctx, key) }()
+	defer func() { _ = s.direct().DeletePending(ctx, key) }()
 
 	// Read the intent back before promoting: the reaper resolves an intent it
 	// re-read from the table, so a column lost on the pending write is already

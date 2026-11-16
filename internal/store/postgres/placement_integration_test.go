@@ -211,7 +211,7 @@ func TestPgPlaceCopy_LostIntentQueuesSupersededBytes(t *testing.T) {
 	before := f.copies(t)
 	src := storetest.LocationOn(t, f.s, f.key, f.src)
 	intent := f.claim(t, src, replicaSuffix)
-	if err := f.s.DeletePending(context.Background(), intent.IntentID); err != nil {
+	if err := f.s.direct().DeletePending(context.Background(), intent.IntentID); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 

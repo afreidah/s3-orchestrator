@@ -69,7 +69,7 @@ func pgAdmits(t *testing.T, s *Store, backend, intentID string) bool {
 		t.Fatalf("InsertPendingIfFits: %v", err)
 	}
 	if ok {
-		t.Cleanup(func() { _ = s.DeletePending(context.Background(), id) })
+		t.Cleanup(func() { _ = s.direct().DeletePending(context.Background(), id) })
 	}
 	return ok
 }
@@ -295,7 +295,7 @@ func TestPgCompleteDrain_WaitsForAnUploadAdmittedBefore(t *testing.T) {
 	if pgCompletes(t, s, backend) {
 		t.Fatal("completed while a write admitted before the drain was still uploading")
 	}
-	if err := s.DeletePending(ctx, id); err != nil {
+	if err := s.direct().DeletePending(ctx, id); err != nil {
 		t.Fatalf("DeletePending: %v", err)
 	}
 	if !pgCompletes(t, s, backend) {

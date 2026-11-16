@@ -195,11 +195,10 @@ type CleanupStore interface {
 // within accepts. ClaimPendingCopies does the same for several intents in one
 // transaction, each on a distinct backend taken from ranked in order.
 // DiscardPending drops an intent whose upload will not be recorded and queues
-// its bytes under reason.
+// its bytes under reason, or nothing for an empty reason.
 type PendingStore interface {
 	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
 	ClaimPendingCopies(ctx context.Context, intents []*PendingObject, ranked []string, accepts BackendFlags) (CopyClaims, error)
-	DeletePending(ctx context.Context, intentID string) error
 	DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error)
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
 	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, error)
