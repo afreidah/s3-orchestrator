@@ -404,24 +404,24 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 }
 
 // ProvideMetricsCollector builds the collector that publishes the quota,
-// fleet and worker gauges, sharing them through the shared state when several
-// instances run.
+// fleet and worker gauges, sharing worker gauges and capacity warnings through
+// the shared state when several instances run. Coverage is scoped by a scrub
+// budget of its own over the runtime, which agrees with the scrubber's.
 func ProvideMetricsCollector(i do.Injector) (*metrics.Collector, error) {
 	r := NewResolver(i)
-	cfg := r.Resolve[*config.Config]()
 	live := r.Resolve[*config.Live]()
 	store := r.Resolve[metrics.Deps]()
 	usage := r.Resolve[*counter.UsageTracker]()
+	rt := r.Resolve[*infra.BackendRuntime]()
 	shared := r.Resolve[*sharedstate.Shared]()
 	if r.err != nil {
 		return nil, r.err
 	}
 	return metrics.New(&metrics.CollectorDeps{
-		Store:             store,
-		Usage:             usage,
-		ReplicationFactor: func() int { return live.Load().Replication.Factor },
-		Shared:            shared,
-		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,
+		Store:  store,
+		Usage:  usage,
+		Scrub:  worker.NewScrubBudget(rt, live.Integrity()),
+		Shared: shared,
 	}), nil
 }
 
@@ -478,13 +478,12 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	rt := r.Resolve[*infra.BackendRuntime]()
 	collector := r.Resolve[*metrics.Collector]()
 	stores := r.Resolve[metadataStore]()
-	scrubber := r.Resolve[*worker.Scrubber]()
 	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
 	return dashboard.New(&dashboard.Deps{
-		Store: stores, Usage: rt.Usage(), Scrub: scrubber,
+		Store: stores, Usage: rt.Usage(),
 		Fleet: rt, Snapshots: collector, Drain: states,
 	}), nil
 }

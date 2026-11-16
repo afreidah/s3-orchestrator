@@ -220,9 +220,3 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocati
 	}
 	return nil
 }
-
-// UpdateCopyMetadata writes a patch to the copy loc names, or returns
-// core.ErrCopyChanged when a newer write replaced it.
-func (s *Store) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
-	return s.direct().UpdateCopyMetadata(ctx, loc, p)
-}

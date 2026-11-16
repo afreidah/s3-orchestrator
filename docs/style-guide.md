@@ -400,7 +400,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
 | `GetAllObjectLocations(...)` | `ObjectLocationLister` | `LocationStore` |
 | `CleanupStaleMultipartUploads(...)` | `staleMultipartCleaner` | `multipartCleanupOps` |
 | `UpdateUsageLimits(...)` | `usageLimitsApplier` | `usageLimitsHook` |
-| `UpdateQuotaMetrics(...)` | `quotaMetricsRefresher` | `metricsHook` |
+| `GetLeastRecentlyScrubbedObjects(...)` | `ScrubQueueReader` | `ScrubQueueOps` |
 
 For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` - `KeyProvider`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 

@@ -126,8 +126,7 @@ Long-running workers keep the metadata layer consistent with the backends:
 | **Lifecycle** | Expires objects matching configured prefix/age rules |
 | **Scrubber** | Verifies stored SHA-256 hashes against backend content |
 | **Reconciler** | Detects orphans (backend objects with no DB record) and stale DB rows |
-| **Usage flush** | Periodically writes unflushed usage counters to the DB |
-| **Fleet snapshot** | Computes the fleet-wide gauges, replication counts and dashboard figures once per `fleet_interval` |
+| **Usage flush** | Periodically writes unflushed usage counters to the DB and republishes the fleet-wide gauges |
 
 Every worker except the usage flush, which every instance runs for its own counters, and the circuit breaker watchdog holds an advisory lock, so a multi-instance deployment runs each one on one instance at a time.
 

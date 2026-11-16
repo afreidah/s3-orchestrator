@@ -76,8 +76,8 @@ func TestAdapter_AdjustQuotaStripes_ChargesEveryRow(t *testing.T) {
 	s := newTestStore(t)
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		if err := a.AdjustQuotaStripes(context.Background(),
-			core.StripeCharge{Backend: "backend-a", Stripe: 1, Delta: 100},
-			core.StripeCharge{Backend: "backend-a", Stripe: 2, Delta: 20},
+			core.StripeCharge{Backend: "backend-a", Stripe: 1, StoredBytes: 100},
+			core.StripeCharge{Backend: "backend-a", Stripe: 2, StoredBytes: 20},
 		); err != nil {
 			t.Fatalf("AdjustQuotaStripes: %v", err)
 		}

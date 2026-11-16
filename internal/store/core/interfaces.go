@@ -77,11 +77,11 @@ type TagStore interface {
 
 // QuotaStore defines the byte-counter reads and writes. GetQuotaStats is the
 // snapshot the routing tracker ranks against; admission itself is decided by
-// the statements that claim space. ReconcileUsage brings each backend's
-// striped total to SUM(object_locations.size_bytes), read from one snapshot,
-// by adding the difference rather than overwriting the total, so a write that
-// commits alongside keeps its own adjustment. It returns the nonzero
-// per-backend deltas (truth - previous) it applied.
+// the statements that claim space. ReconcileUsage brings every ledger counter
+// to what object_locations holds, read from one snapshot, by adding the
+// difference rather than overwriting the counters, so a write that commits
+// alongside keeps its own adjustment. It returns each backend whose counters
+// drifted with the stored bytes (truth - previous) applied to it.
 type QuotaStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
@@ -97,7 +97,8 @@ type QuotaStore interface {
 // holds it. RenewMultipartCompletion refreshes the mark and reports false once
 // it is gone; EndMultipartCompletion clears it. While the mark is fresh,
 // RecordPart and DeleteMultipartUpload refuse the upload with
-// ErrCompletionInProgress.
+// ErrCompletionInProgress. GetActiveMultipartCounts counts each backend's
+// uploads in progress.
 type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) (bool, error)
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
@@ -110,6 +111,7 @@ type MultipartStore interface {
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 	ScanMultipartUploads(ctx context.Context, filter MultipartUploadFilter, limit int, afterUploadID string) ([]MultipartUpload, error)
+	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 }
 
 // MultipartUploadFilter selects uploads for an abort scan. Backend, when set,
@@ -223,7 +225,6 @@ type IntegrityStore interface {
 // and an offset would skip rows.
 type CopyLister interface {
 	ListCopiesByForm(ctx context.Context, f *FormFilter, limit int, after Cursor) ([]ObjectLocation, error)
-	CountCopiesByForm(ctx context.Context, with, without StoredFlags) (int64, error)
 }
 
 // ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
@@ -254,9 +255,10 @@ type ExpiredObjectsLister interface {
 // restarted, and other flags such as a cordon are kept. AddDrainedObjects and
 // MarkDrainFailed act only on a drain in progress. CompleteDrain reports false
 // while managed rows, intents or multipart uploads remain on the backend.
-// ClearBackendState deletes the record when the backend is removed.
-// BackendObjectStats counts the backend's objects and bytes, and
-// DeleteBackendData drops every row it holds.
+// ClearBackendState deletes the record when the backend is removed, and
+// DeleteBackendData drops every row it holds. LedgerStats gives the objects and
+// bytes a backend still holds, which a drain's progress and a removal's preview
+// report.
 type BackendStateStore interface {
 	ListBackendStates(ctx context.Context) ([]BackendStateRecord, error)
 	SetBackendFlag(ctx context.Context, backendName string, flag BackendFlags) (bool, error)
@@ -266,7 +268,7 @@ type BackendStateStore interface {
 	AddDrainedObjects(ctx context.Context, backendName string, moved int64) error
 	MarkDrainFailed(ctx context.Context, backendName, reason string) error
 	CompleteDrain(ctx context.Context, backendName string) (bool, error)
-	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
+	LedgerStats(ctx context.Context) (LedgerStats, error)
 	DeleteBackendData(ctx context.Context, backendName string) error
 }
 
@@ -298,12 +300,9 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// DashboardStore defines the methods used by the web UI dashboard
-// aggregator.
-type DashboardStore interface {
-	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	LedgerStats(ctx context.Context) (LedgerStats, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+// DirectoryLister lists one level of the namespace under a prefix, for the
+// dashboard's file browser.
+type DirectoryLister interface {
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 }
 

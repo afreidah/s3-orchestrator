@@ -298,7 +298,7 @@ The orchestrator tracks API requests, egress, and ingress in memory and periodic
 
 For environments without usage limits, the flush still runs (it powers the monthly usage figures) but accuracy is less critical. The 30-second default is fine.
 
-The fleet-wide gauges and dashboard figures are computed separately, every `telemetry.metrics.fleet_interval` (default 60s). Each computation scans the object ledger, so on a large fleet a longer interval lowers database load at the cost of staler gauges.
+The fleet-wide gauges are republished on the same tick. They read counters each write keeps rather than the object ledger, so the cost does not grow with the fleet.
 
 ### Redis Shared Counters
 

@@ -55,25 +55,24 @@ func (r recordingFlusher) FlushUsage(_ context.Context) error {
 	return r.err
 }
 
-func (r recordingFlusher) RefreshQuotaBaselines(_ context.Context) error {
+// quotaRead is the quota read recordingFlusher hands back, which the tick
+// passes on to the gauges.
+var quotaRead = map[string]core.QuotaStat{"b1": {BackendName: "b1"}}
+
+func (r recordingFlusher) RefreshQuotaBaselines(_ context.Context) (map[string]core.QuotaStat, error) {
 	*r.calls = append(*r.calls, "RefreshQuotaBaselines")
-	return r.err
+	if r.err != nil {
+		return nil, r.err
+	}
+	return quotaRead, nil
 }
 
-// recordingFleet is a quotaMetricsRefresher that appends each refresh to calls.
+// recordingFleet is a gaugeRefresher that appends each refresh to calls and
+// keeps the quota read the gauges were given in stats.
 type recordingFleet struct {
 	err   error
 	calls *[]string
-}
-
-func (r recordingFleet) RefreshFleetIfStale(_ context.Context) error {
-	*r.calls = append(*r.calls, "RefreshFleetIfStale")
-	return r.err
-}
-
-func (r recordingFleet) LoadFleetMetrics(_ context.Context) error {
-	*r.calls = append(*r.calls, "LoadFleetMetrics")
-	return r.err
+	stats *map[string]core.QuotaStat
 }
 
 func (r recordingFleet) LoadWorkerGauges(_ context.Context) error {
@@ -81,8 +80,11 @@ func (r recordingFleet) LoadWorkerGauges(_ context.Context) error {
 	return r.err
 }
 
-func (r recordingFleet) RefreshUsageBaselines(_ context.Context) error {
-	*r.calls = append(*r.calls, "RefreshUsageBaselines")
+func (r recordingFleet) RefreshGauges(_ context.Context, stats map[string]core.QuotaStat) error {
+	*r.calls = append(*r.calls, "RefreshGauges")
+	if r.stats != nil {
+		*r.stats = stats
+	}
 	return r.err
 }
 
@@ -168,13 +170,14 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
 // order. Every instance flushes its counters, since the service holds no lock
-// to lose. With Redis the instance also loads the published fleet snapshot;
-// it never computes one. Store errors never cut the tick short.
+// to lose, and republishes the gauges from the quota read its baselines came
+// from. With Redis the instance also loads the published worker gauges. Store
+// errors never cut the tick short.
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
-	single := []string{"RefreshQuotaBaselines", "FlushUsage", "RefreshUsageBaselines", "RefreshBackendStates"}
-	shared := []string{"RefreshQuotaBaselines", "FlushUsage", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshBackendStates"}
+	single := []string{"RefreshQuotaBaselines", "FlushUsage", "RefreshGauges", "RefreshBackendStates"}
+	shared := []string{"RefreshQuotaBaselines", "FlushUsage", "LoadWorkerGauges", "RefreshGauges", "RefreshBackendStates"}
 
 	tests := []struct {
 		name  string
@@ -182,8 +185,8 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		err   error
 		want  []string
 	}{
-		{"redis loads fleet state", true, nil, shared},
-		{"no redis skips fleet state", false, nil, single},
+		{"redis loads worker gauges", true, nil, shared},
+		{"no redis skips worker gauges", false, nil, single},
 		{"errors do not stop the tick", true, storeErr, shared},
 		{"db unavailable is quiet", false, core.ErrDBUnavailable, single},
 	}
@@ -191,10 +194,11 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var calls []string
+			var stats map[string]core.QuotaStat
 			svc := newUsageFlush(&UsageFlushDeps{
 				Flusher: recordingFlusher{redis: tt.redis, err: tt.err, calls: &calls},
 				Tracker: nearLimit(false),
-				Fleet:   recordingFleet{err: tt.err, calls: &calls},
+				Fleet:   recordingFleet{err: tt.err, calls: &calls, stats: &stats},
 				States:  recordingStates{err: tt.err, calls: &calls},
 				Config:  defaultFlush,
 			})
@@ -205,6 +209,9 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 
 			if !slices.Equal(calls, tt.want) {
 				t.Errorf("calls = %v, want %v", calls, tt.want)
+			}
+			if _, passed := stats["b1"]; passed != (tt.err == nil) {
+				t.Errorf("gauges got %v, want the quota read whenever it succeeded", stats)
 			}
 		})
 	}

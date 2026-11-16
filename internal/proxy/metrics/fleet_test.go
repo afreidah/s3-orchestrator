@@ -1,26 +1,29 @@
 // -------------------------------------------------------------------------------
-// Fleet Snapshot Tests
+// Fleet Gauge Tests
 //
 // Author: Alex Freidah
 //
-// Covers publishing the fleet snapshot from the computing instance and loading
-// it on the others: the round trip, a missing or undecodable snapshot, shared
-// state errors, and a single instance with no shared state at all.
+// Covers reading the fleet-wide figures: every figure in one snapshot, coverage
+// scoped to the backends the scrub queue draws from and aged from its head,
+// coverage gauges published only while the sweep runs, and capacity warnings
+// left to whichever instance holds the lock.
 // -------------------------------------------------------------------------------
 
 package metrics
 
 import (
 	"context"
-	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate/sharedstatetest"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -34,253 +37,122 @@ func newShared() (*sharedstate.Shared, *sharedstatetest.Memory) {
 	return sharedstate.New(mem, "test"), mem
 }
 
-// panicDeps is a Deps whose every read fails the test: an instance that loads
-// the fleet snapshot must not compute it.
-type panicDeps struct{ Deps }
+// twoBackendLedger holds verifiable copies on b1, which the sweep reaches, and
+// on b2, which it does not.
+var twoBackendLedger = core.LedgerStats{
+	"b1": {Objects: 5, Verifiable: 5, NeverVerified: 2},
+	"b2": {Objects: 40, Verifiable: 40, NeverVerified: 40},
+}
 
 // -------------------------------------------------------------------------
 // TESTS
 // -------------------------------------------------------------------------
 
-// TestFleetSnapshot_LoaderServesComputedSnapshot publishes a snapshot from
-// one collector and loads it into another that never reads the store.
-func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
-	shared, _ := newShared()
-	computing := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 2, over: 1, plaintext: 4},
-		ReplicationFactor: func() int { return 2 },
-		Shared:            shared,
+// TestFleetSnapshot_ReadsEveryFigure verifies one snapshot carries the quota,
+// ledger and multipart reads, and coverage scoped to the reachable backends:
+// the never-verified copies on b1, the verifiable copies on b2 as deferred,
+// and the age of the scrub queue's head, read over b1 alone.
+func TestFleetSnapshot_ReadsEveryFigure(t *testing.T) {
+	t.Parallel()
+	scrubbed := time.Now().Add(-36 * time.Hour)
+	var reached []string
+	mc := testCollector(CollectorDeps{Store: &fakeStore{
+		stats:     map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
+		ledger:    twoBackendLedger,
+		multipart: map[string]int64{"b1": 3},
+		head:      []core.ObjectLocation{{BackendName: "b1", LastScrubbedAt: &scrubbed}},
+		reached:   &reached,
+	}})
+
+	snap, err := mc.FleetSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("FleetSnapshot: %v", err)
+	}
+	if snap.Quota["b1"].BytesUsed != 100 || snap.Ledger["b2"].Objects != 40 || snap.Multipart["b1"] != 3 {
+		t.Errorf("snapshot = %+v, want every read carried through", snap)
+	}
+	if !slices.Equal(reached, []string{"b1"}) {
+		t.Errorf("scrub head read over %v, want the reachable [b1]", reached)
+	}
+	if age := snap.Coverage.OldestUnverifiedAge; age < 36*time.Hour || age > 36*time.Hour+time.Minute {
+		t.Errorf("oldest unverified age = %v, want about 36h", age)
+	}
+	if snap.Coverage.NeverVerified != 2 || snap.Coverage.Deferred != 40 {
+		t.Errorf("coverage = %+v, want 2 never verified on b1 and b2's 40 deferred", snap.Coverage)
+	}
+}
+
+// TestFleetSnapshot_NeverScrubbedHeadAgesFromItsWrite verifies a queue head
+// never scrubbed is aged from when it was written, as the queue orders it.
+func TestFleetSnapshot_NeverScrubbedHeadAgesFromItsWrite(t *testing.T) {
+	t.Parallel()
+	mc := testCollector(CollectorDeps{Store: &fakeStore{
+		ledger: twoBackendLedger,
+		head:   []core.ObjectLocation{{BackendName: "b1", CreatedAt: time.Now().Add(-2 * time.Hour)}},
+	}})
+
+	snap, err := mc.FleetSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("FleetSnapshot: %v", err)
+	}
+	if age := snap.Coverage.OldestUnverifiedAge; age < 2*time.Hour || age > 2*time.Hour+time.Minute {
+		t.Errorf("oldest unverified age = %v, want about 2h", age)
+	}
+}
+
+// TestRefreshGauges_CoverageOnlyWhileSweeping verifies the coverage gauges are
+// left alone while no sweep runs, so a fleet nothing verifies reports no age
+// that nothing would lower. Deliberately not parallel: the gauges are
+// process-wide.
+func TestRefreshGauges_CoverageOnlyWhileSweeping(t *testing.T) {
+	store := &fakeStore{ledger: twoBackendLedger}
+	telemetry.IntegrityNeverVerifiedCopies.Set(-1)
+
+	idle := testCollector(CollectorDeps{Store: store, Scrub: scrubReach{reachable: []string{"b1"}}})
+	if err := idle.refreshFleet(context.Background(), nil); err != nil {
+		t.Fatalf("refreshFleet: %v", err)
+	}
+	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != -1 {
+		t.Errorf("never-verified gauge = %v with no sweep, want it untouched", got)
+	}
+
+	sweeping := testCollector(CollectorDeps{Store: store})
+	if err := sweeping.refreshFleet(context.Background(), nil); err != nil {
+		t.Fatalf("refreshFleet: %v", err)
+	}
+	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 2 {
+		t.Errorf("never-verified gauge = %v, want b1's 2", got)
+	}
+	if got := promtest.ToFloat64(telemetry.IntegrityDeferredCopies); got != 40 {
+		t.Errorf("deferred gauge = %v, want b2's 40", got)
+	}
+}
+
+// TestWarnNearCapacity_LeftToTheLockHolder verifies an instance that finds the
+// capacity lock held elsewhere raises nothing, and one that takes it warns for
+// a backend past the threshold and not for one below it. Deliberately not
+// parallel: the test captures the event emitter.
+func TestWarnNearCapacity_LeftToTheLockHolder(t *testing.T) {
+	var warned []string
+	event.SetEmitter(func(ev event.Event) {
+		if ev.Type == event.BackendCapacityWarning {
+			warned = append(warned, ev.Subject)
+		}
 	})
-	loading := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
-
-	if err := computing.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-	telemetry.EncryptionPlaintextCopies.Set(0)
-	if err := loading.LoadFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("LoadFleetMetrics: %v", err)
+	t.Cleanup(func() { event.SetEmitter(nil) })
+	stats := map[string]core.QuotaStat{
+		"full": {BytesUsed: 900, BytesLimit: 1000},
+		"half": {BytesUsed: 500, BytesLimit: 1000},
+		"open": {BytesUsed: 900},
 	}
 
-	want := computing.ReplicationSnapshot(context.Background())
-	loading.d.Shared = nil // read the loaded copy, not the shared one
-	got := loading.ReplicationSnapshot(context.Background())
-	if got.UnderReplicated != 2 || got.OverReplicated != 1 || !got.ComputedAt.Equal(want.ComputedAt) {
-		t.Errorf("loaded snapshot = %+v, want %+v", got, want)
-	}
-	if v := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); v != 4 {
-		t.Errorf("plaintext gauge = %v after load, want 4", v)
-	}
-}
-
-// TestFleetSnapshot_LoadWithNothingPublished leaves the collector as it was
-// when no instance has published yet.
-func TestFleetSnapshot_LoadWithNothingPublished(t *testing.T) {
-	t.Parallel()
-	shared, _ := newShared()
-	mc := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
-	if err := mc.LoadFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("LoadFleetMetrics: %v", err)
-	}
-	if mc.ReplicationSnapshot(context.Background()).Ready {
-		t.Error("snapshot ready with nothing published")
-	}
-}
-
-// TestFleetSnapshot_ReplicationReadsSharedOnEveryCall answers from the
-// published snapshot even on a collector that has not loaded it yet, so
-// instances whose flush ticks fall at different moments still agree. When the
-// shared read fails, the collector answers from its own copy.
-func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
-	t.Parallel()
-	shared, mem := newShared()
-	computing := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 1},
-		ReplicationFactor: func() int { return 2 },
-		Shared:            shared,
-	})
-	if err := computing.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
+	testCollector(CollectorDeps{Store: &fakeStore{lockBusy: true}}).warnNearCapacity(context.Background(), stats)
+	if len(warned) != 0 {
+		t.Fatalf("warned for %v without the lock", warned)
 	}
 
-	idle := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
-	if got := idle.ReplicationSnapshot(context.Background()); !got.Ready || got.UnderReplicated != 1 {
-		t.Errorf("idle instance serves %+v, want the published snapshot", got)
-	}
-
-	mem.Fail(errors.New("redis down"))
-	if got := idle.ReplicationSnapshot(context.Background()); got.Ready {
-		t.Errorf("with shared state failing, idle instance serves %+v, want its own empty copy", got)
-	}
-}
-
-// TestFleetSnapshot_LoadErrors surfaces a shared-state failure and an
-// undecodable snapshot rather than applying anything.
-func TestFleetSnapshot_LoadErrors(t *testing.T) {
-	t.Parallel()
-	boom := errors.New("redis down")
-	failing, failingMem := newShared()
-	failingMem.Fail(boom)
-	mc := testCollector(CollectorDeps{Store: panicDeps{}, Shared: failing})
-	if err := mc.LoadFleetMetrics(context.Background()); !errors.Is(err, boom) {
-		t.Errorf("err = %v, want %v", err, boom)
-	}
-
-	garbled, garbledMem := newShared()
-	if err := garbledMem.PutShared(context.Background(), fleetSnapshotKey, []byte("{not json"), 0); err != nil {
-		t.Fatal(err)
-	}
-	mc = testCollector(CollectorDeps{Store: panicDeps{}, Shared: garbled})
-	if err := mc.LoadFleetMetrics(context.Background()); err == nil {
-		t.Error("undecodable snapshot loaded without error")
-	}
-}
-
-// TestFleetSnapshot_PublishFailureKeepsLocalResult still applies the snapshot
-// on the computing instance when shared state refuses the write.
-func TestFleetSnapshot_PublishFailureKeepsLocalResult(t *testing.T) {
-	t.Parallel()
-	shared, mem := newShared()
-	mem.Fail(errors.New("redis down"))
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{},
-		ReplicationFactor: func() int { return 1 },
-		Shared:            shared,
-	})
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-	if !mc.ReplicationSnapshot(context.Background()).Ready {
-		t.Error("computing instance lost its own snapshot when the publish failed")
-	}
-}
-
-// TestRefreshFleetIfStale_RecomputesAStaleSnapshot replaces a published
-// snapshot older than half the interval with a fresh computation.
-func TestRefreshFleetIfStale_RecomputesAStaleSnapshot(t *testing.T) {
-	t.Parallel()
-	shared, mem := newShared()
-	old := time.Now().Add(-time.Minute)
-	if err := mem.PutShared(context.Background(), fleetSnapshotKey, []byte(`{"computed_at":"`+old.Format(time.RFC3339Nano)+`"}`), 0); err != nil {
-		t.Fatal(err)
-	}
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 3},
-		ReplicationFactor: func() int { return 2 },
-		Shared:            shared,
-		FleetInterval:     time.Minute,
-	})
-	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
-		t.Fatalf("RefreshFleetIfStale: %v", err)
-	}
-	if got := mc.ReplicationSnapshot(context.Background()); got.UnderReplicated != 3 || !got.ComputedAt.After(old) {
-		t.Errorf("snapshot = %+v, want a fresh computation", got)
-	}
-}
-
-// TestRefreshFleetIfStale_LoadFailureRecomputes computes the snapshot when the
-// published one cannot be read, rather than leaving the gauges unrefreshed.
-func TestRefreshFleetIfStale_LoadFailureRecomputes(t *testing.T) {
-	t.Parallel()
-	shared, mem := newShared()
-	mem.Fail(errors.New("redis down"))
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 2},
-		ReplicationFactor: func() int { return 2 },
-		Shared:            shared,
-		FleetInterval:     time.Minute,
-	})
-	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
-		t.Fatalf("RefreshFleetIfStale: %v", err)
-	}
-	mem.Fail(nil)
-	if got := mc.ReplicationSnapshot(context.Background()); got.UnderReplicated != 2 {
-		t.Errorf("snapshot = %+v, want the recomputed one", got)
-	}
-}
-
-// TestRefreshFleetIfStale_SingleInstanceAlwaysComputes has nothing published
-// to reuse without shared state, so every tick computes.
-func TestRefreshFleetIfStale_SingleInstanceAlwaysComputes(t *testing.T) {
-	t.Parallel()
-	mc := New(&CollectorDeps{
-		Store:             fakeReplicationDeps{over: 4},
-		ReplicationFactor: func() int { return 2 },
-	})
-	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
-		t.Fatalf("RefreshFleetIfStale: %v", err)
-	}
-	if got := mc.ReplicationSnapshot(context.Background()); got.OverReplicated != 4 {
-		t.Errorf("snapshot = %+v, want a computed one", got)
-	}
-}
-
-// TestFleetSnapshot_LookupOrder serves the published snapshot first, then the
-// last one applied locally, and computes one only when neither exists.
-func TestFleetSnapshot_LookupOrder(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	shared, mem := newShared()
-	publisher := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{under: 1},
-		ReplicationFactor: func() int { return 2 },
-		Shared:            shared,
-	})
-	if err := publisher.UpdateFleetMetrics(ctx); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-
-	reader := testCollector(CollectorDeps{Store: panicDeps{}, Shared: shared})
-	snap, err := reader.FleetSnapshot(ctx)
-	if err != nil || snap.Replication.UnderReplicated != 1 {
-		t.Fatalf("published lookup = %+v, %v; want the published snapshot", snap, err)
-	}
-
-	// With shared state down the reader serves the copy it last loaded, and
-	// the panicking store proves it does not compute one.
-	if err := reader.LoadFleetMetrics(ctx); err != nil {
-		t.Fatalf("LoadFleetMetrics: %v", err)
-	}
-	mem.Fail(errors.New("redis down"))
-	snap, err = reader.FleetSnapshot(ctx)
-	if err != nil || snap.Replication.UnderReplicated != 1 {
-		t.Errorf("local lookup = %+v, %v; want the loaded copy", snap, err)
-	}
-}
-
-// TestFleetSnapshot_ComputesWhenNoneExists computes and keeps a snapshot on
-// first use, then serves the kept one.
-func TestFleetSnapshot_ComputesWhenNoneExists(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	mc := New(&CollectorDeps{
-		Store:             fakeReplicationDeps{over: 2},
-		ReplicationFactor: func() int { return 2 },
-	})
-	first, err := mc.FleetSnapshot(ctx)
-	if err != nil || first.Replication.OverReplicated != 2 {
-		t.Fatalf("first lookup = %+v, %v; want a computed snapshot", first, err)
-	}
-	second, err := mc.FleetSnapshot(ctx)
-	if err != nil || second != first {
-		t.Errorf("second lookup = %p, %v; want the kept snapshot %p", second, err, first)
-	}
-}
-
-// TestFleetSnapshot_SingleInstance runs with no shared state: the collector
-// computes its own snapshot and loading is a no-op.
-func TestFleetSnapshot_SingleInstance(t *testing.T) {
-	t.Parallel()
-	mc := testCollector(CollectorDeps{
-		Store:             fakeReplicationDeps{},
-		ReplicationFactor: func() int { return 1 },
-	})
-	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("UpdateFleetMetrics: %v", err)
-	}
-	if err := mc.LoadFleetMetrics(context.Background()); err != nil {
-		t.Fatalf("LoadFleetMetrics: %v", err)
-	}
-	if !mc.ReplicationSnapshot(context.Background()).Ready {
-		t.Error("single instance did not compute its own snapshot")
+	testCollector(CollectorDeps{Store: &fakeStore{}}).warnNearCapacity(context.Background(), stats)
+	if !slices.Equal(warned, []string{"full"}) {
+		t.Errorf("warned for %v, want only the full backend", warned)
 	}
 }

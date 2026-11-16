@@ -90,16 +90,3 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 	}
 	return toObjectLocations(rows), nil
 }
-
-// CountCopiesByForm reports how many copies carry every flag of with and none
-// of without.
-func (s *Store) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
-	n, err := s.queries.CountCopiesByForm(ctx, db.CountCopiesByFormParams{
-		WithFlags:    int64(with),
-		WithoutFlags: int64(without),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("count copies by form: %w", err)
-	}
-	return n, nil
-}

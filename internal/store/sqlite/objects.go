@@ -298,19 +298,6 @@ func scanSlimObjectLocations(rows *sql.Rows, withETag bool) ([]core.ObjectLocati
 	})
 }
 
-// BackendObjectStats returns the object count and total bytes stored on a backend.
-func (s *Store) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
-	var count, totalBytes int64
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(size_bytes), 0)
-		FROM object_locations
-		WHERE backend_name = ?`, backendName).Scan(&count, &totalBytes)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get backend object stats: %w", err)
-	}
-	return count, totalBytes, nil
-}
-
 // DeleteBackendData removes all database records for a backend in FK-safe order.
 // Runs in a single transaction.
 func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error {
@@ -423,14 +410,6 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		return nil, fmt.Errorf("list copies by form: %w", err)
 	}
 	return collectRows(rows, "copies by form", scanObjectLocation)
-}
-
-// CountCopiesByForm reports how many copies carry every flag of with and none
-// of without.
-func (s *Store) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
-	return s.countRows(ctx, "copies by form",
-		`SELECT count(*) FROM object_locations WHERE (form & ?) = ? AND (form & ?) = 0`,
-		with, with, without)
 }
 
 // -------------------------------------------------------------------------
@@ -573,10 +552,4 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocati
 		                AND read_copy.storage_key = ?)`,
 		etag, contentType, userMetadata,
 		loc.ObjectKey, loc.ObjectKey, loc.BackendName, loc.StorageKey)
-}
-
-// UpdateCopyMetadata writes a patch to the copy loc names, or returns
-// core.ErrCopyChanged when a newer write replaced it.
-func (s *Store) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
-	return s.direct().UpdateCopyMetadata(ctx, loc, p)
 }

@@ -103,11 +103,6 @@ func (s *shrinkingSet) ListCopiesByForm(_ context.Context, _ *core.FormFilter, l
 	return out, nil
 }
 
-// CountCopiesByForm is unused by the driver.
-func (s *shrinkingSet) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, nil
-}
-
 // UpdateCopyMetadata is unused by the driver, which records through the mover.
 func (s *shrinkingSet) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil

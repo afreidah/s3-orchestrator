@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -93,17 +92,15 @@ func (m *model) replicationStats() string {
 		factor,
 		field{"under-replicated", backlogStyle(s.UnderReplicated).Render(fmt.Sprintf("%d objects", s.UnderReplicated))},
 		field{"over-replicated", backlogStyle(s.OverReplicated).Render(fmt.Sprintf("%d objects", s.OverReplicated))},
-		field{"snapshot age", pathStyle.Render(replicationAge(s.ComputedAt))},
+		field{"read at", pathStyle.Render(replicationReadAt(s.ComputedAt))},
 	)
 }
 
-// replicationAge renders how stale the snapshot is, next to the wall-clock time
-// it was computed. The snapshot is recomputed on the collector's own cycle, so
-// this reflects server-side freshness rather than the poll interval.
-func replicationAge(computed time.Time) string {
-	if computed.IsZero() {
+// replicationReadAt renders the wall-clock time the server read the counts, so
+// a stalled poll shows as a time that stops moving.
+func replicationReadAt(read time.Time) string {
+	if read.IsZero() {
 		return "unknown"
 	}
-	d := max(time.Since(computed), 0)
-	return fmt.Sprintf("%s ago (%s)", humanize.Duration(d), computed.Format("15:04:05"))
+	return read.Format("15:04:05")
 }

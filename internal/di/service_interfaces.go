@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
@@ -24,7 +25,7 @@ import (
 type usageFlushOps interface {
 	RedisCounterConfigured() bool
 	FlushUsage(ctx context.Context) error
-	RefreshQuotaBaselines(ctx context.Context) error
+	RefreshQuotaBaselines(ctx context.Context) (map[string]core.QuotaStat, error)
 }
 
 // nearLimitReporter is the *counter.UsageTracker read that drives the
@@ -35,19 +36,12 @@ type nearLimitReporter interface {
 	NearLimit(threshold float64) bool
 }
 
-// quotaMetricsRefresher is the *metrics.Collector set the flush tick runs
-// after writing counters: every instance loads the published fleet snapshot
-// and worker gauges and refreshes its own usage baselines.
-type quotaMetricsRefresher interface {
-	LoadFleetMetrics(ctx context.Context) error
+// gaugeRefresher is the *metrics.Collector set the flush tick runs after
+// writing counters: every instance loads the published worker gauges and
+// republishes the gauges the store backs.
+type gaugeRefresher interface {
 	LoadWorkerGauges(ctx context.Context) error
-	RefreshUsageBaselines(ctx context.Context) error
-}
-
-// fleetSnapshotRefresher is the *metrics.Collector call the fleet snapshot
-// service makes each tick.
-type fleetSnapshotRefresher interface {
-	RefreshFleetIfStale(ctx context.Context) error
+	RefreshGauges(ctx context.Context, stats map[string]core.QuotaStat) error
 }
 
 // backendStateRefresher reloads this instance's cached backend states from the

@@ -150,24 +150,22 @@ func (f *fakeAdmission) AcquireAdmission(context.Context) (func(), bool) {
 	return func() { f.released++ }, true
 }
 
-// TestSummary_ReportedAndChanged pins what makes a cycle worth a completion
-// entry and what makes it refresh the quota gauges.
-func TestSummary_ReportedAndChanged(t *testing.T) {
+// TestSummary_Reported pins what makes a cycle worth a completion entry.
+func TestSummary_Reported(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name              string
-		sum               Summary
-		reported, changed bool
+		name     string
+		sum      Summary
+		reported bool
 	}{
-		{"idle", Summary{}, false, false},
-		{"all skipped", Summary{Planned: 2, Skipped: 2}, true, false},
-		{"only deferred", Summary{Deferred: 3}, true, false},
-		{"one succeeded", Summary{Planned: 1, Succeeded: 1}, true, true},
+		{"idle", Summary{}, false},
+		{"all skipped", Summary{Planned: 2, Skipped: 2}, true},
+		{"only deferred", Summary{Deferred: 3}, true},
+		{"one succeeded", Summary{Planned: 1, Succeeded: 1}, true},
 	}
 	for _, tc := range tests {
-		if tc.sum.Reported() != tc.reported || tc.sum.Changed() != tc.changed {
-			t.Errorf("%s: Reported, Changed = %v, %v; want %v, %v",
-				tc.name, tc.sum.Reported(), tc.sum.Changed(), tc.reported, tc.changed)
+		if tc.sum.Reported() != tc.reported {
+			t.Errorf("%s: Reported = %v, want %v", tc.name, tc.sum.Reported(), tc.reported)
 		}
 	}
 }

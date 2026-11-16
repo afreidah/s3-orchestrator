@@ -31,7 +31,7 @@ const (
 	LockScrubber         int64 = 1010 // background integrity verification
 	LockPendingReaper    int64 = 1011 // abandoned PUT-intent resolution
 	LockMigrations       int64 = 1012 // schema migrations at startup
-	LockFleetSnapshot    int64 = 1013 // fleet-wide gauge and status recompute
+	LockCapacityWarning  int64 = 1013 // one instance raising capacity warnings
 	LockNotifier         int64 = 1014 // webhook outbox delivery
 )
 

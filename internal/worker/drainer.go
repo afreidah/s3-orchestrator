@@ -100,7 +100,7 @@ func (s DrainSummary) AuditAttrs() []slog.Attr {
 // the drains whose backend ends up empty. observer, when non-nil, receives a
 // start and end step per object.
 func (dr *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadDrain, Refresh: dr.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadDrain}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (DrainSummary, error) {
 		records, err := dr.d.Store.ListBackendStates(ctx)
 		if err != nil {

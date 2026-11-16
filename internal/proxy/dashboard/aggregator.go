@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Builds the dashboard and admin status views from the fleet snapshot the
-// metrics collector maintains, the current period's usage and the live fleet
+// metrics collector reads, the current period's usage and the live fleet
 // state. Exposes GetStatus for the admin status endpoint, GetData for the main
 // dashboard page and GetDirectoryChildren for lazy-loaded directory expansion.
 // -------------------------------------------------------------------------------
@@ -13,7 +13,6 @@ package dashboard
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -29,10 +28,6 @@ import (
 // maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
 // for the top-level listing and for a caller-supplied page size.
 const maxDirectoryChildren = 200
-
-// errIncompleteSnapshot reports a fleet snapshot missing the ledger or
-// multipart figures because the store read behind them failed.
-var errIncompleteSnapshot = errors.New("fleet snapshot is missing figures; the store read behind them failed")
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -73,7 +68,7 @@ type Data struct {
 	Profiles               map[string]core.BackendProfile
 }
 
-//go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader,ScrubReachReader
+//go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
 
 // FleetView is the live state and configured profiles the aggregator decorates
 // the snapshot's figures with. *infra.BackendRuntime satisfies it.
@@ -99,13 +94,6 @@ type UsageReader interface {
 	CycleUsage() map[string]core.CycleUsage
 }
 
-// ScrubReachReader names the backends the scrub queue draws from right now,
-// which scopes the integrity figures so the dashboard and the sweep agree on
-// which copies are reachable. *worker.Scrubber satisfies it.
-type ScrubReachReader interface {
-	ReachableBackends() []string
-}
-
 // DrainProgressReader reports per-backend drain progress.
 // *backendstate.Manager satisfies it. Nil when the deployment runs no backend
 // state manager.
@@ -113,13 +101,11 @@ type DrainProgressReader interface {
 	GetDrainProgress(ctx context.Context, name string) (*backendstate.DrainProgress, error)
 }
 
-// Deps groups what the aggregator reads. Scrub may be nil, which scopes the
-// integrity figures to every backend; Drain may be nil when the deployment
+// Deps groups what the aggregator reads. Drain may be nil when the deployment
 // runs no backend state manager.
 type Deps struct {
-	Store     core.DashboardStore
+	Store     core.DirectoryLister
 	Usage     UsageReader
-	Scrub     ScrubReachReader
 	Fleet     FleetView
 	Snapshots FleetSnapshotter
 	Drain     DrainProgressReader
@@ -139,15 +125,6 @@ func New(d *Deps) *Aggregator {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// scrubbableBackends is the set the scrub queue would draw from right now, or
-// every backend when no scrubber is wired.
-func (da *Aggregator) scrubbableBackends() []string {
-	if da.d.Scrub == nil {
-		return da.d.Fleet.BackendOrder()
-	}
-	return da.d.Scrub.ReachableBackends()
-}
 
 // splitCycleUsage separates each backend's cycle usage into its figures and
 // its cycle. Both come from one read, so a figure and its label agree.
@@ -202,17 +179,13 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 
 // GetStatus builds the status figures from the fleet snapshot, plus this
 // period's usage and the live fleet state. It fails rather than report zeroes
-// when the snapshot is missing a figure because its store read failed.
+// when a store read behind the snapshot failed.
 func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 	snap, err := da.d.Snapshots.FleetSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if snap.Ledger == nil || snap.Multipart == nil {
-		return nil, errIncompleteSnapshot
-	}
 
-	coverage := snap.Ledger.Coverage(da.scrubbableBackends(), time.Now())
 	data := &Data{
 		BackendOrder:           da.d.Fleet.BackendOrder(),
 		UsageLimits:            da.d.Usage.GetLimits(),
@@ -220,9 +193,9 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 		QuotaStats:             snap.Quota,
 		ObjectCounts:           snap.Ledger.ObjectCounts(),
 		UnverifiedObjectCounts: snap.Ledger.UnhashedCounts(),
-		OldestUnverifiedAge:    coverage.OldestUnverifiedAge,
-		NeverVerifiedCopies:    coverage.NeverVerified,
-		DeferredCopies:         coverage.Deferred,
+		OldestUnverifiedAge:    snap.Coverage.OldestUnverifiedAge,
+		NeverVerifiedCopies:    snap.Coverage.NeverVerified,
+		DeferredCopies:         snap.Coverage.Deferred,
 		PlaintextCopies:        snap.Ledger.PlaintextCopies(),
 		CompressionStats:       snap.Ledger.Compression(),
 		ActiveMultipartCounts:  snap.Multipart,

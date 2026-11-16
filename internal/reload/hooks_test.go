@@ -40,7 +40,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -374,17 +373,6 @@ func TestLogLevelHook_Applied(t *testing.T) {
 	}
 }
 
-// TestQuotaMetricsHook_FailedResolution drives the Failed branch.
-func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
-	inj := do.New()
-	failingProvider[*metrics.Collector](inj)
-	h := &quotaMetricsHook{inj: inj}
-	status, err := h.Apply(context.Background(), &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-}
-
 // TestRateLimitHook_AppliedPushesNewLimits wires a real rate limiter
 // through the injector with the feature enabled and confirms Apply
 // pushes the new limits and returns HookApplied.
@@ -417,7 +405,6 @@ func TestHookNamesStable(t *testing.T) {
 		&quotaSyncHook{}:    "quota_sync",
 		&usageLimitsHook{}:  "usage_limits",
 		&logLevelHook{}:     "log_level",
-		&quotaMetricsHook{}: "quota_metrics",
 	}
 	for h, want := range cases {
 		if got := h.Name(); got != want {

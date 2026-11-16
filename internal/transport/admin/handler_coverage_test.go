@@ -271,8 +271,7 @@ func TestHandleReconcileUsage_Error(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestHandleReplicate_Configured exercises the non-skip path through
-// Replicate so the success-branch JSON envelope and UpdateQuotaMetrics
-// hook stay covered.
+// Replicate so the success-branch JSON envelope stays covered.
 func TestHandleReplicate_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)

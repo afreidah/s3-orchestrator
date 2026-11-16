@@ -114,11 +114,6 @@ func (s *oneRowStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ 
 	return rows, nil
 }
 
-// CountCopiesByForm is unused by the passes.
-func (s *oneRowStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, nil
-}
-
 // UpdateCopyMetadata records the probe a declined copy was measured at and the
 // copy it names, so a test can assert the pass wrote down what its encode cost
 // bought.
@@ -166,11 +161,6 @@ func (s *pagedStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, lim
 		out = append(out, s.rows[i])
 	}
 	return out, nil
-}
-
-// CountCopiesByForm is unused by the passes.
-func (s *pagedStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, nil
 }
 
 // rewrote counts a copy the pass placed. A rewritten copy is dropped from the
@@ -856,11 +846,6 @@ type failingListStore struct{ err error }
 // ListCopiesByForm fails.
 func (f failingListStore) ListCopiesByForm(context.Context, *core.FormFilter, int, core.Cursor) ([]core.ObjectLocation, error) {
 	return nil, f.err
-}
-
-// CountCopiesByForm is never reached by the passes.
-func (f failingListStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
-	return 0, f.err
 }
 
 // UpdateCopyMetadata is never reached when the listing fails.

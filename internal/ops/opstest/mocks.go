@@ -705,21 +705,6 @@ func (m *MockRewriteStore) EXPECT() *MockRewriteStoreMockRecorder {
 	return m.recorder
 }
 
-// CountCopiesByForm mocks base method.
-func (m *MockRewriteStore) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountCopiesByForm", ctx, with, without)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountCopiesByForm indicates an expected call of CountCopiesByForm.
-func (mr *MockRewriteStoreMockRecorder) CountCopiesByForm(ctx, with, without any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountCopiesByForm", reflect.TypeOf((*MockRewriteStore)(nil).CountCopiesByForm), ctx, with, without)
-}
-
 // ListCopiesByForm mocks base method.
 func (m *MockRewriteStore) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()

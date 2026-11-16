@@ -1571,25 +1571,6 @@ func TestBackendConfig_UsageResetPartialHourZone(t *testing.T) {
 	}
 }
 
-// TestMetricsConfig_FleetInterval defaults the fleet interval and rejects one
-// short enough to scan the ledger continuously.
-func TestMetricsConfig_FleetInterval(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("SetDefaultsAndValidate: %v", err)
-	}
-	if cfg.Telemetry.Metrics.FleetInterval != DefaultFleetInterval {
-		t.Errorf("fleet_interval default = %v, want %v", cfg.Telemetry.Metrics.FleetInterval, DefaultFleetInterval)
-	}
-
-	cfg = validBaseConfig()
-	cfg.Telemetry.Metrics.FleetInterval = time.Second
-	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrOutOfRange) {
-		t.Errorf("err = %v, want %v", err, ErrOutOfRange)
-	}
-}
-
 // TestTracingConfig_EnabledWithoutEndpoint verifies the tracing config enabled without endpoint contract.
 // Asserts that error should mention tracing endpoint, got:.
 func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {

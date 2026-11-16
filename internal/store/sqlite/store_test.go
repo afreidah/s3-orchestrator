@@ -122,6 +122,22 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{37, func() {
+			var view string
+			if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE name = 'backend_capacity'`).Scan(&view); err != nil {
+				t.Fatalf("rewind: read backend_capacity: %v", err)
+			}
+			exec("drop backend_capacity", `DROP VIEW backend_capacity`)
+			exec("create the byte-only stripes", `CREATE TABLE backend_quota_stripes_bytes (
+				backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name) ON DELETE CASCADE,
+				stripe_id INTEGER NOT NULL, bytes_used INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (backend_name, stripe_id))`)
+			exec("fold the counters into bytes", `INSERT INTO backend_quota_stripes_bytes (backend_name, stripe_id, bytes_used)
+				SELECT backend_name, stripe_id, SUM(bytes_used) FROM backend_quota_stripes GROUP BY backend_name, stripe_id`)
+			exec("drop the counters", `DROP TABLE backend_quota_stripes`)
+			exec("restore the stripes", `ALTER TABLE backend_quota_stripes_bytes RENAME TO backend_quota_stripes`)
+			exec("recreate backend_capacity", view)
+		}},
 		{35, func() {
 			exec("drop pending_objects.tagging", `ALTER TABLE pending_objects DROP COLUMN tagging`)
 		}},
@@ -258,6 +274,17 @@ func dropColumns(t *testing.T, s *Store, table string, columns ...string) {
 func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	t.Helper()
 	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: size}); err != nil {
+		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
+	}
+}
+
+// mustRecordHashed records key on backend with the content hash the write
+// computed and no scrub stamp, which is what the write path leaves behind.
+func mustRecordHashed(t *testing.T, s *Store, key, backend string, size int64) {
+	t.Helper()
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+		Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: size, Form: &core.StoredForm{ContentHash: "sha256:" + key},
+	}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
@@ -1156,21 +1183,17 @@ func TestListDirectoryChildren_Pagination(t *testing.T) {
 	}
 }
 
-// TestBackendObjectStats verifies per-backend object count and byte totals.
-func TestBackendObjectStats(t *testing.T) {
+// TestLedgerStats_BackendObjectsAndBytes verifies a backend's object count and
+// stored bytes come back from the counters its writes charged.
+func TestLedgerStats_BackendObjectsAndBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 
-	count, total, err := s.BackendObjectStats(ctx, "backend-a")
-	if err != nil {
-		t.Fatalf("BackendObjectStats: %v", err)
-	}
-	if count != 2 || total != 300 {
-		t.Errorf("count=%d total=%d, want 2/300", count, total)
+	if held := ledgerOf(t, s)["backend-a"]; held.Objects != 2 || held.StoredBytes != 300 {
+		t.Errorf("held = %d objects / %d bytes, want 2 / 300", held.Objects, held.StoredBytes)
 	}
 }
 
@@ -3372,10 +3395,15 @@ func ledgerOf(t *testing.T, s *Store) core.LedgerStats {
 }
 
 // coverageOf reads verification coverage over the reachable backends as of
-// now.
+// now, aged from the head of the scrub queue as the metrics collector does.
 func coverageOf(t *testing.T, s *Store, reachable []string) core.CoverageStat {
 	t.Helper()
-	return ledgerOf(t, s).Coverage(reachable, time.Now())
+	now := time.Now()
+	oldest, err := core.OldestTouched(context.Background(), s, reachable, now)
+	if err != nil {
+		t.Fatalf("OldestTouched: %v", err)
+	}
+	return ledgerOf(t, s).Coverage(reachable, oldest, now)
 }
 
 // TestLedgerStats_ObjectCounts verifies per-backend object count aggregation.
@@ -3800,12 +3828,8 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	}
 
 	// Quota counts both: the bytes are on the backend either way.
-	count, bytes, err := s.BackendObjectStats(ctx, "backend-a")
-	if err != nil {
-		t.Fatalf("BackendObjectStats: %v", err)
-	}
-	if count != 2 || bytes != 500 {
-		t.Errorf("stats = %d objects / %d bytes, want 2 / 500", count, bytes)
+	if held := ledgerOf(t, s)["backend-a"]; held.Objects != 2 || held.StoredBytes != 500 {
+		t.Errorf("held = %d objects / %d bytes, want 2 / 500", held.Objects, held.StoredBytes)
 	}
 
 	// The rebalance, placement and drain candidate scan sees only the owned one.
@@ -3842,12 +3866,8 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 		t.Fatalf("ImportObject: %v", err)
 	}
 
-	count, bytes, err := s.BackendObjectStats(ctx, "backend-a")
-	if err != nil {
-		t.Fatalf("BackendObjectStats: %v", err)
-	}
-	if count != 2 || bytes != 608 {
-		t.Errorf("stats = %d objects / %d bytes, want 2 / 608", count, bytes)
+	if held := ledgerOf(t, s)["backend-a"]; held.Objects != 2 || held.StoredBytes != 608 {
+		t.Errorf("held = %d objects / %d bytes, want 2 / 608", held.Objects, held.StoredBytes)
 	}
 
 	locs, err := s.GetAllObjectLocations(ctx, "bucket/gone")
@@ -3880,8 +3900,8 @@ func assertUnreadableOnly(t *testing.T, s *Store, key string, size int64) {
 	if rest, err := s.ListCopiesByForm(ctx, &unreadableCopies, 10, past); err != nil || len(rest) != 0 {
 		t.Errorf("unreadable listing past the only row = %+v, %v; want none", rest, err)
 	}
-	if n, err := s.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without); err != nil || n != 1 {
-		t.Errorf("unreadable count = %d, %v; want 1", n, err)
+	if n := ledgerOf(t, s).UnreadableCopies(); n != 1 {
+		t.Errorf("unreadable count = %d, want 1", n)
 	}
 }
 
@@ -4066,8 +4086,7 @@ func TestLedgerStats_ReportsCoverage(t *testing.T) {
 	}
 
 	for _, key := range []string{"bucket/a", "bucket/b"} {
-		mustRecordObject(t, s, key, "backend-a", 100)
-		hashAtWrite(t, s, key, "backend-a")
+		mustRecordHashed(t, s, key, "backend-a", 100)
 	}
 
 	// Hashed but unverified: both count, and the age reports the backlog from
@@ -4102,12 +4121,10 @@ func TestLedgerStats_UnreachableBackendIsDeferred(t *testing.T) {
 
 	// backend-b stands in for the over-limit backend: the sweep is told it may
 	// read backend-a only, which is what affordableBackends produces.
-	mustRecordObject(t, s, "bucket/old", "backend-b", 100)
-	hashAtWrite(t, s, "bucket/old", "backend-b")
+	mustRecordHashed(t, s, "bucket/old", "backend-b", 100)
 	backdateCreatedAt(t, s, "bucket/old", "backend-b", 720*time.Hour)
 
-	mustRecordObject(t, s, "bucket/new", "backend-a", 100)
-	hashAtWrite(t, s, "bucket/new", "backend-a")
+	mustRecordHashed(t, s, "bucket/new", "backend-a", 100)
 
 	stat := coverageOf(t, s, []string{"backend-a"})
 	if stat.Deferred != 1 {

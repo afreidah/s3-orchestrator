@@ -77,7 +77,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // handleStatus returns each backend's quota, usage, state flags, refused calls
 // and profile, plus database health, integrity figures and the identity of the
-// instance answering, from the fleet snapshot.
+// instance answering.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.d.Dashboard.GetStatus(r.Context())
 	if err != nil {

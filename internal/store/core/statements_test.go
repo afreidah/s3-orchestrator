@@ -87,6 +87,11 @@ func (s *statementCountTx) DeleteObjectFromBackend(context.Context, string, stri
 	return nil
 }
 
+func (s *statementCountTx) UpdateCopyMetadata(context.Context, *ObjectLocation, *CopyPatch) error {
+	s.order = append(s.order, stmtWriteCopy)
+	return nil
+}
+
 func (s *statementCountTx) DeleteObjectTags(context.Context, ...string) error {
 	s.order = append(s.order, stmtWriteTags)
 	return nil
@@ -191,6 +196,9 @@ func TestLedgerChanges_QueueOnceAndChargeLast(t *testing.T) {
 		{"companion commit", &statementCountTx{}, func(o TxOps) error {
 			_, _, err := o.CommitCompanionCopy(ctx, intent(PendingRoleCompanion))
 			return err
+		}},
+		{"backfill a hash", &statementCountTx{copies: []ExistingCopy{held}}, func(o TxOps) error {
+			return o.UpdateCopyMetadata(ctx, source, &CopyPatch{ContentHash: "h", Scrubbed: true})
 		}},
 		{"import", &statementCountTx{}, func(o TxOps) error {
 			_, err := o.ImportObject(ctx, &ImportObjectRequest{Key: "key", Backend: "b1", Size: 3, Form: &StoredForm{}})

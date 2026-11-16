@@ -29,7 +29,6 @@ func Permissive(m *MockMetadataStore) {
 	r := m.EXPECT()
 	a := gomock.Any()
 
-	r.BackendObjectStats(a, a).Return(int64(0), int64(0), nil).AnyTimes()
 	r.StartDrain(a, a).Return(true, nil).AnyTimes()
 	r.ListBackendStates(a).Return(nil, nil).AnyTimes()
 	r.AddDrainedObjects(a, a, a).Return(nil).AnyTimes()
@@ -79,7 +78,6 @@ func Permissive(m *MockMetadataStore) {
 	r.GetLeastRecentlyScrubbedObjects(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.CountScrubCandidatesOnBackends(a, a, a).Return(int64(0), nil).AnyTimes()
 	r.ListCopiesByForm(a, a, a, a).Return(nil, nil).AnyTimes()
-	r.CountCopiesByForm(a, a, a).Return(int64(0), nil).AnyTimes()
 	r.GetStalePending(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetUsageSince(a, a).Return(nil, nil).AnyTimes()
 	r.ImportObject(a, a).Return(core.ImportSkippedExisting, nil).AnyTimes()

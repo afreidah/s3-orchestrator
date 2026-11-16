@@ -19,10 +19,11 @@ FROM (SELECT k FROM unnest(@object_keys::text[]) AS k ORDER BY k COLLATE "C") lo
 
 -- name: GetExistingCopiesForUpdate :many
 -- Every copy of the listed keys, locked so the same transaction can delete the
--- rows and move their quota. storage_key comes along because the caller that
+-- rows and move their counters. storage_key comes along because the caller that
 -- deletes these rows also deletes their bytes, and a per-write path cannot be
 -- derived from the object key.
-SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
+SELECT object_key, backend_name, storage_key, size_bytes, created_at, form,
+    managed, object_size, (last_scrubbed_at IS NOT NULL)::bool AS scrubbed
 FROM object_locations
 WHERE object_key = ANY(@object_keys::text[])
 FOR UPDATE;
@@ -217,11 +218,6 @@ WHERE ol.object_key COLLATE "C" >= @from_key::text
 ORDER BY ol.object_key COLLATE "C", ol.created_at ASC
 LIMIT @max_keys;
 
--- name: BackendObjectStats :one
-SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
-FROM object_locations
-WHERE backend_name = $1;
-
 -- name: DeleteObjectLocationsByBackend :exec
 DELETE FROM object_locations WHERE backend_name = $1;
 
@@ -259,12 +255,6 @@ WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
-
--- name: CountCopiesByForm :one
--- How many copies carry every bit of with_flags and none of without_flags.
-SELECT count(*) FROM object_locations
-WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
-  AND (form & sqlc.arg(without_flags)::bigint) = 0;
 
 -- name: UpdateCopyMetadata :execrows
 -- Writes a patch to one copy: a NULL argument leaves its column as it is, and

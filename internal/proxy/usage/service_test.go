@@ -194,8 +194,12 @@ func TestRefreshQuotaBaselines_LoadsTheRows(t *testing.T) {
 	stores.baselines = map[string]core.QuotaStat{"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 400}}
 	s, quota := newServiceWithQuota(t, stores)
 
-	if err := s.RefreshQuotaBaselines(context.Background()); err != nil {
+	stats, err := s.RefreshQuotaBaselines(context.Background())
+	if err != nil {
 		t.Fatalf("RefreshQuotaBaselines: %v", err)
+	}
+	if stats["b1"].BytesUsed != 400 {
+		t.Errorf("returned b1 = %+v, want the row read", stats["b1"])
 	}
 	if got := quota.Available("b1"); got != 600 {
 		t.Errorf("b1 available = %d, want 600", got)
@@ -214,7 +218,7 @@ func TestRefreshQuotaBaselines_StoreError(t *testing.T) {
 	stores.baselineErr = sentinel
 	s, quota := newServiceWithQuota(t, stores)
 
-	if err := s.RefreshQuotaBaselines(context.Background()); !errors.Is(err, sentinel) {
+	if _, err := s.RefreshQuotaBaselines(context.Background()); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want %v", err, sentinel)
 	}
 	if _, ok := quota.Baseline("b1"); ok {

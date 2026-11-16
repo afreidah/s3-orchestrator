@@ -250,8 +250,12 @@ func TestExistingCopyFromRow_PreservesFields(t *testing.T) {
 	got := existingCopyFromRow(&db.GetExistingCopiesForUpdateRow{
 		ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 100,
 		CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, Form: int64(core.StoredEncrypted),
+		Managed: false, ObjectSize: 80, Scrubbed: true,
 	})
-	want := core.ExistingCopy{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 100, CreatedAt: created, Form: core.StoredEncrypted}
+	want := core.ExistingCopy{
+		ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 100, CreatedAt: created, Form: core.StoredEncrypted,
+		Unmanaged: true, ObjectSize: 80, Scrubbed: true,
+	}
 	if got != want {
 		t.Errorf("existingCopyFromRow = %+v, want %+v", got, want)
 	}

@@ -224,12 +224,12 @@ func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*DrainProg
 		Error:        rec.LastError,
 	}
 	if p.Active {
-		count, bytes, err := d.store.BackendObjectStats(ctx, name)
+		ledger, err := d.store.LedgerStats(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get backend stats: %w", err)
 		}
-		p.ObjectsRemaining = count
-		p.BytesRemaining = bytes
+		p.ObjectsRemaining = ledger[name].Objects
+		p.BytesRemaining = ledger[name].StoredBytes
 	}
 	return p, nil
 }

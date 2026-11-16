@@ -644,13 +644,13 @@ func TestAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, Delta: 500}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, StoredBytes: 500}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 3); got != 500 {
 			t.Errorf("stripe 3 = %d, want 500 after the row was created", got)
 		}
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, Delta: 250}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 3, StoredBytes: 250}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 3); got != 750 {
@@ -668,7 +668,7 @@ func TestAdapter_AdjustQuotaStripe_StripesAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		for stripe, delta := range map[int16]int64{0: 100, 5: 200, 11: 300} {
-			if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: stripe, Delta: delta}); err != nil {
+			if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: stripe, StoredBytes: delta}); err != nil {
 				t.Fatalf("AdjustQuotaStripe(%d): %v", stripe, err)
 			}
 		}
@@ -691,10 +691,10 @@ func TestAdapter_AdjustQuotaStripe_NegativeStripeClampsOnlyTheTotal(t *testing.T
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Delta: 1000}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", StoredBytes: 1000}); err != nil {
 			t.Fatalf("seed stripe 0: %v", err)
 		}
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 6, Delta: -400}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 6, StoredBytes: -400}); err != nil {
 			t.Fatalf("credit stripe 6: %v", err)
 		}
 		if got := stripeBytes(t, a, "backend-a", 6); got != -400 {
@@ -714,7 +714,7 @@ func TestAdapter_CapacityClampsNegativeTotalAtZero(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 2, Delta: -750}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 2, StoredBytes: -750}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := capacityBytesUsed(t, a, "backend-a"); got != 0 {

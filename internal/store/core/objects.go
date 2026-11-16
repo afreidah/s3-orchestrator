@@ -389,7 +389,7 @@ func placeCopyTx(ctx context.Context, e *ledgerEdit, p *Placement) (outcome[int6
 func (p *Placement) commit(ctx context.Context, e *ledgerEdit, src *ObjectLocation) (outcome[int64], error) {
 	placed := p.placedCopy(src)
 	if p.RemoveSource {
-		source := ExistingCopy{ObjectKey: src.ObjectKey, BackendName: src.BackendName, StorageKey: src.StorageKey, SizeBytes: src.SizeBytes}
+		source := existingCopyOf(src)
 		if err := e.removeCopy(ctx, p.Reasons.SourceDelete, &source); err != nil {
 			return outcome[int64]{}, err
 		}
@@ -443,6 +443,37 @@ func (p *Placement) placedCopy(src *ObjectLocation) *ObjectLocation {
 	placed.SizeBytes = p.Intent.SizeBytes
 	placed.CompressionProbeSize, placed.CompressionProbeLevel = 0, ""
 	return placed
+}
+
+// -------------------------------------------------------------------------
+// COPY METADATA
+// -------------------------------------------------------------------------
+
+// UpdateCopyMetadata writes a patch to the copy loc names and moves it between
+// counters when the patch changes its form or first stamps it scrubbed. A copy
+// gone from loc's backend, or replaced there by a newer write, is
+// ErrCopyChanged.
+func (o TxOps) UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error {
+	_, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
+		held, ok, err := tx.LockObjectOnBackend(ctx, loc.ObjectKey, loc.BackendName)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || held.StorageKey != loc.StorageKey {
+			return nil, ErrCopyChanged
+		}
+		if err := tx.UpdateCopyMetadata(ctx, loc, p); err != nil {
+			return nil, err
+		}
+		e := o.edit(tx)
+		before, after := existingCopyOf(held), existingCopyOf(p.applied(held))
+		e.restate(&before, &after)
+		return e.commit(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("update copy metadata: %w", err)
+	}
+	return nil
 }
 
 // -------------------------------------------------------------------------

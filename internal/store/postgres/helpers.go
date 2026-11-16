@@ -152,6 +152,9 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 		SizeBytes:   r.SizeBytes,
 		CreatedAt:   r.CreatedAt.Time,
 		Form:        core.StoredFlags(r.Form),
+		Unmanaged:   !r.Managed,
+		ObjectSize:  r.ObjectSize,
+		Scrubbed:    r.Scrubbed,
 	}
 }
 

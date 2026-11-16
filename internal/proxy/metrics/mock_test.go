@@ -42,21 +42,6 @@ func (m *MockDeps) EXPECT() *MockDepsMockRecorder {
 	return m.recorder
 }
 
-// CountReplicationQueue mocks base method.
-func (m *MockDeps) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountReplicationQueue", ctx)
-	ret0, _ := ret[0].(core.ReplicationBacklog)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountReplicationQueue indicates an expected call of CountReplicationQueue.
-func (mr *MockDepsMockRecorder) CountReplicationQueue(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationQueue", reflect.TypeOf((*MockDeps)(nil).CountReplicationQueue), ctx)
-}
-
 // GetActiveMultipartCounts mocks base method.
 func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()
@@ -70,6 +55,21 @@ func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int
 func (mr *MockDepsMockRecorder) GetActiveMultipartCounts(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveMultipartCounts", reflect.TypeOf((*MockDeps)(nil).GetActiveMultipartCounts), ctx)
+}
+
+// GetLeastRecentlyScrubbedObjects mocks base method.
+func (m *MockDeps) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLeastRecentlyScrubbedObjects", ctx, limit, backends, scrubbedBefore)
+	ret0, _ := ret[0].([]core.ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLeastRecentlyScrubbedObjects indicates an expected call of GetLeastRecentlyScrubbedObjects.
+func (mr *MockDepsMockRecorder) GetLeastRecentlyScrubbedObjects(ctx, limit, backends, scrubbedBefore any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastRecentlyScrubbedObjects", reflect.TypeOf((*MockDeps)(nil).GetLeastRecentlyScrubbedObjects), ctx, limit, backends, scrubbedBefore)
 }
 
 // GetQuotaStats mocks base method.
@@ -115,4 +115,19 @@ func (m *MockDeps) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 func (mr *MockDepsMockRecorder) LedgerStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LedgerStats", reflect.TypeOf((*MockDeps)(nil).LedgerStats), ctx)
+}
+
+// WithAdvisoryLock mocks base method.
+func (m *MockDeps) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(context.Context) error) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithAdvisoryLock", ctx, lockID, fn)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WithAdvisoryLock indicates an expected call of WithAdvisoryLock.
+func (mr *MockDepsMockRecorder) WithAdvisoryLock(ctx, lockID, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithAdvisoryLock", reflect.TypeOf((*MockDeps)(nil).WithAdvisoryLock), ctx, lockID, fn)
 }

@@ -7,10 +7,9 @@
 // read state from several collaborators at once, through the consumer
 // interfaces declared in service_interfaces.go:
 //
-//   - usageFlushService: runs on every instance with no lock, and adapts
-//     its tick interval at runtime based on observed load.
-//   - fleetSnapshotService: recomputes the fleet-wide gauges on the
-//     telemetry.metrics.fleet_interval cadence through the metrics collector.
+//   - usageFlushService: runs on every instance with no lock, adapts its
+//     tick interval at runtime based on observed load, and republishes the
+//     gauges through the metrics collector.
 //   - lifecycleService: a small tickrunner wrapper that needs the
 //     manager-side lifecycleOps surface to read rules and process them.
 //   - topicWatcher: applies what another instance announces over Redis,
@@ -67,7 +66,7 @@ type usageFlushService struct {
 type UsageFlushDeps struct {
 	Flusher usageFlushOps
 	Tracker nearLimitReporter
-	Fleet   quotaMetricsRefresher
+	Fleet   gaugeRefresher
 	States  backendStateRefresher
 	Config  syncutil.Section[config.UsageFlushConfig]
 }
@@ -121,27 +120,29 @@ func (s *usageFlushService) nextInterval() time.Duration {
 }
 
 // flushTick runs a single flush+metrics cycle on every instance. With Redis
-// counters every instance also loads the fleet snapshot and worker gauges last
-// published. Every instance then reloads its own usage baselines, or its limit
-// checks would keep admitting work against budget already spent. The fleet
-// snapshot itself is computed by the fleet snapshot service on its own
-// cadence. Every step runs whatever the others did, and their failures are
-// returned together.
+// counters every instance also loads the worker gauges last published. Every
+// instance then republishes the gauges from the quota read its baselines came
+// from, and reloads its own usage baselines, or its limit checks would keep
+// admitting work against budget already spent. Every step runs whatever the
+// others did, and their failures are returned together.
 func (s *usageFlushService) flushTick(ctx context.Context) error {
-	quotaErr := wrapStep("refresh quota baselines", s.Flusher.RefreshQuotaBaselines(ctx))
+	stats, err := s.Flusher.RefreshQuotaBaselines(ctx)
+	quotaErr := wrapStep("refresh quota baselines", err)
 	flushErr := wrapStep("flush counters", s.Flusher.FlushUsage(ctx))
 	if s.Flusher.RedisCounterConfigured() {
-		s.loadFleetState(ctx)
+		if err := s.Fleet.LoadWorkerGauges(ctx); err != nil {
+			s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
+		}
 	}
 
-	// After the flush, so the baseline includes what it wrote.
-	usageErr := wrapStep("refresh usage baselines", s.Fleet.RefreshUsageBaselines(ctx))
+	// After the flush, so the usage baseline includes what it wrote.
+	gaugesErr := wrapStep("refresh gauges", s.Fleet.RefreshGauges(ctx, stats))
 
 	// This service runs on every instance in every mode, while the drain
 	// worker that also refreshes the cache runs on one instance at a time.
 	// A stale cache only costs ranking: admission reads the records itself.
 	statesErr := wrapStep("refresh backend states", s.States.Refresh(ctx))
-	return errors.Join(quotaErr, flushErr, usageErr, statesErr)
+	return errors.Join(quotaErr, flushErr, gaugesErr, statesErr)
 }
 
 // wrapStep names a failed tick step in its error, and passes nil through.
@@ -150,35 +151,6 @@ func wrapStep(step string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w", step, err)
-}
-
-// loadFleetState loads the fleet snapshot and the worker gauges, which their
-// own lock holders published and which need not be this instance.
-func (s *usageFlushService) loadFleetState(ctx context.Context) {
-	if err := s.Fleet.LoadFleetMetrics(ctx); err != nil {
-		s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
-	}
-	if err := s.Fleet.LoadWorkerGauges(ctx); err != nil {
-		s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
-	}
-}
-
-// -------------------------------------------------------------------------
-// FLEET SNAPSHOT
-// -------------------------------------------------------------------------
-
-// NewFleetSnapshotService constructs the service that recomputes the
-// fleet-wide gauges and admin status figures every interval. It runs in every
-// mode under its own advisory lock; an instance that finds a fresh snapshot
-// already published applies it instead of scanning the ledger again.
-func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker core.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
-	return tickrunner.New(tickrunner.Config{
-		Locker:   locker,
-		Interval: interval,
-		LockID:   core.LockFleetSnapshot,
-		Name:     "fleet_snapshot",
-		Work:     fleet.RefreshFleetIfStale,
-	})
 }
 
 // -------------------------------------------------------------------------

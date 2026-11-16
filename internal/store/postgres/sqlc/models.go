@@ -25,9 +25,14 @@ type BackendQuota struct {
 }
 
 type BackendQuotaStripe struct {
-	BackendName string
-	StripeID    int16
-	BytesUsed   int64
+	BackendName   string
+	StripeID      int16
+	BytesUsed     int64
+	Form          int64
+	Managed       bool
+	Copies        int64
+	ObjectBytes   int64
+	NeverScrubbed int64
 }
 
 type BackendRequestUsage struct {

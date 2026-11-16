@@ -70,22 +70,6 @@ func (mr *MockMetadataStoreMockRecorder) ApplyUsageBatch(ctx, b any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyUsageBatch", reflect.TypeOf((*MockMetadataStore)(nil).ApplyUsageBatch), ctx, b)
 }
 
-// BackendObjectStats mocks base method.
-func (m *MockMetadataStore) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BackendObjectStats", ctx, backendName)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(int64)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// BackendObjectStats indicates an expected call of BackendObjectStats.
-func (mr *MockMetadataStoreMockRecorder) BackendObjectStats(ctx, backendName any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendObjectStats", reflect.TypeOf((*MockMetadataStore)(nil).BackendObjectStats), ctx, backendName)
-}
-
 // BeginMultipartCompletion mocks base method.
 func (m *MockMetadataStore) BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error) {
 	m.ctrl.T.Helper()
@@ -276,21 +260,6 @@ func (m *MockMetadataStore) CountActiveMultipartUploads(ctx context.Context, buc
 func (mr *MockMetadataStoreMockRecorder) CountActiveMultipartUploads(ctx, bucketPrefix any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountActiveMultipartUploads", reflect.TypeOf((*MockMetadataStore)(nil).CountActiveMultipartUploads), ctx, bucketPrefix)
-}
-
-// CountCopiesByForm mocks base method.
-func (m *MockMetadataStore) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountCopiesByForm", ctx, with, without)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountCopiesByForm indicates an expected call of CountCopiesByForm.
-func (mr *MockMetadataStoreMockRecorder) CountCopiesByForm(ctx, with, without any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountCopiesByForm", reflect.TypeOf((*MockMetadataStore)(nil).CountCopiesByForm), ctx, with, without)
 }
 
 // CountObjectsByPrefix mocks base method.

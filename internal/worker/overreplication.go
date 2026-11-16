@@ -88,7 +88,7 @@ func NewOverReplicationCleaner(d OverReplicationCleanerDeps) *OverReplicationCle
 // removed. observer, when non-nil, receives a start and end step per object
 // cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	pass := cycle.Pass{Workload: audit.WorkloadOverReplication, Refresh: c.d.Metrics}
+	pass := cycle.Pass{Workload: audit.WorkloadOverReplication}
 	return cycle.Run(ctx, pass, func(ctx context.Context) (OverReplicationSummary, error) {
 		return c.clean(ctx, cfg, observer)
 	})
@@ -106,11 +106,6 @@ type OverReplicationSummary struct {
 // AuditAttrs adds the copies removed to the tally's attributes.
 func (s OverReplicationSummary) AuditAttrs() []slog.Attr {
 	return append(s.Summary.AuditAttrs(), slog.Int("copies_removed", s.CopiesRemoved))
-}
-
-// Changed says the cycle removed a copy.
-func (s OverReplicationSummary) Changed() bool {
-	return s.CopiesRemoved > 0
 }
 
 // clean is the body of Clean after observe.Run sets up the span.

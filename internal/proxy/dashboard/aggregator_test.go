@@ -7,7 +7,7 @@
 // snapshot, snapshot and store read failures, and directory listing edge
 // cases.
 //
-// Drives the aggregator against the generated DashboardStore and FleetView
+// Drives the aggregator against the generated DirectoryLister and FleetView
 // mocks, so a test states only the reads it cares about and any unstubbed call
 // fails the test rather than returning a silent zero value.
 // -------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ func TestAggregator_Success(t *testing.T) {
 		Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 10}, Pools: core.PoolUsage{core.PoolAll: 10}},
 		Cycle: cycle,
 	}})
-	store := storetest.NewMockDashboardStore(ctrl)
+	store := storetest.NewMockDirectoryLister(ctrl)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
 	snap := snapshotOf{snap: &metrics.FleetSnapshot{
@@ -54,6 +54,7 @@ func TestAggregator_Success(t *testing.T) {
 			Compressed: core.CompressionStat{Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
 		}},
 		Multipart: map[string]int64{"b1": 1},
+		Coverage:  core.CoverageStat{OldestUnverifiedAge: time.Hour, NeverVerified: 3, Deferred: 4},
 	}}
 
 	da := New(&Deps{Store: store, Usage: usage, Fleet: newStubFleet(ctrl, "b1"), Snapshots: snap})
@@ -77,6 +78,10 @@ func TestAggregator_Success(t *testing.T) {
 	if data.PlaintextCopies != 7 {
 		t.Errorf("PlaintextCopies = %d, want 7", data.PlaintextCopies)
 	}
+	if data.OldestUnverifiedAge != time.Hour || data.NeverVerifiedCopies != 3 || data.DeferredCopies != 4 {
+		t.Errorf("coverage = %v, %d, %d; want the snapshot's 1h, 3, 4",
+			data.OldestUnverifiedAge, data.NeverVerifiedCopies, data.DeferredCopies)
+	}
 	if data.CompressionStats["b1"].StoredBytes != 250 {
 		t.Errorf("CompressionStats = %+v, want b1 stored 250", data.CompressionStats)
 	}
@@ -89,8 +94,8 @@ func TestAggregator_Success(t *testing.T) {
 // a stub for its success and failure forms.
 type dashboardRead struct {
 	name string
-	ok   func(*storetest.MockDashboardStore)
-	fail func(*storetest.MockDashboardStore, error)
+	ok   func(*storetest.MockDirectoryLister)
+	fail func(*storetest.MockDirectoryLister, error)
 }
 
 // -------------------------------------------------------------------------
@@ -103,10 +108,10 @@ func dashboardReads() []dashboardRead {
 	a := gomock.Any()
 	return []dashboardRead{
 		{"directory children",
-			func(m *storetest.MockDashboardStore) {
+			func(m *storetest.MockDirectoryLister) {
 				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil)
 			},
-			func(m *storetest.MockDashboardStore, err error) {
+			func(m *storetest.MockDirectoryLister, err error) {
 				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(nil, err)
 			}},
 	}
@@ -128,7 +133,7 @@ func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctrl := gomock.NewController(t)
-			store := storetest.NewMockDashboardStore(ctrl)
+			store := storetest.NewMockDirectoryLister(ctrl)
 			for _, earlier := range reads[:i] {
 				earlier.ok(store)
 			}
@@ -142,36 +147,17 @@ func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 	}
 }
 
-// TestAggregator_SnapshotFailuresFailGetStatus fails the status rather than
-// report zeroes when the snapshot cannot be had, or is missing a figure because
-// the store read behind it failed.
-func TestAggregator_SnapshotFailuresFailGetStatus(t *testing.T) {
+// TestAggregator_SnapshotFailureFailsGetStatus fails the status rather than
+// report zeroes when a store read behind the snapshot failed.
+func TestAggregator_SnapshotFailureFailsGetStatus(t *testing.T) {
 	t.Parallel()
-	noLedger := emptySnapshot()
-	noLedger.Ledger = nil
-	noMultipart := emptySnapshot()
-	noMultipart.Multipart = nil
-
-	for _, c := range []struct {
-		name string
-		snap *metrics.FleetSnapshot
-		err  error
-	}{
-		{"snapshot error", nil, errors.New("db down")},
-		{"ledger missing", noLedger, nil},
-		{"multipart missing", noMultipart, nil},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			ctrl := gomock.NewController(t)
-			da := New(&Deps{
-				Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
-				Fleet: NewMockFleetView(ctrl), Snapshots: snapshotOf{c.snap, c.err},
-			})
-			if _, err := da.GetStatus(t.Context()); err == nil {
-				t.Fatal("GetStatus succeeded without a complete snapshot")
-			}
-		})
+	ctrl := gomock.NewController(t)
+	da := New(&Deps{
+		Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
+		Fleet: NewMockFleetView(ctrl), Snapshots: snapshotOf{nil, errors.New("db down")},
+	})
+	if _, err := da.GetStatus(t.Context()); err == nil {
+		t.Fatal("GetStatus succeeded without a snapshot")
 	}
 }
 
@@ -192,7 +178,7 @@ func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctrl := gomock.NewController(t)
-			store := storetest.NewMockDashboardStore(ctrl)
+			store := storetest.NewMockDirectoryLister(ctrl)
 			store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), maxDirectoryChildren).
 				Return(&core.DirectoryListResult{}, nil).Times(1)
 
@@ -209,7 +195,7 @@ func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	store := storetest.NewMockDashboardStore(ctrl)
+	store := storetest.NewMockDirectoryLister(ctrl)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), "photos/", "cat.jpg", 25).
 		Return(&core.DirectoryListResult{}, nil).Times(1)
 

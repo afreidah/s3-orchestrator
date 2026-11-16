@@ -47,7 +47,7 @@ type promoteTxStub struct {
 
 func (s *promoteTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
 	for _, c := range charges {
-		s.charges = append(s.charges, quotaOp{backend: c.Backend, delta: c.Delta})
+		s.charges = append(s.charges, quotaOp{backend: c.Backend, delta: c.StoredBytes})
 	}
 	return nil
 }
@@ -541,7 +541,7 @@ func (s *companionTxStub) DeleteObjectFromBackend(_ context.Context, _, backend 
 
 func (s *companionTxStub) AdjustQuotaStripes(_ context.Context, charges ...StripeCharge) error {
 	for _, c := range charges {
-		s.stripes = append(s.stripes, c.Delta)
+		s.stripes = append(s.stripes, c.StoredBytes)
 	}
 	return nil
 }

@@ -713,7 +713,7 @@ var (
 // long as the test runs.
 func registerStack(t *testing.T, st *proxytest.Stack) *proxytest.Stack {
 	t.Helper()
-	if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+	if _, err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 		t.Fatalf("prime stack quota baselines: %v", err)
 	}
 	extraStacksMu.Lock()
@@ -740,7 +740,7 @@ func quotaStacks() []*proxytest.Stack {
 func refreshQuota(tb testing.TB) {
 	tb.Helper()
 	for _, st := range quotaStacks() {
-		if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+		if _, err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 			tb.Fatalf("refreshQuota: %v", err)
 		}
 	}

@@ -45,7 +45,7 @@ type CleanupWorker struct {
 // reclaimable by another worker tick (typically 5m).
 type CleanupWorkerDeps struct {
 	Ops              Ops
-	Metrics          Metrics
+	Metrics          telemetry.GaugePublisher
 	Store            core.CleanupStore
 	Concurrency      int
 	InstanceID       string

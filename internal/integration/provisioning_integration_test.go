@@ -138,16 +138,15 @@ func newAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, regist
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := admin.New(&admin.Deps{
-		BackendOps:  st.Usage,
-		Ops:         opsSvc,
-		States:      st.States,
-		ReplMetrics: st.Metrics,
-		StateStore:  testStore,
-		DBHealthy:   testDatabaseCB.IsHealthy,
-		Cleanup:     testStore,
-		Registry:    registry.Load,
-		Config:      st.Config,
-		LogLevel:    &lv,
+		BackendOps: st.Usage,
+		Ops:        opsSvc,
+		States:     st.States,
+		StateStore: testStore,
+		DBHealthy:  testDatabaseCB.IsHealthy,
+		Cleanup:    testStore,
+		Registry:   registry.Load,
+		Config:     st.Config,
+		LogLevel:   &lv,
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)

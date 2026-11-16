@@ -12,10 +12,7 @@
 
 package config
 
-import (
-	"cmp"
-	"time"
-)
+import "cmp"
 
 // TelemetryConfig holds observability settings.
 type TelemetryConfig struct {
@@ -33,25 +30,14 @@ type TelemetryConfig struct {
 // RequireListener defaults to true, so a metrics listener that fails to bind
 // fails startup instead of silently dropping metrics. It is a pointer so an
 // explicit false is distinguishable from an omitted field.
-//
-// FleetInterval is how often one instance recomputes the fleet-wide gauges
-// and admin status figures from the ledger. Each recompute scans the object
-// table, so it runs on its own cadence rather than every usage flush.
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
 	Listen  string `yaml:"listen"` // Separate listener address (e.g. "127.0.0.1:9091"); if empty, metrics are served on the main listener
 	Pprof   bool   `yaml:"pprof"`  // Mount /debug/pprof/* on the metrics listener. Off by default; requires Listen to be set.
 
-	RequireListener *bool         `yaml:"require_listener"` // fail startup if the metrics listener cannot bind
-	FleetInterval   time.Duration `yaml:"fleet_interval"`   // fleet snapshot recompute interval (default: 60s, minimum 10s)
+	RequireListener *bool `yaml:"require_listener"` // fail startup if the metrics listener cannot bind
 }
-
-// DefaultFleetInterval and MinFleetInterval bound metrics.fleet_interval.
-const (
-	DefaultFleetInterval = 60 * time.Second
-	MinFleetInterval     = 10 * time.Second
-)
 
 // ListenerRequired reports whether a metrics bind failure should abort startup.
 // Only meaningful when Listen is set; metrics served on the main listener share
@@ -71,15 +57,13 @@ type TracingConfig struct {
 // setDefaultsAndValidate sets defaults and validate.
 func (t *TelemetryConfig) setDefaultsAndValidate() []error {
 	t.Metrics.Path = cmp.Or(t.Metrics.Path, "/metrics")
-	t.Metrics.FleetInterval = cmp.Or(t.Metrics.FleetInterval, DefaultFleetInterval)
 	t.Metrics.RequireListener = new(t.Metrics.ListenerRequired())
 	t.Tracing.SampleRate = cmp.Or(t.Tracing.SampleRate, 1.0)
-	errs := failed(atLeast("telemetry.metrics.fleet_interval", t.Metrics.FleetInterval, MinFleetInterval))
-	if t.Tracing.Enabled {
-		errs = append(errs, failed(
-			required("telemetry.tracing.endpoint", t.Tracing.Endpoint != ""),
-			between("telemetry.tracing.sample_rate", t.Tracing.SampleRate, 0, 1),
-		)...)
+	if !t.Tracing.Enabled {
+		return nil
 	}
-	return errs
+	return failed(
+		required("telemetry.tracing.endpoint", t.Tracing.Endpoint != ""),
+		between("telemetry.tracing.sample_rate", t.Tracing.SampleRate, 0, 1),
+	)
 }

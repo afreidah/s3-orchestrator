@@ -64,39 +64,53 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 	})
 }
 
-// ReconcileUsage brings each backend's striped total to the ledger's sum of its
-// copies and returns the difference applied, for the backends that had drifted.
-// The difference is added to stripe zero rather than written over the total,
-// and the read and the writes share one transaction, which SQLite serializes
-// against every other write. A backend with no copies left is brought to zero.
+// ReconcileUsage brings every counter to what the ledger's copies hold, by
+// backend, stored form and managed flag, and returns each drifted backend with
+// the stored bytes applied to it. The difference is added to stripe zero
+// rather than written over the counters, and the read and the writes share one
+// transaction, which SQLite serializes against every other write. A group with
+// no copies left is brought to zero.
 func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return withTxVal(ctx, s, func(a *sqliteTxAdapter) (map[string]int64, error) {
 		rows, err := a.q.QueryContext(ctx, `
 			WITH ledger AS (
-				SELECT backend_name, SUM(size_bytes) AS total
+				SELECT backend_name, form, managed, COUNT(*) AS copies, SUM(size_bytes) AS stored_bytes,
+				       SUM(object_size) AS object_bytes, SUM(last_scrubbed_at IS NULL) AS never_scrubbed
 				FROM object_locations
-				GROUP BY backend_name
+				GROUP BY backend_name, form, managed
 			),
-			striped AS (
-				SELECT q.backend_name, COALESCE(SUM(s.bytes_used), 0) AS total
-				FROM backend_quotas q
-				LEFT JOIN backend_quota_stripes s ON s.backend_name = q.backend_name
-				GROUP BY q.backend_name
+			counted AS (
+				SELECT backend_name, form, managed, SUM(copies) AS copies, SUM(bytes_used) AS stored_bytes,
+				       SUM(object_bytes) AS object_bytes, SUM(never_scrubbed) AS never_scrubbed
+				FROM backend_quota_stripes
+				GROUP BY backend_name, form, managed
+			),
+			drift AS (
+				SELECT COALESCE(l.backend_name, c.backend_name) AS backend_name,
+				       COALESCE(l.form, c.form) AS form, COALESCE(l.managed, c.managed) AS managed,
+				       COALESCE(l.copies, 0) - COALESCE(c.copies, 0) AS copies,
+				       COALESCE(l.stored_bytes, 0) - COALESCE(c.stored_bytes, 0) AS stored_bytes,
+				       COALESCE(l.object_bytes, 0) - COALESCE(c.object_bytes, 0) AS object_bytes,
+				       COALESCE(l.never_scrubbed, 0) - COALESCE(c.never_scrubbed, 0) AS never_scrubbed
+				FROM ledger l
+				FULL JOIN counted c ON c.backend_name = l.backend_name AND c.form = l.form AND c.managed = l.managed
 			)
-			SELECT st.backend_name, COALESCE(l.total, 0) - st.total
-			FROM striped st
-			LEFT JOIN ledger l ON l.backend_name = st.backend_name
-			WHERE COALESCE(l.total, 0) <> st.total`)
+			SELECT backend_name, form, managed, copies, stored_bytes, object_bytes, never_scrubbed
+			FROM drift
+			WHERE backend_name IN (SELECT backend_name FROM backend_quotas)
+			  AND (copies <> 0 OR stored_bytes <> 0 OR object_bytes <> 0 OR never_scrubbed <> 0)`)
 		if err != nil {
-			return nil, fmt.Errorf("read usage drift: %w", err)
+			return nil, fmt.Errorf("read ledger drift: %w", err)
 		}
-		drift, err := collectMap(rows, "usage drift", scanNameValue)
+		groups, err := collectRows(rows, "ledger drift", scanLedgerGroup)
 		if err != nil {
 			return nil, err
 		}
-		charges := make([]core.StripeCharge, 0, len(drift))
-		for backend, delta := range drift {
-			charges = append(charges, core.StripeCharge{Backend: backend, Delta: delta})
+		charges := make([]core.StripeCharge, len(groups))
+		drift := make(map[string]int64)
+		for i, g := range groups {
+			charges[i] = core.StripeCharge{LedgerGroup: g}
+			drift[g.Backend] += g.StoredBytes
 		}
 		if err := a.AdjustQuotaStripes(ctx, charges...); err != nil {
 			return nil, err
@@ -105,20 +119,15 @@ func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	})
 }
 
-// LedgerStats returns every per-backend ledger figure from one pass over
-// object_locations grouped by backend, stored form and managed flag, folded by
-// core. The oldest touch falls back to created_at as the scrub queue ordering
-// does.
+// LedgerStats returns every per-backend ledger figure from the ledger's
+// counters summed by backend, stored form and managed flag, folded by core. A
+// group whose copies sum to zero holds nothing and is left out.
 func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, form, managed,
-		       COUNT(*),
-		       COALESCE(SUM(size_bytes), 0),
-		       COALESCE(SUM(object_size), 0),
-		       COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL),
-		       MIN(COALESCE(last_scrubbed_at, created_at))
-		FROM object_locations
-		GROUP BY backend_name, form, managed`)
+		SELECT backend_name, form, managed, SUM(copies), SUM(bytes_used), SUM(object_bytes), SUM(never_scrubbed)
+		FROM backend_quota_stripes
+		GROUP BY backend_name, form, managed
+		HAVING SUM(copies) <> 0`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ledger stats: %w", err)
 	}
@@ -129,22 +138,13 @@ func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	return core.FoldLedger(groups), nil
 }
 
-// scanLedgerGroup reads one row of the grouped ledger.
+// scanLedgerGroup reads one ledger group: its backend, form and managed flag,
+// then its copies, stored bytes, object bytes and never-scrubbed copies.
 func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
-	var (
-		g      core.LedgerGroup
-		oldest sql.NullString
-	)
+	var g core.LedgerGroup
 	if err := rows.Scan(&g.Backend, &g.Form, &g.Managed, &g.Copies, &g.StoredBytes,
-		&g.ObjectBytes, &g.NeverScrubbed, &oldest); err != nil {
-		return core.LedgerGroup{}, fmt.Errorf("scan ledger stats: %w", err)
-	}
-	if oldest.Valid {
-		t, err := parseTime(oldest.String)
-		if err != nil {
-			return core.LedgerGroup{}, fmt.Errorf("parse oldest touch %q: %w", oldest.String, err)
-		}
-		g.OldestTouched = t
+		&g.ObjectBytes, &g.NeverScrubbed); err != nil {
+		return core.LedgerGroup{}, fmt.Errorf("scan ledger group: %w", err)
 	}
 	return g, nil
 }

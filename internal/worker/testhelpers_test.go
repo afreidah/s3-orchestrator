@@ -120,12 +120,8 @@ func newMockOps(ctrl *gomock.Controller) *MockOps {
 }
 
 // localMetrics stands in for the metrics collector of a single instance with
-// no shared state: a published gauge is applied here, and the quota refresh a
-// pass that changed something makes does nothing.
+// no shared state: a published gauge is applied here.
 type localMetrics struct{}
-
-// UpdateQuotaMetrics accepts the refresh and does nothing.
-func (localMetrics) UpdateQuotaMetrics(context.Context) error { return nil }
 
 // PublishWorkerGauges applies the gauges on this instance, as the collector
 // does before it shares them.
@@ -261,7 +257,7 @@ type mockMetadataStore struct {
 	core.IntegrityStore
 	core.ExpiredObjectsLister
 	core.BackendStateStore
-	core.DashboardStore
+	core.DirectoryLister
 	core.UsageFlusher
 	core.AdvisoryLocker
 	core.LifecycleAdmin
@@ -500,15 +496,6 @@ func (m *mockMetadataStore) ListCopiesByForm(_ context.Context, f *core.FormFilt
 		}
 	}
 	return out, nil
-}
-
-// CountCopiesByForm reports the size of the unreadable fixture for the
-// unreadable query, and zero for any other.
-func (m *mockMetadataStore) CountCopiesByForm(_ context.Context, with, without core.StoredFlags) (int64, error) {
-	if !isUnreadableQuery(with, without) {
-		return 0, nil
-	}
-	return int64(len(m.unreadable)), nil
 }
 
 // RecordObjectIdentity is a stub on mockMetadataStore; records the ETag the

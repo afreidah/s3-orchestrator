@@ -896,10 +896,10 @@ func TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		before := pgBytesUsed(t, ctx, a, "backend-a")
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, Delta: 500}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, StoredBytes: 500}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, Delta: 250}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 4, StoredBytes: 250}); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
 		if got := pgBytesUsed(t, ctx, a, "backend-a") - before; got != 750 {
@@ -933,11 +933,11 @@ func TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped(t *testing.T)
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 8, Delta: 1000}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 8, StoredBytes: 1000}); err != nil {
 			t.Fatalf("seed stripe 8: %v", err)
 		}
 		before := pgBytesUsed(t, ctx, a, "backend-a")
-		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 9, Delta: -400}); err != nil {
+		if err := a.AdjustQuotaStripes(ctx, core.StripeCharge{Backend: "backend-a", Stripe: 9, StoredBytes: -400}); err != nil {
 			t.Fatalf("credit stripe 9: %v", err)
 		}
 		// A stripe clamped at zero would leave the total unchanged.
@@ -1128,8 +1128,8 @@ func assertUnreadableHidden(t *testing.T, s *Store, key string) {
 	if !slices.ContainsFunc(unreadable, func(l core.ObjectLocation) bool { return l.ObjectKey == key }) {
 		t.Errorf("the unreadable listing did not return %s", key)
 	}
-	if n, err := s.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without); err != nil || n < 1 {
-		t.Errorf("the unreadable count = %d, %v; want at least 1", n, err)
+	if ledger, err := s.LedgerStats(ctx); err != nil || ledger.UnreadableCopies() < 1 {
+		t.Errorf("the unreadable count = %d, %v; want at least 1", ledger.UnreadableCopies(), err)
 	}
 }
 

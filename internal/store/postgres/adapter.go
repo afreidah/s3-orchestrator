@@ -281,21 +281,23 @@ func (a *pgTxAdapter) InsertCleanup(ctx context.Context, requests ...*core.Clean
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// AdjustQuotaStripes applies signed deltas to backends' byte-counter stripes in
+// AdjustQuotaStripes applies signed deltas to backends' ledger counter rows in
 // one statement, materializing each row on first use.
 func (a *pgTxAdapter) AdjustQuotaStripes(ctx context.Context, charges ...core.StripeCharge) error {
+	n := len(charges)
 	params := db.AdjustQuotaStripesParams{
-		BackendNames: make([]string, len(charges)),
-		StripeIds:    make([]int16, len(charges)),
-		Deltas:       make([]int64, len(charges)),
+		BackendNames: make([]string, n), StripeIds: make([]int16, n), Forms: make([]int64, n),
+		Managed: make([]bool, n), Copies: make([]int64, n), StoredBytes: make([]int64, n),
+		ObjectBytes: make([]int64, n), NeverScrubbed: make([]int64, n),
 	}
 	for i, c := range charges {
-		params.BackendNames[i] = c.Backend
-		params.StripeIds[i] = c.Stripe
-		params.Deltas[i] = c.Delta
+		params.BackendNames[i], params.StripeIds[i] = c.Backend, c.Stripe
+		params.Forms[i], params.Managed[i] = int64(c.Form), c.Managed
+		params.Copies[i], params.StoredBytes[i] = c.Copies, c.StoredBytes
+		params.ObjectBytes[i], params.NeverScrubbed[i] = c.ObjectBytes, c.NeverScrubbed
 	}
 	if err := a.q.AdjustQuotaStripes(ctx, params); err != nil {
-		return fmt.Errorf("adjust quota stripes: %w", err)
+		return fmt.Errorf("adjust ledger counters: %w", err)
 	}
 	return nil
 }

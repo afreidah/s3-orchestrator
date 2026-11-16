@@ -109,9 +109,9 @@ func TestPgAdapter_AdjustQuotaStripes_ChargesEveryRow(t *testing.T) {
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		beforeA := pgBytesUsed(t, ctx, a, "backend-a")
 		if err := a.AdjustQuotaStripes(ctx,
-			core.StripeCharge{Backend: "backend-a", Stripe: 1, Delta: 100},
-			core.StripeCharge{Backend: "backend-a", Stripe: 2, Delta: 20},
-			core.StripeCharge{Backend: "backend-b", Stripe: 1, Delta: 3},
+			core.StripeCharge{Backend: "backend-a", Stripe: 1, StoredBytes: 100},
+			core.StripeCharge{Backend: "backend-a", Stripe: 2, StoredBytes: 20},
+			core.StripeCharge{Backend: "backend-b", Stripe: 1, StoredBytes: 3},
 		); err != nil {
 			t.Fatalf("AdjustQuotaStripes: %v", err)
 		}

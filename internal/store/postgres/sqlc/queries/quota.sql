@@ -4,15 +4,15 @@
 -- Author: Alex Freidah
 --
 -- sqlc-input definitions for backend_quotas - the per-backend bytes_limit - and
--- backend_quota_stripes, which holds the stored byte total split across rows so
--- concurrent writers do not contend on one. Orphan bytes are read from
+-- backend_quota_stripes, which holds the ledger's figures split across rows so
+-- concurrent writers do not contend on one, and by the stored form and managed
+-- flag of the copies each row counts. Orphan bytes are read from
 -- backend_capacity, which sums the cleanup rows still to delete.
 --
--- A backend's byte total is always SUM(bytes_used) over its stripes, never a
--- single row, and the clamp at zero belongs on that sum: a stripe is signed and
--- may sit negative while the total is correct. Lock acquisition order across
--- multi-row updates is enforced at the call site (sorted backend_name) to avoid
--- deadlock.
+-- A figure is always a sum over rows, never a single row, and the clamp at zero
+-- belongs on that sum: a row is signed and may sit negative while the total is
+-- correct. Lock acquisition order across multi-row updates is enforced at the
+-- call site (sorted by backend, stripe, form and managed) to avoid deadlock.
 -- -----------------------------------------------------------------------------
 
 -- name: UpsertQuotaLimit :exec
@@ -23,16 +23,21 @@ ON CONFLICT (backend_name) DO UPDATE SET
     updated_at = NOW();
 
 -- name: AdjustQuotaStripes :exec
--- Applies signed deltas to stripes, materializing each row on first use so
--- nothing has to seed a backend's stripes up front. No bytes_limit guard: the
+-- Applies signed deltas to counter rows, materializing each row on first use so
+-- nothing has to seed a backend's rows up front. No bytes_limit guard: the
 -- ceiling is enforced before the write is admitted, and a counter that declined
 -- to record bytes already on a backend would understate it permanently.
 -- The arrays are zipped by unnesting them side by side, and the rows are written
 -- in array order, which is the order concurrent charges rely on not to deadlock.
-INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-SELECT unnest(@backend_names::text[]), unnest(@stripe_ids::smallint[]), unnest(@deltas::bigint[])
-ON CONFLICT (backend_name, stripe_id) DO UPDATE
-SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used;
+INSERT INTO backend_quota_stripes (backend_name, stripe_id, form, managed, copies, bytes_used, object_bytes, never_scrubbed)
+SELECT unnest(@backend_names::text[]), unnest(@stripe_ids::smallint[]), unnest(@forms::bigint[]),
+    unnest(@managed::bool[]), unnest(@copies::bigint[]), unnest(@stored_bytes::bigint[]),
+    unnest(@object_bytes::bigint[]), unnest(@never_scrubbed::bigint[])
+ON CONFLICT (backend_name, stripe_id, form, managed) DO UPDATE
+SET copies = backend_quota_stripes.copies + EXCLUDED.copies,
+    bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used,
+    object_bytes = backend_quota_stripes.object_bytes + EXCLUDED.object_bytes,
+    never_scrubbed = backend_quota_stripes.never_scrubbed + EXCLUDED.never_scrubbed;
 
 -- name: GetAllQuotaStats :many
 -- Every backend's ceiling and what occupies it: the striped byte total, orphans
@@ -43,20 +48,18 @@ SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
 FROM backend_capacity;
 
 -- name: LedgerGroups :many
--- The ledger in one grouped pass, by backend, stored form and managed flag, so
--- the dashboard and the fleet snapshot read the table once. What each figure
--- counts is decided in Go from the groups, so both engines report the same
--- figures from the same rule. The oldest touch falls back to created_at as the
--- scrub queue ordering does, so a never-scrubbed copy is measured from when it
--- was written.
+-- The ledger's counters summed by backend, stored form and managed flag. What
+-- each figure counts is decided in Go from the groups, so both engines report
+-- the same figures from the same rule. A group whose copies sum to zero holds
+-- nothing and is left out.
 SELECT backend_name, form, managed,
-    COUNT(*)::bigint AS copies,
-    COALESCE(SUM(size_bytes), 0)::bigint AS stored_bytes,
-    COALESCE(SUM(object_size), 0)::bigint AS object_bytes,
-    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_scrubbed,
-    MIN(COALESCE(last_scrubbed_at, created_at))::timestamptz AS oldest_touched
-FROM object_locations
-GROUP BY backend_name, form, managed;
+    SUM(copies)::bigint AS copies,
+    SUM(bytes_used)::bigint AS stored_bytes,
+    SUM(object_bytes)::bigint AS object_bytes,
+    SUM(never_scrubbed)::bigint AS never_scrubbed
+FROM backend_quota_stripes
+GROUP BY backend_name, form, managed
+HAVING SUM(copies) <> 0;
 
 -- name: GetActiveMultipartCountsByBackend :many
 SELECT backend_name, COUNT(*) AS upload_count
@@ -64,40 +67,54 @@ FROM multipart_uploads
 GROUP BY backend_name;
 
 -- name: ReconcileUsage :many
--- Brings each backend's striped total to the ledger's sum of its copies and
--- returns the difference applied, for the backends that had drifted. Both sums
--- are read from the one snapshot this statement takes, and the difference is
--- added to stripe zero rather than written over the total, so a write that
--- commits alongside keeps its own adjustment on whichever stripe it charged. A
--- backend with no copies left is brought to zero. The insert is a writable CTE,
+-- Brings every counter to what the ledger's copies hold, by backend, stored
+-- form and managed flag, and returns each drifted backend with the stored bytes
+-- applied to it. Both sides are read from the one snapshot this statement
+-- takes, and the difference is added to stripe zero rather than written over
+-- the counters, so a write that commits alongside keeps its own adjustment on
+-- whichever row it charged. A group with no copies left is brought to zero, and
+-- only backends with a quota row are counted. The insert is a writable CTE,
 -- which Postgres runs whether or not the outer select reads it. It takes the
--- rows in byte order of backend name, the order every stripe write uses, so it
--- cannot deadlock against a batch delete.
+-- rows in the order every counter write uses, so it cannot deadlock against a
+-- batch delete.
 WITH ledger AS (
-    SELECT backend_name, SUM(size_bytes) AS total
+    SELECT backend_name, form, managed, COUNT(*) AS copies, SUM(size_bytes) AS stored_bytes,
+        SUM(object_size) AS object_bytes, COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL) AS never_scrubbed
     FROM object_locations
-    GROUP BY backend_name
+    GROUP BY backend_name, form, managed
 ),
-striped AS (
-    SELECT q.backend_name, COALESCE(SUM(s.bytes_used), 0) AS total
-    FROM backend_quotas q
-    LEFT JOIN backend_quota_stripes s ON s.backend_name = q.backend_name
-    GROUP BY q.backend_name
+counted AS (
+    SELECT backend_name, form, managed, SUM(copies) AS copies, SUM(bytes_used) AS stored_bytes,
+        SUM(object_bytes) AS object_bytes, SUM(never_scrubbed) AS never_scrubbed
+    FROM backend_quota_stripes
+    GROUP BY backend_name, form, managed
 ),
 drift AS (
-    SELECT st.backend_name, (COALESCE(l.total, 0) - st.total)::bigint AS delta
-    FROM striped st
-    LEFT JOIN ledger l ON l.backend_name = st.backend_name
-    WHERE COALESCE(l.total, 0) <> st.total
+    SELECT COALESCE(l.backend_name, c.backend_name) AS backend_name,
+        COALESCE(l.form, c.form) AS form, COALESCE(l.managed, c.managed) AS managed,
+        (COALESCE(l.copies, 0) - COALESCE(c.copies, 0))::bigint AS copies,
+        (COALESCE(l.stored_bytes, 0) - COALESCE(c.stored_bytes, 0))::bigint AS stored_bytes,
+        (COALESCE(l.object_bytes, 0) - COALESCE(c.object_bytes, 0))::bigint AS object_bytes,
+        (COALESCE(l.never_scrubbed, 0) - COALESCE(c.never_scrubbed, 0))::bigint AS never_scrubbed
+    FROM ledger l
+    FULL JOIN counted c ON c.backend_name = l.backend_name AND c.form = l.form AND c.managed = l.managed
+),
+drifted AS (
+    SELECT * FROM drift
+    WHERE backend_name IN (SELECT backend_name FROM backend_quotas)
+      AND (copies <> 0 OR stored_bytes <> 0 OR object_bytes <> 0 OR never_scrubbed <> 0)
 ),
 applied AS (
-    INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-    SELECT backend_name, 0, delta FROM drift
-    ORDER BY backend_name COLLATE "C"
-    ON CONFLICT (backend_name, stripe_id) DO UPDATE
-    SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
+    INSERT INTO backend_quota_stripes (backend_name, stripe_id, form, managed, copies, bytes_used, object_bytes, never_scrubbed)
+    SELECT backend_name, 0, form, managed, copies, stored_bytes, object_bytes, never_scrubbed FROM drifted
+    ORDER BY backend_name COLLATE "C", form, managed
+    ON CONFLICT (backend_name, stripe_id, form, managed) DO UPDATE
+    SET copies = backend_quota_stripes.copies + EXCLUDED.copies,
+        bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used,
+        object_bytes = backend_quota_stripes.object_bytes + EXCLUDED.object_bytes,
+        never_scrubbed = backend_quota_stripes.never_scrubbed + EXCLUDED.never_scrubbed
 )
-SELECT backend_name, delta FROM drift;
+SELECT backend_name, SUM(stored_bytes)::bigint AS delta FROM drifted GROUP BY backend_name;
 
 -- name: LockBackendsForClaim :exec
 -- Serializes the claims on these backends for the rest of the transaction, so

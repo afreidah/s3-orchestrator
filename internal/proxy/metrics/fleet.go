@@ -1,20 +1,21 @@
 // -------------------------------------------------------------------------------
-// Fleet Snapshot - Fleet-Wide Gauges Computed Once, Served Everywhere
+// Fleet Gauges - Fleet-Wide Figures Read From the Store
 //
 // Author: Alex Freidah
 //
-// The quota, object, multipart, replication and plaintext gauges, and the
-// replication status the admin API serves, describe state every instance
-// shares. One instance computes them from the store, applies the result, and
-// publishes it to shared state; the others apply the published result rather
-// than serving whatever they last computed themselves. Without shared state
-// there is a single instance, and it computes its own.
+// The quota, object, multipart, plaintext and verification-coverage gauges
+// describe state every instance shares. Each is a read of a few counter rows,
+// so every instance reads them itself on its flush tick and serves the same
+// values without coordinating. Capacity warnings are the exception: one
+// instance at a time raises them, and a shared marker keeps the fleet from
+// raising one again within the notifier's dampen window.
 // -------------------------------------------------------------------------------
 
 package metrics
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
@@ -29,251 +30,104 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// fleetSnapshotKey names the published snapshot in shared state.
-const fleetSnapshotKey = "fleet_snapshot"
-
-// fleetSnapshotTTLIntervals is how many fleet intervals a published snapshot
-// outlives the last instance that refreshed it.
-const fleetSnapshotTTLIntervals = 3
-
 // capacityWarningUtilization is the fraction of a quota at which a backend
 // is reported as approaching capacity.
 const capacityWarningUtilization = 0.8
+
+// capacityWarningWindow is how long a backend's capacity warning stands before
+// the fleet raises it again, the notifier's dampen window.
+const capacityWarningWindow = time.Hour
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// FleetSnapshot is one computation of the fleet-wide gauges. Ledger carries
-// every per-backend ledger figure from one pass, so the gauges and the admin
-// status read the same numbers. A nil field marks a store read that failed,
-// and applying the snapshot leaves the gauges that read feeds as they were.
+// FleetSnapshot is one read of the fleet-wide figures. Ledger carries every
+// per-backend ledger figure, so the gauges and the dashboard read the same
+// numbers, and Coverage is scoped to the backends the scrub queue draws from.
 type FleetSnapshot struct {
-	ComputedAt  time.Time                 `json:"computed_at"`
-	Quota       map[string]core.QuotaStat `json:"quota"`
-	Ledger      core.LedgerStats          `json:"ledger"`
-	Multipart   map[string]int64          `json:"multipart"`
-	Replication *ReplicationSnapshot      `json:"replication"`
-}
-
-// ReplicationSnapshot is the last-computed replication state, retained so a
-// cheap admin endpoint can serve it without a fresh ledger scan. Ready is false
-// until the first computation has run.
-type ReplicationSnapshot struct {
-	Factor          int       `json:"factor"`
-	UnderReplicated int64     `json:"under_replicated"`
-	OverReplicated  int64     `json:"over_replicated"`
-	ComputedAt      time.Time `json:"computed_at"`
-	Ready           bool      `json:"ready"`
+	Quota     map[string]core.QuotaStat
+	Ledger    core.LedgerStats
+	Multipart map[string]int64
+	Coverage  core.CoverageStat
 }
 
 // -------------------------------------------------------------------------
-// REFRESH
+// READ
 // -------------------------------------------------------------------------
 
-// LoadFleetMetrics applies the snapshot the computing instance last
-// published, so an instance that did not compute this round serves the same
-// fleet gauges and replication status as the one that did. A no-op without
-// shared state, or before any snapshot has been published.
-func (mc *Collector) LoadFleetMetrics(ctx context.Context) error {
-	snap, err := mc.loadPublished(ctx)
-	if err != nil || snap == nil {
-		return err
-	}
-	mc.applyFleet(snap)
-	return nil
-}
-
-// RefreshFleetIfStale recomputes the fleet snapshot unless another instance
-// published one within the last half interval, in which case it applies that
-// one. Every instance's tick takes the fleet lock in turn, so without the
-// check the ledger would be scanned once per instance per interval.
-func (mc *Collector) RefreshFleetIfStale(ctx context.Context) error {
-	snap, err := mc.loadPublished(ctx)
-	if err != nil {
-		mc.log.WarnContext(ctx, "fleet snapshot load failed, recomputing", "error", err)
-	}
-	if snap != nil && time.Since(snap.ComputedAt) < mc.d.FleetInterval/2 {
-		mc.applyFleet(snap)
-		return nil
-	}
-	return mc.UpdateFleetMetrics(ctx)
-}
-
-// loadPublished reads the published snapshot. It returns nil without shared
-// state or before any snapshot has been published.
-func (mc *Collector) loadPublished(ctx context.Context) (*FleetSnapshot, error) {
-	return mc.fleetValue().Get(ctx)
-}
-
-// fleetValue names the published snapshot in shared state.
-func (mc *Collector) fleetValue() sharedstate.Value[FleetSnapshot] {
-	return sharedstate.NewValue[FleetSnapshot](mc.d.Shared, fleetSnapshotKey, fleetSnapshotTTLIntervals*mc.d.FleetInterval)
-}
-
-// ReplicationSnapshot returns the newest replication state. With shared
-// state it reads the published snapshot on every call, so each instance
-// answers with the same result whichever of them computed it last; this
-// instance's own copy lags by up to one flush interval. It falls back to that
-// copy when shared state is absent, unreachable or holds nothing. Ready is
-// false until a snapshot has been computed or loaded.
-func (mc *Collector) ReplicationSnapshot(ctx context.Context) ReplicationSnapshot {
-	if snap, err := mc.loadPublished(ctx); err == nil && snap != nil && snap.Replication != nil {
-		return *snap.Replication
-	}
-	mc.snapMu.RLock()
-	defer mc.snapMu.RUnlock()
-	return mc.repSnap
-}
-
-// FleetSnapshot returns the newest fleet snapshot: the published one, else the
-// last one applied here, else one computed now. Callers must not modify it.
+// FleetSnapshot reads the fleet-wide figures now. Each is a read of a few
+// rows, so the dashboard reads them fresh rather than from a cached copy.
 func (mc *Collector) FleetSnapshot(ctx context.Context) (*FleetSnapshot, error) {
-	if snap, err := mc.loadPublished(ctx); err == nil && snap != nil {
-		return snap, nil
+	stats, err := mc.d.Store.GetQuotaStats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read quota stats: %w", err)
 	}
-	if snap := mc.lastSnapshot(); snap != nil {
-		return snap, nil
+	return mc.readFleet(ctx, stats)
+}
+
+// readFleet reads the ledger, multipart and coverage figures to go with a
+// quota read the caller made.
+func (mc *Collector) readFleet(ctx context.Context, stats map[string]core.QuotaStat) (*FleetSnapshot, error) {
+	ledger, err := mc.d.Store.LedgerStats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read ledger stats: %w", err)
 	}
-	if err := mc.UpdateFleetMetrics(ctx); err != nil {
+	multipart, err := mc.d.Store.GetActiveMultipartCounts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read multipart upload counts: %w", err)
+	}
+	coverage, err := mc.coverage(ctx, ledger)
+	if err != nil {
 		return nil, err
 	}
-	return mc.lastSnapshot(), nil
+	return &FleetSnapshot{Quota: stats, Ledger: ledger, Multipart: multipart, Coverage: coverage}, nil
 }
 
-// lastSnapshot returns the snapshot last applied on this instance.
-func (mc *Collector) lastSnapshot() *FleetSnapshot {
-	mc.snapMu.RLock()
-	defer mc.snapMu.RUnlock()
-	return mc.lastSnap
-}
-
-// refreshFleet computes the fleet snapshot from the store, applies it here,
-// and publishes it for the other instances.
-func (mc *Collector) refreshFleet(ctx context.Context, stats map[string]core.QuotaStat) {
-	snap := mc.computeFleet(ctx, stats)
-	mc.warnNearCapacity(ctx, stats)
-	mc.applyFleet(&snap)
-	mc.publishFleet(ctx, &snap)
-}
-
-// publishFleet writes the snapshot to shared state. A failure is logged and
-// the snapshot still stands on this instance; the others keep the last one
-// that reached them.
-func (mc *Collector) publishFleet(ctx context.Context, snap *FleetSnapshot) {
-	if err := mc.fleetValue().Put(ctx, snap); err != nil {
-		mc.log.WarnContext(ctx, "failed to publish fleet snapshot", "error", err)
-	}
-}
-
-// -------------------------------------------------------------------------
-// COMPUTE
-// -------------------------------------------------------------------------
-
-// computeFleet reads every fleet-wide figure from the store.
-func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.QuotaStat) FleetSnapshot {
-	snap := FleetSnapshot{Quota: stats}
-
-	// Counted here rather than from the dashboard so the figures keep moving
-	// on a deployment that scrapes Prometheus and never opens the web UI.
-	if ledger, err := mc.d.Store.LedgerStats(ctx); err != nil {
-		mc.log.ErrorContext(ctx, "failed to read ledger stats", "error", err)
-	} else {
-		snap.Ledger = ledger
-	}
-
-	if multipart, err := mc.d.Store.GetActiveMultipartCounts(ctx); err != nil {
-		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
-	} else {
-		snap.Multipart = multipart
-	}
-
-	snap.Replication = mc.computeReplication(ctx)
-	snap.ComputedAt = time.Now()
-	return snap
-}
-
-// computeReplication counts the queued under- and over-replicated objects.
-// Returns nil when no factor source is wired (test fixtures that build metrics
-// without a replication worker) or when a count fails. With replication
-// disabled it returns a ready, zeroed snapshot, so the admin endpoint reports
-// "not replicating" rather than "not yet computed".
-func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapshot {
-	if mc.d.ReplicationFactor == nil {
-		return nil
-	}
-	factor := mc.d.ReplicationFactor()
-	if factor <= 1 {
-		return &ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()}
-	}
-
-	backlog, err := mc.d.Store.CountReplicationQueue(ctx)
+// coverage reports how far behind verification is on the backends the scrub
+// queue draws from. The oldest touch among them is the head of the scrub
+// queue, the copy the sweep would read first.
+func (mc *Collector) coverage(ctx context.Context, ledger core.LedgerStats) (core.CoverageStat, error) {
+	reachable := mc.d.Scrub.ReachableBackends()
+	now := time.Now()
+	oldest, err := core.OldestTouched(ctx, mc.d.Store, reachable, now)
 	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to count replication queue", "error", err)
-		return nil
+		return core.CoverageStat{}, fmt.Errorf("read the scrub queue head: %w", err)
 	}
-	return &ReplicationSnapshot{
-		Factor:          factor,
-		UnderReplicated: backlog.Under,
-		OverReplicated:  backlog.Over,
-		ComputedAt:      time.Now(),
-		Ready:           true,
-	}
-}
-
-// warnNearCapacity emits a slog warning and a capacity event for each backend
-// past the capacity threshold. Only the computing instance does this, so the
-// fleet raises one event per crossing rather than one per instance. Operators
-// rely on this signal to expand capacity before writes start failing with 507.
-func (mc *Collector) warnNearCapacity(ctx context.Context, stats map[string]core.QuotaStat) {
-	for name, stat := range stats {
-		if stat.Unlimited() {
-			continue
-		}
-		utilization := float64(stat.Occupied()) / float64(stat.BytesLimit)
-		if utilization < capacityWarningUtilization {
-			continue
-		}
-		available := stat.BytesLimit - stat.Occupied()
-		mc.log.WarnContext(ctx, "backend approaching capacity",
-			"backend", name,
-			"utilization_pct", int(utilization*100),
-			"bytes_available", available,
-			"bytes_limit", stat.BytesLimit)
-		event.Publish(event.BackendCapacityWarning, name, map[string]any{
-			"backend":         name,
-			"utilization_pct": int(utilization * 100),
-			"bytes_available": available,
-			"bytes_limit":     stat.BytesLimit,
-		})
-	}
+	return ledger.Coverage(reachable, oldest, now), nil
 }
 
 // -------------------------------------------------------------------------
 // APPLY
 // -------------------------------------------------------------------------
 
-// applyFleet publishes a snapshot's figures to the gauges and the replication
-// status, whether this instance computed it or loaded it, and keeps it for
-// FleetSnapshot.
+// refreshFleet reads the fleet-wide figures beside the quota read, publishes
+// them to the gauges, and raises the capacity warnings due.
+func (mc *Collector) refreshFleet(ctx context.Context, stats map[string]core.QuotaStat) error {
+	snap, err := mc.readFleet(ctx, stats)
+	if err != nil {
+		return err
+	}
+	mc.applyFleet(snap)
+	mc.warnNearCapacity(ctx, stats)
+	return nil
+}
+
+// applyFleet publishes a snapshot's figures to the gauges. The coverage gauges
+// are left alone unless the scrub sweep runs, so a fleet nothing verifies
+// reports no age that nothing would lower.
 func (mc *Collector) applyFleet(snap *FleetSnapshot) {
-	mc.snapMu.Lock()
-	mc.lastSnap = snap
-	mc.snapMu.Unlock()
 	applyQuotaGauges(snap.Quota)
-	if snap.Ledger != nil {
-		applyPerBackendCounts(telemetry.ObjectCount, snap.Quota, snap.Ledger.ObjectCounts())
-		// Encryption applies to new writes only, so without this nothing
-		// reports that a fleet configured for encryption is still partly
-		// plaintext.
-		telemetry.EncryptionPlaintextCopies.Set(float64(snap.Ledger.PlaintextCopies()))
-		telemetry.UnreadableCopies.Set(float64(snap.Ledger.UnreadableCopies()))
-	}
-	if snap.Multipart != nil {
-		applyPerBackendCounts(telemetry.ActiveMultipartUploads, snap.Quota, snap.Multipart)
-	}
-	if snap.Replication != nil {
-		mc.applyReplication(snap.Replication)
+	applyPerBackend(telemetry.ObjectCount, snap.Quota, snap.Ledger, func(st core.LedgerStat) int64 { return st.Objects })
+	applyPerBackend(telemetry.ActiveMultipartUploads, snap.Quota, snap.Multipart, func(n int64) int64 { return n })
+	// Encryption applies to new writes only, so without this nothing reports
+	// that a fleet configured for encryption is still partly plaintext.
+	telemetry.EncryptionPlaintextCopies.Set(float64(snap.Ledger.PlaintextCopies()))
+	telemetry.UnreadableCopies.Set(float64(snap.Ledger.UnreadableCopies()))
+	if mc.d.Scrub.Sweeping() {
+		telemetry.IntegrityOldestUnverifiedSeconds.Set(snap.Coverage.OldestUnverifiedAge.Seconds())
+		telemetry.IntegrityNeverVerifiedCopies.Set(float64(snap.Coverage.NeverVerified))
+		telemetry.IntegrityDeferredCopies.Set(float64(snap.Coverage.Deferred))
 	}
 }
 
@@ -292,26 +146,73 @@ func applyQuotaGauges(stats map[string]core.QuotaStat) {
 	}
 }
 
-// applyPerBackendCounts resets every known backend to zero before applying the
-// counts, so a backend that just lost its last object reports zero rather than
-// its old count.
-func applyPerBackendCounts(gauge *prometheus.GaugeVec, known map[string]core.QuotaStat, counts map[string]int64) {
+// applyPerBackend sets a per-backend gauge to each backend's figure, zeroing
+// every known backend first so one that dropped out of values reports zero
+// rather than its old figure.
+func applyPerBackend[V any](gauge *prometheus.GaugeVec, known map[string]core.QuotaStat, values map[string]V, figure func(V) int64) {
 	for name := range known {
 		gauge.WithLabelValues(name).Set(0)
 	}
-	for name, count := range counts {
-		gauge.WithLabelValues(name).Set(float64(count))
+	for name, v := range values {
+		gauge.WithLabelValues(name).Set(float64(figure(v)))
 	}
 }
 
-// applyReplication publishes the replication gauges and keeps the snapshot
-// the admin endpoint falls back to.
-func (mc *Collector) applyReplication(rep *ReplicationSnapshot) {
-	if rep.Factor > 1 {
-		telemetry.ReplicationPending.Set(float64(rep.UnderReplicated))
-		telemetry.OverReplicationPending.Set(float64(rep.OverReplicated))
+// -------------------------------------------------------------------------
+// CAPACITY WARNINGS
+// -------------------------------------------------------------------------
+
+// warnNearCapacity emits a slog warning and a capacity event for each backend
+// past the capacity threshold, once per fleet per window: under the capacity
+// lock, a backend whose shared marker still stands is skipped, and one warned
+// for now sets it. Without shared state no marker stands, and the notifier's
+// own dampener spaces the events. Operators rely on this signal to expand
+// capacity before writes start failing with 507.
+func (mc *Collector) warnNearCapacity(ctx context.Context, stats map[string]core.QuotaStat) {
+	_, err := mc.d.Store.WithAdvisoryLock(ctx, core.LockCapacityWarning, func(ctx context.Context) error {
+		for name, stat := range stats {
+			if !stat.Unlimited() && utilization(stat) >= capacityWarningUtilization {
+				mc.warnOnce(ctx, name, stat)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		mc.log.WarnContext(ctx, "capacity warning check failed", "error", err)
 	}
-	mc.snapMu.Lock()
-	mc.repSnap = *rep
-	mc.snapMu.Unlock()
+}
+
+// warnOnce raises a backend's capacity warning unless its shared marker still
+// stands from an earlier one, and sets the marker for the window.
+func (mc *Collector) warnOnce(ctx context.Context, name string, stat core.QuotaStat) {
+	marker := sharedstate.NewValue[time.Time](mc.d.Shared, "capacity_warning:"+name, capacityWarningWindow)
+	if warned, err := marker.Get(ctx); err == nil && warned != nil {
+		return
+	}
+	mc.raiseCapacityWarning(ctx, name, stat)
+	if err := marker.Put(ctx, new(time.Now())); err != nil {
+		mc.log.WarnContext(ctx, "failed to mark capacity warning", "backend", name, "error", err)
+	}
+}
+
+// utilization is the share of a backend's quota its bytes occupy.
+func utilization(stat core.QuotaStat) float64 {
+	return float64(stat.Occupied()) / float64(stat.BytesLimit)
+}
+
+// raiseCapacityWarning logs and publishes one backend's capacity warning.
+func (mc *Collector) raiseCapacityWarning(ctx context.Context, name string, stat core.QuotaStat) {
+	pct := int(utilization(stat) * 100)
+	available := stat.BytesLimit - stat.Occupied()
+	mc.log.WarnContext(ctx, "backend approaching capacity",
+		"backend", name,
+		"utilization_pct", pct,
+		"bytes_available", available,
+		"bytes_limit", stat.BytesLimit)
+	event.Publish(event.BackendCapacityWarning, name, map[string]any{
+		"backend":         name,
+		"utilization_pct": pct,
+		"bytes_available": available,
+		"bytes_limit":     stat.BytesLimit,
+	})
 }

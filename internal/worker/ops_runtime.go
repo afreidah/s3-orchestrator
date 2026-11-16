@@ -12,7 +12,7 @@
 
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,Placement,Metrics,BackendSyncer,FleetOps,UsageReconciler
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,Placement,BackendSyncer,FleetOps,UsageReconciler
 
 import (
 	"context"
@@ -20,7 +20,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/observe/cycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
@@ -50,21 +49,14 @@ type Ops interface {
 	Acct() *accounting.Recorder
 }
 
-// Metrics is what a worker reports through: the quota gauges a pass that moved
-// data refreshes, and the fleet-wide gauges a lock holder publishes.
-// *metrics.Collector satisfies it.
-type Metrics interface {
-	cycle.Refresher
-	telemetry.GaugePublisher
-}
-
 // Fleet is what every data-moving worker draws on: the backend runtime, the
-// write coordinator, and the metrics it reports through. A worker's Deps embed
-// it, and its constructor checks it with mustBeWired.
+// write coordinator, and the publisher of the fleet-wide gauges a lock holder
+// computes. A worker's Deps embed it, and its constructor checks it with
+// mustBeWired.
 type Fleet struct {
 	Ops       Ops
 	Placement Placement
-	Metrics   Metrics
+	Metrics   telemetry.GaugePublisher
 }
 
 // mustBeWired panics unless every part of the fleet is set, since a missing
