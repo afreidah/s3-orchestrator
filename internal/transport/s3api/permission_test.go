@@ -55,11 +55,12 @@ func grantRegistry(tb testing.TB, perms core.PermissionSet) *auth.BucketRegistry
 // and reports the status.
 func serveWithGrant(t *testing.T, perms core.PermissionSet, method, target string, body string, opts ...func(*storetest.MockMetadataStore)) int {
 	t.Helper()
-	ts, _, _ := newTestServer(t, opts...)
+	registry := testRegistry(t)
+	ts, _, _ := newTestServerOver(t, registry, opts...)
 	// Replace the registry the fixture installed with one carrying a narrowed
 	// grant. The atomic swap is what a provisioning change performs, so this is
 	// the same path a live narrowing takes.
-	ts.Config.Handler.(*Server).registry.Store(grantRegistry(t, perms))
+	registry.Store(grantRegistry(t, perms))
 
 	req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+target, bodyReader(body))
 	if err != nil {
@@ -192,8 +193,9 @@ func TestPermissions_FullGrantIsUnchanged(t *testing.T) {
 func TestPermissions_RefusedBeforeTheHandler(t *testing.T) {
 	t.Parallel()
 
-	ts, _, backend := newTestServer(t)
-	ts.Config.Handler.(*Server).registry.Store(grantRegistry(t, readOnly))
+	registry := testRegistry(t)
+	ts, _, backend := newTestServerOver(t, registry)
+	registry.Store(grantRegistry(t, readOnly))
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut,
 		ts.URL+"/mybucket/denied.txt", strings.NewReader("payload"))

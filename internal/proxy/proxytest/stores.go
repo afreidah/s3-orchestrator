@@ -12,6 +12,7 @@ package proxytest
 
 import (
 	"maps"
+	"net/http"
 	"testing"
 	"time"
 
@@ -179,6 +180,16 @@ func (s *Stack) Dashboard(store core.DirectoryLister) *dashboard.Aggregator {
 	return dashboard.New(&dashboard.Deps{
 		Store: store, Usage: s.Runtime.Usage(),
 		Fleet: s.Runtime, Snapshots: s.Metrics, Drain: s.States,
+	})
+}
+
+// Settled wraps next so each request answers once the deletes it left settling
+// behind its response have finished, so a test can inspect rows and bytes
+// straight after it.
+func (s *Stack) Settled(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		s.Coord.Settling().Wait(r.Context())
 	})
 }
 

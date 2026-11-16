@@ -30,27 +30,33 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
 	"go.uber.org/mock/gomock"
-	// serverMockBackend implements storage.ObjectBackend for server handler tests.
 )
 
-// serverMockBackend is the in-memory ObjectBackend used by S3-handler
-// tests in this file. Holds objects in a map and lets tests inject
-// per-method errors (putErr, getErr, headErr, delErr) so each handler
-// newTestServer creates an httptest.Server wired with mock backends and store.
-// Returns the server, a cleanup func, and the mock store/backend for assertions.
+// newTestServer serves the S3 API over a full proxy stack with one in-memory
+// backend and a mock store, to a client holding the test credential on
+// mybucket. It returns the server, store and backend for assertions.
 func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*httptest.Server, *storetest.MockMetadataStore, *backendtest.InMemory) {
 	t.Helper()
-	return newTestServerWithQuota(t, nil, opts...)
+	return newTestServerOver(t, testRegistry(t), opts...)
 }
 
-// newTestServerWithQuota is newTestServer with the byte counter seeded, for the
-// tests whose subject is what the transport reports when a backend has no room.
-// A nil baseline leaves the single backend unlimited.
-func newTestServerWithQuota(
+// testRegistry is the registry newTestServer authenticates against: mybucket,
+// reachable with the test credential.
+func testRegistry(t *testing.T) *auth.LiveRegistry {
+	t.Helper()
+	return mustLiveRegistry(t, []config.BucketConfig{
+		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
+	})
+}
+
+// newTestServerOver is newTestServer authenticating against registry, for a
+// test that swaps the registry in force while the server runs.
+func newTestServerOver(
 	t *testing.T,
-	baselines map[string]core.QuotaStat,
+	registry *auth.LiveRegistry,
 	opts ...func(*storetest.MockMetadataStore),
 ) (*httptest.Server, *storetest.MockMetadataStore, *backendtest.InMemory) {
 	t.Helper()
@@ -67,14 +73,11 @@ func newTestServerWithQuota(
 			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-			QuotaBaselines:  baselines,
 		}),
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	ts := httptest.NewServer(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{
-		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
-	}), 10*1024*1024))
+	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, registry, 10*1024*1024)))
 	t.Cleanup(ts.Close)
 
 	return ts, mockStore, backend
@@ -294,7 +297,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	// itself: the headroom test is the insert that writes the write's intent,
 	// not a figure held in memory. Registered before the permissive defaults so
 	// this is the expectation the claim matches.
-	ts, _, _ := newTestServerWithQuota(t, nil, func(m *storetest.MockMetadataStore) {
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	})
 
@@ -407,9 +410,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	ts := httptest.NewServer(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{
-		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
-	}), 10*1024*1024))
+	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, testRegistry(t), 10*1024*1024)))
 	t.Cleanup(ts.Close)
 	return ts
 }
