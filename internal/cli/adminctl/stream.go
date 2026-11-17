@@ -29,7 +29,23 @@ import (
 // timeout: the server flushes an event per item, so the connection stays
 // active for the life of the operation and Ctrl-C cancels it.
 func (c *client) stream(method, path string) int {
-	events, err := c.api.Stream(context.Background(), method, path, nil, nil)
+	return c.streamBody(method, path, nil)
+}
+
+// streamJSON is stream with req encoded as the JSON request body, for a pass
+// that takes its parameters that way.
+func (c *client) streamJSON(method, path string, req any) int {
+	body, ok := c.encodeJSON(req)
+	if !ok {
+		return 1
+	}
+	return c.streamBody(method, path, body)
+}
+
+// streamBody issues a streaming request carrying body, which may be nil, and
+// renders its events.
+func (c *client) streamBody(method, path string, body []byte) int {
+	events, err := c.api.Stream(context.Background(), method, path, nil, body)
 	if err != nil {
 		c.reportError(err)
 		return 1

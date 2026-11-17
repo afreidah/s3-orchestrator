@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -275,6 +276,30 @@ func BackfillPass(svc *ops.Services, p BackfillParams) *Pass[worker.BackfillResu
 	}
 }
 
+// RotatePass re-wraps sealed DEKs under the current primary key, those under
+// oldKeyID or with allStale every one under another ID. A skip means the
+// request or the encryption config is wrong, so it fails the pass.
+func RotatePass(svc *ops.Services, oldKeyID string, allStale bool) *Pass[batch.Summary] {
+	return &Pass[batch.Summary]{
+		op:          "rotate-encryption-key",
+		verb:        "rotating",
+		sequential:  true,
+		failMsg:     "failed to list encrypted objects",
+		skipIsError: true,
+		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
+			return svc.Encryption.RotateKey(ctx, obs, oldKeyID, allStale)
+		},
+		body: func(o adminapi.Outcome, res batch.Summary) any {
+			return adminapi.RotateEncryptionKeyResponse{
+				Outcome: o, Failed: res.Failed, Total: res.Attempted + res.Skipped, Rotated: res.Succeeded,
+			}
+		},
+		summary: func(res batch.Summary) (int, string) {
+			return res.Succeeded, fmt.Sprintf("rotated %d, skipped %d, failed %d", res.Succeeded, res.Skipped, res.Failed)
+		},
+	}
+}
+
 // RewritePass runs one bulk rewrite over every copy its listing selects,
 // rewriting at most maxObjects (0 for all) and limited to backend when one is
 // named. A skip means the encryptor or codec is not configured, which is the
@@ -308,11 +333,12 @@ func RewritePass(svc *ops.Services, kind Rewrite, maxObjects int, backend string
 
 // exec runs the pass with obs and settles how it ended, returning the raw
 // result as well for the stream's summary line. A failure is logged here, so
-// the caller is told only failMsg; a skip the pass refuses fails with its
-// reason, which is the caller's to act on.
+// the caller is told only failMsg; a skip the pass refuses and a rejected
+// request fail with their reason, which is the caller's to act on.
 func (p *Pass[R]) exec(ctx context.Context, log *slog.Logger, obs progress.Observer) (Report, R) {
 	res, err := p.run(ctx, obs)
 	reason, skipped := ops.SkipReason(err)
+	status, rejected := httputil.RejectionStatus(err)
 	switch {
 	case skipped && p.skipIsError:
 		return Report{Result: adminstream.OutcomeFailed, Message: reason, Status: http.StatusBadRequest}, res
@@ -320,6 +346,8 @@ func (p *Pass[R]) exec(ctx context.Context, log *slog.Logger, obs progress.Obser
 		var zero R
 		outcome := adminapi.Outcome{Status: adminstream.OutcomeSkipped, Reason: reason}
 		return Report{Result: adminstream.OutcomeSkipped, Message: reason, Body: p.body(outcome, zero)}, res
+	case rejected:
+		return Report{Result: adminstream.OutcomeFailed, Message: err.Error(), Status: status}, res
 	case err != nil:
 		log.ErrorContext(ctx, p.failMsg, "error", err)
 		return Report{Result: adminstream.OutcomeFailed, Message: p.failMsg, Status: http.StatusInternalServerError}, res

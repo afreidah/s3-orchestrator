@@ -89,6 +89,9 @@ item, and a terminal `result`.
 | `unreadable --execute` | `purging` | object key |
 | `lifecycle` | `expiring` | object key |
 | `remove-backend --purge --confirm` | `deleting` | object key |
+| `compress-existing` / `decompress-existing` | `compressing` / `decompressing` | object key |
+| `encrypt-existing` / `decrypt-existing` | `encrypting` / `decrypting` | object key |
+| `rotate-encryption-key` | `rotating` | object key |
 
 ```text
 $ s3-orchestrator admin backfill-checksums

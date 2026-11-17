@@ -128,19 +128,20 @@ func TestRegister_AppliesAuthToEveryEntry(t *testing.T) {
 func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 	t.Parallel()
 	want := map[string]bool{
-		"POST /admin/api/lifecycle":           true,
-		"POST /admin/api/rebalance":           true,
-		"POST /admin/api/replicate":           true,
-		"POST /admin/api/over-replication":    true,
-		"POST /admin/api/scrub":               true,
-		"POST /admin/api/backfill-checksums":  true,
-		"POST /admin/api/unreadable":          true,
-		"POST /admin/api/reconcile":           true,
-		"POST /admin/api/compress-existing":   true,
-		"POST /admin/api/decompress-existing": true,
-		"POST /admin/api/encrypt-existing":    true,
-		"POST /admin/api/decrypt-existing":    true,
-		"DELETE /admin/api/backends/{name}":   true,
+		"POST /admin/api/lifecycle":             true,
+		"POST /admin/api/rebalance":             true,
+		"POST /admin/api/replicate":             true,
+		"POST /admin/api/over-replication":      true,
+		"POST /admin/api/scrub":                 true,
+		"POST /admin/api/backfill-checksums":    true,
+		"POST /admin/api/unreadable":            true,
+		"POST /admin/api/reconcile":             true,
+		"POST /admin/api/compress-existing":     true,
+		"POST /admin/api/decompress-existing":   true,
+		"POST /admin/api/encrypt-existing":      true,
+		"POST /admin/api/decrypt-existing":      true,
+		"POST /admin/api/rotate-encryption-key": true,
+		"DELETE /admin/api/backends/{name}":     true,
 	}
 	for _, rt := range newTestHandler(t).routes() {
 		key := rt.Method + " " + rt.Pattern

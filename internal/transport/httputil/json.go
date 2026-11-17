@@ -71,11 +71,21 @@ func InternalError(ctx context.Context, log *slog.Logger, w http.ResponseWriter,
 // was wrong with the request under its kind's status; anything else is a
 // server fault logged under msg with attrs.
 func WriteOpError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error, msg string, attrs ...any) {
-	if rej, ok := errors.AsType[*ops.Rejection](err); ok {
-		WriteJSONError(w, rejectionStatus(rej.Kind), err.Error())
+	if status, ok := RejectionStatus(err); ok {
+		WriteJSONError(w, status, err.Error())
 		return
 	}
 	InternalError(r.Context(), log, w, msg, err, attrs...)
+}
+
+// RejectionStatus reports the status an ops.Rejection in err's chain answers
+// with, and whether err carries one.
+func RejectionStatus(err error) (int, bool) {
+	rej, ok := errors.AsType[*ops.Rejection](err)
+	if !ok {
+		return 0, false
+	}
+	return rejectionStatus(rej.Kind), true
 }
 
 // rejectionStatus is the status a rejection of kind answers with.

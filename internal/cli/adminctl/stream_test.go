@@ -42,6 +42,30 @@ func ndjsonServer(t *testing.T, lines string) (*httptest.Server, *string) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
+// TestStream_FleetWidePassesRequestTheStream verifies the bulk rewrites and
+// key rotation ask for the progress stream, which carries no client timeout,
+// rather than a one-shot answer the fixed deadline would cut off.
+func TestStream_FleetWidePassesRequestTheStream(t *testing.T) {
+	t.Parallel()
+	cases := map[string][]string{"rotate-encryption-key": {"-all-stale"}}
+	for _, tc := range bulkRewriteCommands {
+		cases[tc.cmd] = nil
+	}
+	for cmd, args := range cases {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			srv, accept := ndjsonServer(t, `{"event":"result","outcome":"ok","processed":1}`+"\n")
+			var stdout, stderr bytes.Buffer
+			if code := Command(cmd, args, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
+			}
+			if !strings.Contains(*accept, "application/x-ndjson") {
+				t.Errorf("Accept header = %q, want NDJSON", *accept)
+			}
+		})
+	}
+}
+
 func TestStream_TextRendersStepsAndResult(t *testing.T) {
 	t.Parallel()
 	lines := `{"event":"start","op":"backfill-checksums"}
