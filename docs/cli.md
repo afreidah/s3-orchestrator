@@ -591,7 +591,7 @@ An entry ending in `...` asks for a value first: the key or prefix to invalidate
 
 The long-running operations render the same live progress stream `admin` shows on the command line, one line per item - a rebalance names each object and the backends it travelled between. The rest finish in a single round trip and report what changed in the operation's own terms: `dropped 1,204 cache entries`, `corrected 2 backends: e2 -162.1 MiB, oci +4.1 MiB`, `encrypted 1,200 objects, 3 failed`. An operation that did not run - a rebalance already within threshold, a feature not configured - says so instead of reporting a false zero. Press `esc` to step back to the menu, then to the nav.
 
-![The TUI Logs section showing recent structured log entries](/docs/images/tui-logs.png)
+![The TUI Logs section filtered to warnings and above, showing recent structured log entries](/docs/images/tui-logs.png)
 
 ![The TUI Backends section showing per-backend status](/docs/images/tui-backends.png)
 
