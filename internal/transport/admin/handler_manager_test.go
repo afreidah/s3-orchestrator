@@ -73,7 +73,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	svc := testOps(st, workers, mock, nil)
 	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		BackendOps: st.Usage,
-		Dashboard:  st.Dashboard(mock),
+		Dashboard:  st.Dashboard(),
 		Ops:        svc,
 		Config:     st.Config,
 		States:     st.States,
@@ -845,7 +845,7 @@ func newKnownBackendHandler(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	lv.Set(slog.LevelInfo)
 	return &Handler{log: logfmt.Logger("admin"), d: Deps{
 		BackendOps: st.Usage,
-		Dashboard:  st.Dashboard(mock),
+		Dashboard:  st.Dashboard(),
 		States:     st.States,
 		StateStore: mock,
 		LogLevel:   &lv,

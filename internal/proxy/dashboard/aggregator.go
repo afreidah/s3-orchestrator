@@ -5,8 +5,7 @@
 //
 // Builds the dashboard and admin status views from the fleet snapshot the
 // metrics collector reads, the current period's usage and the live fleet
-// state. Exposes GetStatus for the admin status endpoint, GetData for the main
-// dashboard page and GetDirectoryChildren for lazy-loaded directory expansion.
+// state. GetStatus serves both the admin status endpoint and the dashboard page.
 // -------------------------------------------------------------------------------
 
 package dashboard
@@ -20,14 +19,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
-// for the top-level listing and for a caller-supplied page size.
-const maxDirectoryChildren = 200
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -60,7 +51,6 @@ type Data struct {
 	UsageCycles            map[string]core.UsageCycle
 	UsageLimits            map[string]core.UsageLimits
 	UsagePeriod            string
-	TopLevelEntries        *core.DirectoryListResult
 	DrainingBackends       map[string]backendstate.DrainProgress
 	BackendFlags           map[string]core.BackendFlags
 	RefusedCalls           map[string]core.BackendCalls
@@ -104,15 +94,14 @@ type DrainProgressReader interface {
 // Deps groups what the aggregator reads. Drain may be nil when the deployment
 // runs no backend state manager.
 type Deps struct {
-	Store     core.DirectoryLister
 	Usage     UsageReader
 	Fleet     FleetView
 	Snapshots FleetSnapshotter
 	Drain     DrainProgressReader
 }
 
-// Aggregator queries the metadata store and usage tracker to build
-// snapshots for the web UI.
+// Aggregator builds the dashboard and status snapshots from the fleet
+// snapshot, the usage tracker and the live fleet state.
 type Aggregator struct {
 	d Deps
 }
@@ -205,20 +194,6 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 	return data, nil
 }
 
-// GetData is GetStatus plus the top-level entries of the web UI's file
-// browser.
-func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
-	data, err := da.GetStatus(ctx)
-	if err != nil {
-		return nil, err
-	}
-	data.TopLevelEntries, err = da.d.Store.ListDirectoryChildren(ctx, "", "", maxDirectoryChildren)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
 // CompressionTotals sums the per-backend stats into one fleet figure, which is
 // what the dashboard reports. Summing in the view would mean the template doing
 // arithmetic, and this is the number an operator reads first.
@@ -246,13 +221,4 @@ func (d *Data) CompressionSaved(backend string) int64 {
 		return 0
 	}
 	return s.LogicalBytes - s.StoredBytes
-}
-
-// GetDirectoryChildren returns the immediate children of a directory path
-// for the lazy-loaded file browser.
-func (da *Aggregator) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	if maxKeys <= 0 || maxKeys > maxDirectoryChildren {
-		maxKeys = maxDirectoryChildren
-	}
-	return da.d.Store.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }

@@ -208,6 +208,21 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectsBatch(ctx, keys any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectsBatch", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectsBatch), ctx, keys)
 }
 
+// DirectoryStats mocks base method.
+func (m *MockCoordinatorStores) DirectoryStats(ctx context.Context, prefix, from, end string) ([]core.DirStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DirectoryStats", ctx, prefix, from, end)
+	ret0, _ := ret[0].([]core.DirStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DirectoryStats indicates an expected call of DirectoryStats.
+func (mr *MockCoordinatorStoresMockRecorder) DirectoryStats(ctx, prefix, from, end any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectoryStats", reflect.TypeOf((*MockCoordinatorStores)(nil).DirectoryStats), ctx, prefix, from, end)
+}
+
 // DiscardPending mocks base method.
 func (m *MockCoordinatorStores) DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()

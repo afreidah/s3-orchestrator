@@ -4,12 +4,11 @@
 // Author: Alex Freidah
 //
 // Tests for dashboard data aggregation: successful assembly from the fleet
-// snapshot, snapshot and store read failures, and directory listing edge
-// cases.
+// snapshot, a snapshot failure, and the compression views.
 //
-// Drives the aggregator against the generated DirectoryLister and FleetView
-// mocks, so a test states only the reads it cares about and any unstubbed call
-// fails the test rather than returning a silent zero value.
+// Drives the aggregator against the generated FleetView and UsageReader mocks,
+// so a test states only the reads it cares about and any unstubbed call fails
+// the test rather than returning a silent zero value.
 // -------------------------------------------------------------------------------
 
 package dashboard
@@ -23,15 +22,14 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestAggregator_Success assembles the dashboard from the fleet snapshot, the
-// tracker's cycle usage, and the directory read.
+// TestAggregator_Success assembles the dashboard from the fleet snapshot and
+// the tracker's cycle usage.
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -43,9 +41,6 @@ func TestAggregator_Success(t *testing.T) {
 		Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 10}, Pools: core.PoolUsage{core.PoolAll: 10}},
 		Cycle: cycle,
 	}})
-	store := storetest.NewMockDirectoryLister(ctrl)
-	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.DirectoryListResult{}, nil)
 	snap := snapshotOf{snap: &metrics.FleetSnapshot{
 		Quota: map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
 		Ledger: core.LedgerStats{"b1": {
@@ -57,8 +52,8 @@ func TestAggregator_Success(t *testing.T) {
 		Coverage:  core.CoverageStat{OldestUnverifiedAge: time.Hour, NeverVerified: 3, Deferred: 4},
 	}}
 
-	da := New(&Deps{Store: store, Usage: usage, Fleet: newStubFleet(ctrl, "b1"), Snapshots: snap})
-	data, err := da.GetData(t.Context())
+	da := New(&Deps{Usage: usage, Fleet: newStubFleet(ctrl, "b1"), Snapshots: snap})
+	data, err := da.GetStatus(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,118 +85,16 @@ func TestAggregator_Success(t *testing.T) {
 	}
 }
 
-// dashboardRead is one of the store reads GetData makes, in issue order, with
-// a stub for its success and failure forms.
-type dashboardRead struct {
-	name string
-	ok   func(*storetest.MockDirectoryLister)
-	fail func(*storetest.MockDirectoryLister, error)
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// dashboardReads lists every store read GetData issues, in the order it issues
-// them.
-func dashboardReads() []dashboardRead {
-	a := gomock.Any()
-	return []dashboardRead{
-		{"directory children",
-			func(m *storetest.MockDirectoryLister) {
-				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil)
-			},
-			func(m *storetest.MockDirectoryLister, err error) {
-				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(nil, err)
-			}},
-	}
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-// TestAggregator_ReadErrorsFailGetData asserts every store read is
-// load-bearing: whichever one fails, GetData fails rather than returning a
-// partially-populated dashboard. Each case stubs the reads issued before the
-// failing one so the aggregator actually reaches it.
-func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
-	t.Parallel()
-
-	reads := dashboardReads()
-	for i, c := range reads {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			ctrl := gomock.NewController(t)
-			store := storetest.NewMockDirectoryLister(ctrl)
-			for _, earlier := range reads[:i] {
-				earlier.ok(store)
-			}
-			c.fail(store, errors.New("db down"))
-
-			da := New(&Deps{Store: store, Usage: stubUsage(ctrl), Fleet: newStubFleet(ctrl), Snapshots: snapshotOf{snap: emptySnapshot()}})
-			if _, err := da.GetData(t.Context()); err == nil {
-				t.Fatalf("GetData succeeded despite %s failing", c.name)
-			}
-		})
-	}
-}
-
 // TestAggregator_SnapshotFailureFailsGetStatus fails the status rather than
 // report zeroes when a store read behind the snapshot failed.
 func TestAggregator_SnapshotFailureFailsGetStatus(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	da := New(&Deps{
-		Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
-		Fleet: NewMockFleetView(ctrl), Snapshots: snapshotOf{nil, errors.New("db down")},
+		Usage: stubUsage(ctrl), Fleet: NewMockFleetView(ctrl), Snapshots: snapshotOf{nil, errors.New("db down")},
 	})
 	if _, err := da.GetStatus(t.Context()); err == nil {
 		t.Fatal("GetStatus succeeded without a snapshot")
-	}
-}
-
-// TestAggregator_GetDirectoryChildren_ClampsMaxKeys pins the bound the
-// aggregator puts on a caller-supplied page size. The assertion is the
-// argument the store receives, not just that a result came back.
-func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
-	t.Parallel()
-
-	for _, c := range []struct {
-		name    string
-		maxKeys int
-	}{
-		{"unset", 0},
-		{"negative", -1},
-		{"over the clamp", 999},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			ctrl := gomock.NewController(t)
-			store := storetest.NewMockDirectoryLister(ctrl)
-			store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), maxDirectoryChildren).
-				Return(&core.DirectoryListResult{}, nil).Times(1)
-
-			da := New(&Deps{Store: store, Usage: stubUsage(ctrl)})
-			if _, err := da.GetDirectoryChildren(t.Context(), "", "", c.maxKeys); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-// TestAggregator_GetDirectoryChildren_PassesThroughInRange asserts a page size
-// inside the bound reaches the store unchanged.
-func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockDirectoryLister(ctrl)
-	store.EXPECT().ListDirectoryChildren(gomock.Any(), "photos/", "cat.jpg", 25).
-		Return(&core.DirectoryListResult{}, nil).Times(1)
-
-	da := New(&Deps{Store: store, Usage: stubUsage(ctrl)})
-	if _, err := da.GetDirectoryChildren(t.Context(), "photos/", "cat.jpg", 25); err != nil {
-		t.Fatal(err)
 	}
 }
 

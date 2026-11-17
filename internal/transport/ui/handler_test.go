@@ -95,12 +95,6 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 			UsageStat: core.UsageStat{APIRequests: 100},
 			Pools:     core.PoolUsage{core.PoolAll: 100},
 		}}}, nil).AnyTimes()
-	mockStore.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.DirectoryListResult{
-			Entries: []core.DirEntry{
-				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
-			},
-		}, nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
@@ -130,7 +124,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: st.Dashboard(), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -495,8 +489,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
-	h2 := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h1 := New(&Deps{Dashboard: st.Dashboard(), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: st.Dashboard(), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -594,8 +588,15 @@ func TestDashboard_ListsStoreBuckets(t *testing.T) {
 	if n := strings.Count(body, `<option value="store-only">`); n != 2 {
 		t.Errorf("store bucket offered in %d dialogs, want the upload and sync dialogs", n)
 	}
-	if !strings.Contains(body, `data-prefix="store-only/"`) {
-		t.Error("object tree does not show the store bucket")
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree", nil))
+	var root core.DirectoryListResult
+	if err := json.NewDecoder(w.Body).Decode(&root); err != nil {
+		t.Fatalf("decode tree: %v", err)
+	}
+	if !slices.ContainsFunc(root.Entries, func(e core.DirEntry) bool { return e.Name == "store-only/" }) {
+		t.Errorf("object tree root = %+v, want the store bucket", root.Entries)
 	}
 }
 
@@ -1402,7 +1403,7 @@ func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
 func TestTreeAPI_DataError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
 	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=", nil)
@@ -1561,7 +1562,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: st.Dashboard(mockStore), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: st.Dashboard(), Sync: testSync(st, mockStore), Ops: svc, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

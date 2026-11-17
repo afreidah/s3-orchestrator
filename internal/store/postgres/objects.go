@@ -167,42 +167,20 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 // DIRECTORY LISTING (DASHBOARD)
 // -------------------------------------------------------------------------
 
-// ListDirectoryChildren returns the immediate children of a directory prefix
-// with aggregate stats for subdirectories. Files include backend and creation
-// time. Prefix must end with "/" (or be "" for root).
-func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	end := core.PrefixEnd(prefix)
-
-	// Get aggregate stats for all immediate children (dirs + files). NameStart
-	// counts characters, the unit substr cuts in.
-	stats, err := s.queries.GetDirectoryStats(ctx, db.GetDirectoryStatsParams{
-		FromKey:   prefix,
+// DirectoryStats totals each folder directly beneath prefix whose keys fall in
+// [from, end). NameStart counts characters, the unit substr cuts in.
+func (s *Store) DirectoryStats(ctx context.Context, prefix, from, end string) ([]core.DirStat, error) {
+	rows, err := s.queries.GetDirectoryStats(ctx, db.GetDirectoryStatsParams{
+		FromKey:   from,
 		EndKey:    end,
 		NameStart: int32(utf8.RuneCountInString(prefix) + 1), //nolint:gosec // G115: directory prefix length is small and bounded
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get directory stats: %w", err)
 	}
-
-	// Get per-file detail for direct file children (paginated).
-	fileRows, err := s.queries.ListDirectChildren(ctx, db.ListDirectChildrenParams{
-		FromKey: core.KeysFrom(prefix, startAfter),
-		EndKey:  end,
-		Prefix:  prefix,
-		MaxKeys: rowLimit(maxKeys + 1),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list direct children: %w", err)
-	}
-
-	return core.BuildDirectoryListing(prefix,
-		mapSlice(stats, func(r *db.GetDirectoryStatsRow) core.DirStat {
-			return core.DirStat{Name: r.Name, IsDir: r.IsDir, FileCount: r.FileCount, TotalSize: r.TotalSize}
-		}),
-		mapSlice(fileRows, func(r *db.ListDirectChildrenRow) core.DirFile {
-			return core.DirFile{ObjectKey: r.ObjectKey, Backends: r.BackendNames, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
-		}),
-		maxKeys), nil
+	return mapSlice(rows, func(r *db.GetDirectoryStatsRow) core.DirStat {
+		return core.DirStat{Name: r.Name, FileCount: r.FileCount, TotalSize: r.TotalSize}
+	}), nil
 }
 
 // RecordObjectIdentity fills the identity columns a read had to ask a backend

@@ -55,6 +55,7 @@ type ObjectStore interface {
 	DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, error)
 	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
+	DirectoryStats(ctx context.Context, prefix, from, end string) ([]DirStat, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int, after SizeCursor) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error)
@@ -298,12 +299,6 @@ type AdvisoryLocker interface {
 // while it refuses every query.
 type Pinger interface {
 	Ping(ctx context.Context) error
-}
-
-// DirectoryLister lists one level of the namespace under a prefix, for the
-// dashboard's file browser.
-type DirectoryLister interface {
-	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 }
 
 // -------------------------------------------------------------------------

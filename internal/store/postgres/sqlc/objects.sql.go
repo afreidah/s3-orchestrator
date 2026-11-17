@@ -156,22 +156,16 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 
 const getDirectoryStats = `-- name: GetDirectoryStats :many
 SELECT
-    ((CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
-         THEN substr(object_key, $1::int,
-              position('/' IN substr(object_key, $1::int)))
-         ELSE substr(object_key, $1::int)
-    END) COLLATE "C")::text AS name,
-    (CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
-         THEN true ELSE false
-    END)::boolean AS is_dir,
+    (substr(object_key, $1::int,
+        position('/' IN substr(object_key, $1::int))) COLLATE "C")::text AS name,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
 WHERE object_key COLLATE "C" >= $2::text
   AND object_key COLLATE "C" < $3::text
-  AND length(object_key) >= $1::int
-GROUP BY name, is_dir
-ORDER BY is_dir DESC, name ASC
+  AND position('/' IN substr(object_key, $1::int)) > 0
+GROUP BY name
+ORDER BY name
 `
 
 type GetDirectoryStatsParams struct {
@@ -182,18 +176,16 @@ type GetDirectoryStatsParams struct {
 
 type GetDirectoryStatsRow struct {
 	Name      string
-	IsDir     bool
 	FileCount int64
 	TotalSize int64
 }
 
-// Aggregate count and size for immediate children of a directory prefix.
-// Directories (containing a '/') and files are distinguished by is_dir.
+// Totals for each folder directly beneath a directory prefix whose keys fall in
+// the range, so a page of the file browser reads only the folders it lists.
 // file_count counts distinct object_keys (logical files); total_size sums
-// every replica row in object_locations so directory totals reflect real
+// every replica row in object_locations so folder totals reflect real
 // physical storage consumption, matching the Storage Summary semantics.
 // @name_start is the 1-based character position where the child name begins.
-// Names sort in byte order, the order ListDirectChildren pages the files in.
 func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsParams) ([]GetDirectoryStatsRow, error) {
 	rows, err := q.db.Query(ctx, getDirectoryStats, arg.NameStart, arg.FromKey, arg.EndKey)
 	if err != nil {
@@ -203,12 +195,7 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 	items := []GetDirectoryStatsRow{}
 	for rows.Next() {
 		var i GetDirectoryStatsRow
-		if err := rows.Scan(
-			&i.Name,
-			&i.IsDir,
-			&i.FileCount,
-			&i.TotalSize,
-		); err != nil {
+		if err := rows.Scan(&i.Name, &i.FileCount, &i.TotalSize); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -603,71 +590,6 @@ func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormPara
 			&i.StorageKey,
 			&i.Form,
 			&i.ObjectSize,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDirectChildren = `-- name: ListDirectChildren :many
-SELECT
-    (object_key COLLATE "C")::text AS object_key,
-    ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
-    MAX(size_bytes)::bigint AS size_bytes,
-    MIN(created_at)::timestamptz AS created_at
-FROM object_locations
-WHERE object_key COLLATE "C" >= $1::text
-  AND object_key COLLATE "C" < $2::text
-  AND position('/' IN substring(object_key FROM length($3::text) + 1)) = 0
-  AND length(object_key) > length($3::text)
-GROUP BY object_key COLLATE "C"
-ORDER BY object_key COLLATE "C"
-LIMIT $4
-`
-
-type ListDirectChildrenParams struct {
-	FromKey string
-	EndKey  string
-	Prefix  string
-	MaxKeys int32
-}
-
-type ListDirectChildrenRow struct {
-	ObjectKey    string
-	BackendNames []string
-	SizeBytes    int64
-	CreatedAt    pgtype.Timestamptz
-}
-
-// Return per-file detail for non-directory children under a prefix, with pagination.
-// Aggregates every replica into a sorted backend_names array per object_key so
-// the file row reflects all backends a file lives on, not just one. Grouped in
-// byte order so the groups stream from the listing index and the page stops at
-// its limit.
-func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ListDirectChildrenRow, error) {
-	rows, err := q.db.Query(ctx, listDirectChildren,
-		arg.FromKey,
-		arg.EndKey,
-		arg.Prefix,
-		arg.MaxKeys,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListDirectChildrenRow{}
-	for rows.Next() {
-		var i ListDirectChildrenRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendNames,
-			&i.SizeBytes,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

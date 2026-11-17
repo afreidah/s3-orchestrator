@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
@@ -51,7 +50,6 @@ func loadTemplates() *template.Template {
 		"pct":            pct,
 		"pctFloat":       pctFloat,
 		"barClass":       barClass,
-		"joinStrings":    strings.Join,
 		"sub":            sub,
 		"ratio":          ratio,
 		"cordoned":       cordoned,

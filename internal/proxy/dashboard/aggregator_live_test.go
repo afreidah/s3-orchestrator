@@ -8,9 +8,8 @@
 // along, and which are refusing any call. Drain progress is best-effort, so
 // the interesting cases are the ones where a dependency is absent or errors.
 //
-// These exercise the aggregator directly against the DirectoryLister and
-// FleetView mocks and a fixed snapshot instead of standing up a full proxy
-// stack.
+// These exercise the aggregator directly against the FleetView mock and a fixed
+// snapshot instead of standing up a full proxy stack.
 // -------------------------------------------------------------------------------
 
 package dashboard
@@ -25,22 +24,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
-
-// newStubStore returns a DirectoryLister mock whose reads the aggregator makes
-// succeed with an empty result, so each test states only the calls it cares
-// about.
-func newStubStore(ctrl *gomock.Controller) *storetest.MockDirectoryLister {
-	store := storetest.NewMockDirectoryLister(ctrl)
-	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.DirectoryListResult{}, nil).AnyTimes()
-	return store
-}
 
 // emptySnapshot is a fleet snapshot of an empty fleet, with every map present
 // and empty.
@@ -65,11 +53,10 @@ func (s snapshotOf) FleetSnapshot(context.Context) (*metrics.FleetSnapshot, erro
 }
 
 // liveAggregator builds an aggregator over fleet and drain, with an empty
-// snapshot and a store and usage tracker that answer every read.
+// snapshot and a usage tracker that answers every read.
 func liveAggregator(ctrl *gomock.Controller, fleet FleetView, drain DrainProgressReader) *Aggregator {
 	return New(&Deps{
-		Store: newStubStore(ctrl), Usage: stubUsage(ctrl),
-		Fleet: fleet, Snapshots: snapshotOf{snap: emptySnapshot()}, Drain: drain,
+		Usage: stubUsage(ctrl), Fleet: fleet, Snapshots: snapshotOf{snap: emptySnapshot()}, Drain: drain,
 	})
 }
 
@@ -125,9 +112,9 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 
 	agg := liveAggregator(ctrl, fleet, nil)
 
-	data, err := agg.GetData(t.Context())
+	data, err := agg.GetStatus(t.Context())
 	if err != nil {
-		t.Fatalf("GetData: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 	if got := data.RefusedCalls["b1"]; got != core.CallGetObject {
 		t.Errorf("b1 refused calls = %s, want GetObject", got)
@@ -151,9 +138,9 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 
 	agg := liveAggregator(ctrl, fleet, nil)
 
-	data, err := agg.GetData(t.Context())
+	data, err := agg.GetStatus(t.Context())
 	if err != nil {
-		t.Fatalf("GetData: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 	if _, present := data.RefusedCalls["b1"]; present {
 		t.Error("a backend serving every call should be absent from RefusedCalls, not present-and-empty")
@@ -182,9 +169,9 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 
 	agg := liveAggregator(ctrl, fleet, drainReader)
 
-	data, err := agg.GetData(t.Context())
+	data, err := agg.GetStatus(t.Context())
 	if err != nil {
-		t.Fatalf("GetData: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 	got, ok := data.DrainingBackends["draining"]
 	if !ok {
@@ -215,9 +202,9 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 
 	agg := liveAggregator(ctrl, fleet, drainReader)
 
-	data, err := agg.GetData(t.Context())
+	data, err := agg.GetStatus(t.Context())
 	if err != nil {
-		t.Fatalf("GetData must not fail because one drain progress read did: %v", err)
+		t.Fatalf("GetStatus must not fail because one drain progress read did: %v", err)
 	}
 	if len(data.DrainingBackends) != 0 {
 		t.Errorf("DrainingBackends = %v, want empty when progress could not be read", data.DrainingBackends)
@@ -235,9 +222,9 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
 	agg := liveAggregator(ctrl, fleet, nil)
-	data, err := agg.GetData(t.Context())
+	data, err := agg.GetStatus(t.Context())
 	if err != nil {
-		t.Fatalf("GetData: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 	if data.DrainingBackends == nil || data.RefusedCalls == nil {
 		t.Error("live-state maps must be initialised even with no drain manager")

@@ -159,30 +159,23 @@ ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
 -- name: GetDirectoryStats :many
--- Aggregate count and size for immediate children of a directory prefix.
--- Directories (containing a '/') and files are distinguished by is_dir.
+-- Totals for each folder directly beneath a directory prefix whose keys fall in
+-- the range, so a page of the file browser reads only the folders it lists.
 -- file_count counts distinct object_keys (logical files); total_size sums
--- every replica row in object_locations so directory totals reflect real
+-- every replica row in object_locations so folder totals reflect real
 -- physical storage consumption, matching the Storage Summary semantics.
 -- @name_start is the 1-based character position where the child name begins.
--- Names sort in byte order, the order ListDirectChildren pages the files in.
 SELECT
-    ((CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
-         THEN substr(object_key, @name_start::int,
-              position('/' IN substr(object_key, @name_start::int)))
-         ELSE substr(object_key, @name_start::int)
-    END) COLLATE "C")::text AS name,
-    (CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
-         THEN true ELSE false
-    END)::boolean AS is_dir,
+    (substr(object_key, @name_start::int,
+        position('/' IN substr(object_key, @name_start::int))) COLLATE "C")::text AS name,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
 WHERE object_key COLLATE "C" >= @from_key::text
   AND object_key COLLATE "C" < @end_key::text
-  AND length(object_key) >= @name_start::int
-GROUP BY name, is_dir
-ORDER BY is_dir DESC, name ASC;
+  AND position('/' IN substr(object_key, @name_start::int)) > 0
+GROUP BY name
+ORDER BY name;
 
 -- name: ListExpiredObjects :many
 -- Collated for the same reason as ListObjectsByPrefix. The expiry worker does
@@ -343,26 +336,6 @@ WHERE copy.object_key = sqlc.arg(object_key)
 SELECT object_key, backend_name
 FROM object_locations
 WHERE object_key = ANY(@object_keys::text[]);
-
--- name: ListDirectChildren :many
--- Return per-file detail for non-directory children under a prefix, with pagination.
--- Aggregates every replica into a sorted backend_names array per object_key so
--- the file row reflects all backends a file lives on, not just one. Grouped in
--- byte order so the groups stream from the listing index and the page stops at
--- its limit.
-SELECT
-    (object_key COLLATE "C")::text AS object_key,
-    ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
-    MAX(size_bytes)::bigint AS size_bytes,
-    MIN(created_at)::timestamptz AS created_at
-FROM object_locations
-WHERE object_key COLLATE "C" >= @from_key::text
-  AND object_key COLLATE "C" < @end_key::text
-  AND position('/' IN substring(object_key FROM length(@prefix::text) + 1)) = 0
-  AND length(object_key) > length(@prefix::text)
-GROUP BY object_key COLLATE "C"
-ORDER BY object_key COLLATE "C"
-LIMIT @max_keys;
 
 -- name: ListObjectsDelimited :many
 -- A loose index scan: each step seeks past the group it landed in, so a page

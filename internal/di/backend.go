@@ -477,14 +477,12 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	r := NewResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	collector := r.Resolve[*metrics.Collector]()
-	stores := r.Resolve[metadataStore]()
 	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
 	return dashboard.New(&dashboard.Deps{
-		Store: stores, Usage: rt.Usage(),
-		Fleet: rt, Snapshots: collector, Drain: states,
+		Usage: rt.Usage(), Fleet: rt, Snapshots: collector, Drain: states,
 	}), nil
 }
 

@@ -246,6 +246,21 @@ func (mr *MockObjectStoreMockRecorder) DeleteObjectsBatch(ctx, keys any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectsBatch", reflect.TypeOf((*MockObjectStore)(nil).DeleteObjectsBatch), ctx, keys)
 }
 
+// DirectoryStats mocks base method.
+func (m *MockObjectStore) DirectoryStats(ctx context.Context, prefix, from, end string) ([]core.DirStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DirectoryStats", ctx, prefix, from, end)
+	ret0, _ := ret[0].([]core.DirStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DirectoryStats indicates an expected call of DirectoryStats.
+func (mr *MockObjectStoreMockRecorder) DirectoryStats(ctx, prefix, from, end any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectoryStats", reflect.TypeOf((*MockObjectStore)(nil).DirectoryStats), ctx, prefix, from, end)
+}
+
 // GetAllObjectLocations mocks base method.
 func (m *MockObjectStore) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()

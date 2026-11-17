@@ -87,8 +87,7 @@ func TestDashboard_UsageShowsEachBackendsCycle(t *testing.T) {
 			"c2": core.UsagePeriod{ResetDay: 15}.Cycle(now),
 			"r2": core.UsagePeriod{Location: la}.Cycle(now),
 		},
-		UsagePeriod:     "2026-10",
-		TopLevelEntries: &core.DirectoryListResult{},
+		UsagePeriod: "2026-10",
 	}
 	var buf bytes.Buffer
 	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", dashboardPage{Data: data}); err != nil {
@@ -112,7 +111,6 @@ func TestDashboard_UsageShowsEachBackendsCycle(t *testing.T) {
 // name cell, which is where the row highlight and every badge are.
 func renderBackendRows(t *testing.T, data *dashboard.Data) func(name string) string {
 	t.Helper()
-	data.TopLevelEntries = &core.DirectoryListResult{}
 	var buf bytes.Buffer
 	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", dashboardPage{Data: data}); err != nil {
 		t.Fatalf("render: %v", err)
