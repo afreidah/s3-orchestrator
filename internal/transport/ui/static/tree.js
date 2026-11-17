@@ -393,49 +393,37 @@
     });
   }
 
-  // --- Refresh button (partial update, preserves tree + logs + scroll) ---
+  // --- Figure refresh: refetch the page and swap in each element marked
+  // data-refresh by its name, so the tree, the logs and the action buttons
+  // keep their state. One marked on only one of the two pages, such as a
+  // section a setting turns on, waits for the next reload.
+  function refreshFigures() {
+    return fetchWithTimeout(location.href, null, 10000)
+      .then(function (resp) {
+        if (resp.status === 401) { location.href = 'login'; return null; }
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.text();
+      })
+      .then(function (html) {
+        if (!html) return;
+        let doc = new DOMParser().parseFromString(html, 'text/html');
+        doc.querySelectorAll('[data-refresh]').forEach(function (fresh) {
+          let current = document.querySelector('[data-refresh="' + fresh.dataset.refresh + '"]');
+          if (current) current.replaceWith(document.importNode(fresh, true));
+        });
+      });
+  }
+
   let refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) {
+    let refreshDone = function () {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = 'Refresh';
+    };
     refreshBtn.addEventListener('click', function () {
       refreshBtn.disabled = true;
       refreshBtn.textContent = 'Refreshing\u2026';
-
-      fetchWithTimeout(location.href, null, 10000)
-        .then(function (resp) {
-          if (resp.status === 401) { location.href = 'login'; return; }
-          if (!resp.ok) throw new Error('HTTP ' + resp.status);
-          return resp.text();
-        })
-        .then(function (html) {
-          if (!html) return;
-          let doc = new DOMParser().parseFromString(html, 'text/html');
-          let sections = document.querySelectorAll('.container > section');
-          let newSections = doc.querySelectorAll('.container > section');
-
-          // Replace storage summary, backends, and monthly usage (first 3 sections)
-          for (let i = 0; i < 3 && i < sections.length && i < newSections.length; i++) {
-            sections[i].innerHTML = newSections[i].innerHTML;
-          }
-
-          // Update header badges (healthy/degraded)
-          let headerRight = document.querySelector('.header-right');
-          let newHeaderRight = doc.querySelector('.header-right');
-          if (headerRight && newHeaderRight) {
-            let badge = headerRight.querySelector('.badge');
-            let newBadge = newHeaderRight.querySelector('.badge');
-            if (badge && newBadge) {
-              badge.className = newBadge.className;
-              badge.textContent = newBadge.textContent;
-            }
-          }
-
-          refreshBtn.disabled = false;
-          refreshBtn.textContent = 'Refresh';
-        })
-        .catch(function () {
-          refreshBtn.disabled = false;
-          refreshBtn.textContent = 'Refresh';
-        });
+      refreshFigures().then(refreshDone, refreshDone);
     });
   }
 
@@ -447,13 +435,8 @@
     setTimeout(function () { btn.disabled = false; btn.textContent = label; }, delay);
   }
 
-  function reloadAfter(delay) {
-    setTimeout(function () { location.reload(); }, delay);
-  }
-
   // --- Async operation helper: trigger POST, then poll status endpoint ---
-  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey, noun, opts) {
-    let options = opts || {};
+  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey, noun) {
     btn.disabled = true;
     btn.textContent = label + '\u2026';
 
@@ -465,7 +448,7 @@
           resetButton(btn, label, 3000);
           return;
         }
-        pollStatus(btn, statusUrl, label, countKey, noun, options);
+        pollStatus(btn, statusUrl, label, countKey, noun);
       })
       .catch(function (err) {
         btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
@@ -490,11 +473,8 @@
         extra = ', ' + result.failed + ' failed';
       }
       ctx.btn.textContent = result[ctx.countKey] + ctx.suffix + extra;
-      if (ctx.skipReload) {
-        resetButton(ctx.btn, ctx.label, 3000);
-      } else {
-        reloadAfter(1500);
-      }
+      resetButton(ctx.btn, ctx.label, 3000);
+      refreshFigures().catch(function (err) { console.error('Figure refresh failed:', err); });
       return;
     }
     if (data.status === 'failed') {
@@ -507,18 +487,21 @@
     ctx.btn.textContent = ctx.label;
   }
 
-  function pollStatus(btn, statusUrl, label, countKey, noun, options) {
+  function pollStatus(btn, statusUrl, label, countKey, noun) {
     let ctx = {
       btn: btn,
       label: label,
       countKey: countKey,
       suffix: noun ? ' ' + noun : '',
-      skipReload: !!options.skipReload,
     };
     let poll = setInterval(function () {
-      fetch(statusUrl)
-        .then(function (resp) { return resp.json(); })
+      fetchWithTimeout(statusUrl, null, 10000)
+        .then(function (resp) {
+          if (resp.status === 401) { location.href = 'login'; return null; }
+          return resp.json();
+        })
         .then(function (data) {
+          if (!data) { clearInterval(poll); return; }
           if (data.status === 'running') return;
           clearInterval(poll);
           applyPollResult(data, ctx);
@@ -544,16 +527,13 @@
   // Every one of these is the same flow: a button that kicks off a long-running
   // pass and then polls its status endpoint. They are a table rather than eight
   // copies of the same block so that adding one is a row, and so this setup
-  // function stays readable.
-  //
-  // reload re-renders the page when the pass finishes, which only the ones that
-  // move objects between backends need. confirm is set for the passes that
-  // rewrite every object in the fleet.
+  // function stays readable. Each refreshes the figures when its pass finishes,
+  // and confirm is set for the passes that rewrite every object in the fleet.
   let adminActions = [
-    { id: 'rebalance-btn', path: 'api/rebalance', label: 'Rebalance', countKey: 'moved', noun: 'moved', reload: true },
-    { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'copies_removed', noun: 'removed', reload: true },
-    { id: 'replicate-btn', path: 'api/replicate', label: 'Replicate Now', countKey: 'copies_created', noun: 'copies created', reload: true },
-    { id: 'lifecycle-btn', path: 'api/lifecycle', label: 'Expire Now', countKey: 'deleted', noun: 'deleted', reload: true },
+    { id: 'rebalance-btn', path: 'api/rebalance', label: 'Rebalance', countKey: 'moved', noun: 'moved' },
+    { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'copies_removed', noun: 'removed' },
+    { id: 'replicate-btn', path: 'api/replicate', label: 'Replicate Now', countKey: 'copies_created', noun: 'copies created' },
+    { id: 'lifecycle-btn', path: 'api/lifecycle', label: 'Expire Now', countKey: 'deleted', noun: 'deleted' },
     { id: 'scrub-btn', path: 'api/scrub', label: 'Scrub', countKey: 'checked', noun: 'checked' },
     { id: 'backfill-checksums-btn', path: 'api/backfill-checksums', label: 'Backfill Checksums', countKey: 'processed', noun: 'processed' },
     {
@@ -578,8 +558,7 @@
     if (!btn) return;
     btn.addEventListener('click', function () {
       if (action.confirm && !confirm(action.confirm)) return;
-      runAsyncOp(btn, action.path, action.path + '/status', action.label, action.countKey, action.noun,
-        action.reload ? undefined : { skipReload: true });
+      runAsyncOp(btn, action.path, action.path + '/status', action.label, action.countKey, action.noun);
     });
   });
 
