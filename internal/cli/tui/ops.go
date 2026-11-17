@@ -182,7 +182,7 @@ func cacheActions() []opsAction {
 }
 
 // encryptionActions move stored objects between plaintext and ciphertext, or
-// re-wrap the keys that seal them. The rewrites stream their progress, and the
+// re-wrap the keys that seal them. Every entry streams its progress, and the
 // bounded runs are separate entries because a prompt refuses an empty answer.
 func encryptionActions() []opsAction {
 	return []opsAction{
@@ -197,13 +197,13 @@ func encryptionActions() []opsAction {
 			"Read and rewrite that many encrypted copies as plaintext?", nil,
 			asks("Decrypt how many objects?", "1000", boundedRewrite(adminapi.PathDecryptExisting))),
 		post("Rotate encryption key", adminapi.PathRotateKey,
-			"Re-wrap every object key sealed with that key id?", decodeOneShot[rotateKeyResult],
+			"Re-wrap every object key sealed with that key id?", nil,
 			asks("Rotate away from which key id?", "old key id", func(value string) opsRequest {
 				body, _ := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: value})
 				return opsRequest{path: adminapi.PathRotateKey, body: body}
 			})),
 		post("Rotate every stale encryption key", adminapi.PathRotateKey,
-			"Re-wrap every object key not sealed with the current key?", decodeOneShot[rotateKeyResult],
+			"Re-wrap every object key not sealed with the current key?", nil,
 			sends(adminapi.RotateEncryptionKeyRequest{AllStale: true})),
 	}
 }

@@ -81,7 +81,7 @@ func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, o
 		Store:     store,
 		Mover:     &fakeMover{},
 	})
-	res, err := svc.RotateKey(context.Background(), oldKeyID, oldKeyID == "")
+	res, err := svc.RotateKey(context.Background(), nil, oldKeyID, oldKeyID == "")
 	if err != nil {
 		t.Fatalf("RotateKey(%q): %v", oldKeyID, err)
 	}

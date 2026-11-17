@@ -1185,6 +1185,10 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/RotateEncryptionKeyResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid SigV4 credentials
     /admin/api/scrub:

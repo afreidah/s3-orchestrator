@@ -49,6 +49,6 @@ func cmdRotateEncryptionKey(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: exactly one of -old-key-id or -all-stale is required")
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, adminapi.PathRotateKey,
-		adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale}, nil)
+	return c.streamJSON(http.MethodPost, adminapi.PathRotateKey,
+		adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale})
 }
