@@ -11,11 +11,13 @@ package ui
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/net/html"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -104,6 +106,60 @@ func TestDashboard_UsageShowsEachBackendsCycle(t *testing.T) {
 			t.Errorf("Usage section missing %q:\n%s", want, section)
 		}
 	}
+}
+
+// TestDashboard_RefreshMarksEveryFigure verifies, with every optional section
+// shown, that each figure Refresh swaps carries its own data-refresh name and
+// that none holds a button, whose click handler a swap would drop.
+func TestDashboard_RefreshMarksEveryFigure(t *testing.T) {
+	t.Parallel()
+	page := dashboardPage{
+		DBHealthy: true,
+		Data: &dashboard.Data{
+			BackendOrder:     []string{"b1"},
+			CompressionStats: map[string]core.CompressionStat{"b1": {Objects: 1, LogicalBytes: 10, StoredBytes: 5}},
+		},
+		Config: configSummary{IntegrityEnabled: true, EncryptionEnabled: true},
+	}
+	var buf bytes.Buffer
+	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	doc, err := html.Parse(&buf)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var names []string
+	for n := range doc.Descendants() {
+		name, marked := attrOf(n, "data-refresh")
+		if !marked {
+			continue
+		}
+		names = append(names, name)
+		for inner := range n.Descendants() {
+			if inner.Type == html.ElementNode && inner.Data == "button" {
+				t.Errorf("figure %q holds a button", name)
+			}
+		}
+	}
+	want := []string{"health", "storage", "backends", "integrity", "encryption", "compression", "usage"}
+	if !slices.Equal(names, want) {
+		t.Errorf("data-refresh names = %q, want %q", names, want)
+	}
+}
+
+// attrOf returns the named attribute of an element node and whether it is set.
+func attrOf(n *html.Node, key string) (string, bool) {
+	if n.Type != html.ElementNode {
+		return "", false
+	}
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val, true
+		}
+	}
+	return "", false
 }
 
 // renderBackendRows renders the dashboard over data and returns a lookup from

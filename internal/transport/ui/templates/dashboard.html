@@ -19,9 +19,9 @@
     <img src="static/logo.png" alt="S3 Orchestrator" class="header-logo">
     <div class="header-right">
       {{if .DBHealthy}}
-        <span class="badge badge-healthy">Healthy</span>
+        <span class="badge badge-healthy" data-refresh="health">Healthy</span>
       {{else}}
-        <span class="badge badge-degraded">Degraded</span>
+        <span class="badge badge-degraded" data-refresh="health">Degraded</span>
       {{end}}
       <button class="btn-action" id="refresh-btn">Refresh</button>
       <a href="logout" class="logout-link">Logout</a>
@@ -31,7 +31,7 @@
   <!-- Storage Summary -->
   <section>
     <h2>Storage Summary</h2>
-    <div class="panel">
+    <div class="panel" data-refresh="storage">
       <div class="summary-line">
         {{if eq .TotalBytesLimit 0}}
         <span><strong>{{formatBytes .TotalBytesUsed}}</strong> used, no capacity limit</span>
@@ -75,7 +75,7 @@
       {{end}}
       <span id="admin-action-status" class="admin-action-status"></span>
     </h2>
-    <table>
+    <table data-refresh="backends">
       <thead>
         <tr>
           <th>Name</th>
@@ -137,7 +137,7 @@
   <!-- Integrity Coverage -->
   <section>
     <h2>Integrity Coverage</h2>
-    <table>
+    <table data-refresh="integrity">
       <thead>
         <tr>
           <th>Metric</th>
@@ -180,7 +180,7 @@
   <!-- Encryption Coverage -->
   <section>
     <h2>Encryption Coverage</h2>
-    <table>
+    <table data-refresh="encryption">
       <thead>
         <tr>
           <th>Metric</th>
@@ -204,7 +204,7 @@
   <!-- Compression Savings -->
   <section>
     <h2>Compression Savings</h2>
-    <table>
+    <table data-refresh="compression">
       <thead>
         <tr>
           <th>Metric</th>
@@ -236,7 +236,7 @@
   <!-- Usage -->
   <section>
     <h2>Usage</h2>
-    <table>
+    <table data-refresh="usage">
       <thead>
         <tr>
           <th>Backend</th>
