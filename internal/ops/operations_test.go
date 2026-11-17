@@ -1123,6 +1123,103 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 	}
 }
 
+// browseObjects builds an Objects over store for the file browser tests.
+func browseObjects(t *testing.T, store ObjectStore) *Objects {
+	t.Helper()
+	return NewObjects(ObjectsDeps{
+		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
+		Store:   store,
+		Buckets: declaredBuckets(),
+	})
+}
+
+// TestObjectsBrowse_TotalsOnlyThePagesFolders asserts a page resumed past a
+// folder totals only the keys from that cursor to just past its last entry,
+// and lists its folders with their totals ahead of its files.
+func TestObjectsBrowse_TotalsOnlyThePagesFolders(t *testing.T) {
+	t.Parallel()
+	prefix := testBucket + "/"
+	store := storetest.NewMockObjectStore(gomock.NewController(t))
+	store.EXPECT().ListObjects(gomock.Any(), prefix, "/", prefix+"a/", 2).Return(&core.ListObjectsResult{
+		CommonPrefixes:        []string{prefix + "c/"},
+		Objects:               []core.ObjectLocation{{ObjectKey: prefix + "d", SizeBytes: 7}},
+		IsTruncated:           true,
+		NextContinuationToken: prefix + "d",
+	}, nil)
+	store.EXPECT().DirectoryStats(gomock.Any(), prefix, core.PrefixEnd(prefix+"a/"), prefix+"d\x01").
+		Return([]core.DirStat{{Name: "c/", FileCount: 4, TotalSize: 40}}, nil)
+	store.EXPECT().GetObjectBackendsForKeys(gomock.Any(), []string{prefix + "d"}).
+		Return(map[string][]string{prefix + "d": {"b1"}}, nil)
+
+	page, err := browseObjects(t, store).Browse(context.Background(), prefix, prefix+"a/", 2)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if len(page.Entries) != 2 || !page.HasMore || page.NextCursor != prefix+"d" {
+		t.Fatalf("page = %+v, want two entries resuming after %sd", page, prefix)
+	}
+	if dir := page.Entries[0]; dir.Name != prefix+"c/" || !dir.IsDir || dir.FileCount != 4 || dir.TotalSize != 40 {
+		t.Errorf("folder = %+v, want c/ with 4 files and 40 bytes", dir)
+	}
+	if file := page.Entries[1]; file.Name != prefix+"d" || file.TotalSize != 7 || len(file.Backends) != 1 {
+		t.Errorf("file = %+v, want d of 7 bytes on b1", file)
+	}
+}
+
+// TestObjectsBrowse_FilesOnlySkipsTheTotals asserts a page holding no folder
+// never asks for folder totals.
+func TestObjectsBrowse_FilesOnlySkipsTheTotals(t *testing.T) {
+	t.Parallel()
+	prefix := testBucket + "/"
+	store := storetest.NewMockObjectStore(gomock.NewController(t))
+	store.EXPECT().ListObjects(gomock.Any(), prefix, "/", "", BrowsePageSize).
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{{ObjectKey: prefix + "a"}}}, nil)
+	store.EXPECT().GetObjectBackendsForKeys(gomock.Any(), []string{prefix + "a"}).Return(map[string][]string{}, nil)
+
+	page, err := browseObjects(t, store).Browse(context.Background(), prefix, "", BrowsePageSize)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if len(page.Entries) != 1 || page.HasMore {
+		t.Errorf("page = %+v, want the one file and nothing after it", page)
+	}
+}
+
+// TestObjectsBrowse_ReadErrorsSurface asserts whichever store read fails, the
+// page fails rather than listing what the other reads returned.
+func TestObjectsBrowse_ReadErrorsSurface(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("db down")
+	folders := &core.ListObjectsResult{CommonPrefixes: []string{testBucket + "/a/"}}
+	a := gomock.Any()
+	for _, tc := range []struct {
+		name  string
+		stubs func(m *storetest.MockObjectStore)
+	}{
+		{"listing", func(m *storetest.MockObjectStore) {
+			m.EXPECT().ListObjects(a, a, a, a, a).Return(nil, boom)
+		}},
+		{"totals", func(m *storetest.MockObjectStore) {
+			m.EXPECT().ListObjects(a, a, a, a, a).Return(folders, nil)
+			m.EXPECT().DirectoryStats(a, a, a, a).Return(nil, boom)
+		}},
+		{"backends", func(m *storetest.MockObjectStore) {
+			m.EXPECT().ListObjects(a, a, a, a, a).Return(folders, nil)
+			m.EXPECT().DirectoryStats(a, a, a, a).Return(nil, nil)
+			m.EXPECT().GetObjectBackendsForKeys(a, a).Return(nil, boom)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := storetest.NewMockObjectStore(gomock.NewController(t))
+			tc.stubs(store)
+			if _, err := browseObjects(t, store).Browse(context.Background(), testBucket+"/", "", 2); !errors.Is(err, boom) {
+				t.Errorf("err = %v, want the %s failure", err, tc.name)
+			}
+		})
+	}
+}
+
 // TestObjectsLocations_ReportsEveryCopy asserts the placement query answers
 // with each backend holding the key.
 func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {

@@ -33,7 +33,7 @@ type ListingStore interface {
 	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error)
 	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
 	ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error)
-	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
+	DirectoryStats(ctx context.Context, prefix, from, end string) ([]core.DirStat, error)
 	CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]core.CleanupItem, error)
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error)
@@ -192,31 +192,30 @@ func (l lister) checkExpired(t *testing.T) {
 	}
 }
 
-// checkDirectory asserts the dashboard's view of a directory whose prefix a
-// wildcard or a multi-byte character could shift: one-character names survive,
-// files sort by byte, and the file page resumes past its cursor.
+// checkDirectory asserts the file browser's folder totals under a prefix a
+// wildcard or a multi-byte character could shift: one-character folder names
+// survive, files beside the folders are left out, and a range cut short of a
+// folder leaves it out too.
 func (l lister) checkDirectory(t *testing.T) {
 	for _, dir := range []string{"d_r/", "d\U000000EFr/"} {
 		base := l.root + "directory/" + dir
-		l.seed(t, base+"B", base+"a", base+"sub/x")
-		children := func(after string, maxKeys int) *core.DirectoryListResult {
+		l.seed(t, base+"B", base+"a/x", base+"a/y", base+"sub/x")
+		stats := func(end string) []core.DirStat {
 			t.Helper()
-			page, err := l.s.ListDirectoryChildren(context.Background(), base, after, maxKeys)
+			got, err := l.s.DirectoryStats(context.Background(), base, base, end)
 			if err != nil {
-				t.Fatalf("ListDirectoryChildren: %v", err)
+				t.Fatalf("DirectoryStats: %v", err)
 			}
-			return page
+			return got
 		}
 
-		if got, want := entryNames(children("", 100)), prefixed(base, []string{"sub/", "B", "a"}); !slices.Equal(got, want) {
-			t.Errorf("entries = %q, want %q", got, want)
+		perKey := int64(2 * listedSize)
+		all := []core.DirStat{{Name: "a/", FileCount: 2, TotalSize: 2 * perKey}, {Name: "sub/", FileCount: 1, TotalSize: perKey}}
+		if got := stats(core.PrefixEnd(base)); !slices.Equal(got, all) {
+			t.Errorf("stats = %+v, want %+v", got, all)
 		}
-		first := children("", 1)
-		if !first.HasMore || first.NextCursor != base+"B" {
-			t.Fatalf("first page = %+v, want more after %sB", first, base)
-		}
-		if got, want := entryNames(children(first.NextCursor, 1)), prefixed(base, []string{"sub/", "a"}); !slices.Equal(got, want) {
-			t.Errorf("next page = %q, want %q", got, want)
+		if got := stats(core.PrefixEnd(base + "a/")); !slices.Equal(got, all[:1]) {
+			t.Errorf("stats up to a/ = %+v, want %+v", got, all[:1])
 		}
 	}
 }
@@ -302,13 +301,4 @@ func prefixed(base string, names []string) []string {
 		out[i] = base + name
 	}
 	return out
-}
-
-// entryNames returns a directory page's entry names in the order it gave them.
-func entryNames(page *core.DirectoryListResult) []string {
-	names := make([]string, len(page.Entries))
-	for i := range page.Entries {
-		names[i] = page.Entries[i].Name
-	}
-	return names
 }

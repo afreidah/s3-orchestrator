@@ -30,7 +30,6 @@ type Store interface {
 	core.UsageFlusher
 	core.UsageReader
 	core.AdvisoryLocker
-	core.DirectoryLister
 	core.LifecycleAdmin
 	core.NotificationOutbox
 	core.TagStore

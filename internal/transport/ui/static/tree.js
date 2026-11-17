@@ -3,9 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Intercepts <details> open events on directory nodes and fetches children from
-// the /ui/api/tree endpoint. Renders the response into the same HTML structure
-// as server-rendered nodes. Supports pagination via "load more" links.
+// Loads the root of the tree, and each directory as its <details> node opens,
+// from the /ui/api/tree endpoint. Supports pagination via "load more" links.
 // Also handles delete confirmation and upload dialogs.
 // -------------------------------------------------------------------------------
 
@@ -113,6 +112,7 @@
       details.dataset.loaded = 'true';
       loadChildren(details.dataset.prefix, '', details.querySelector('.tree-children'));
     }, true);
+    loadChildren('', '', tree);
   }
 
   function loadChildren(prefix, startAfter, container) {
@@ -136,6 +136,12 @@
         let entries = data.entries || [];
         for (const entry of entries) {
           container.appendChild(renderEntry(entry));
+        }
+        if (!prefix && !startAfter && entries.length === 0) {
+          let empty = document.createElement('p');
+          empty.className = 'empty';
+          empty.textContent = 'No objects stored.';
+          container.appendChild(empty);
         }
 
         if (data.hasMore && data.nextCursor) {

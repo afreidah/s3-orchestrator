@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -65,12 +64,10 @@ type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, prefix string, knownBuckets []string) (int, int, error)
 }
 
-// DashboardOps is the dashboard surface the UI reads: the aggregated snapshot
-// and the lazy directory expansion behind the object browser.
-// *dashboard.Aggregator satisfies it.
-type DashboardOps interface {
-	GetData(ctx context.Context) (*dashboard.Data, error)
-	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
+// DashboardReader is the dashboard surface the UI reads: the aggregated
+// snapshot. *dashboard.Aggregator satisfies it.
+type DashboardReader interface {
+	GetStatus(ctx context.Context) (*dashboard.Data, error)
 }
 
 // DeclaredBuckets is the virtual bucket set the UI resolves a browsed key
@@ -83,7 +80,7 @@ type DeclaredBuckets interface {
 
 // Deps holds the dependencies New requires.
 type Deps struct {
-	Dashboard     DashboardOps
+	Dashboard     DashboardReader
 	Sync          BackendSyncer
 	Ops           *ops.Services
 	DBHealthy     func() bool

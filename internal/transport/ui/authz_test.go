@@ -17,12 +17,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
@@ -58,7 +62,10 @@ func grantedUsers(withViewer bool) *provisioning.Snapshot {
 // a provisioning change does on a live instance.
 func grantedHandler(t *testing.T) (*http.ServeMux, func(withViewer bool)) {
 	t.Helper()
-	h, mux := newTestHandler(t)
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{CommonPrefixes: []string{"hidden-bucket/"}}, nil).AnyTimes()
+	})
 	cfg := h.d.Config.Load()
 
 	var current atomic.Pointer[auth.BucketRegistry]
@@ -154,8 +161,9 @@ func TestDashboard_ActionsFollowGrants(t *testing.T) {
 	}
 }
 
-// TestTree_ListsOnlyListableBuckets verifies the tree root drops buckets the
-// user may not list.
+// TestTree_ListsOnlyListableBuckets verifies the tree root holds the buckets
+// the user may list, an empty declared one included, and drops a bucket the
+// ledger holds that they may not list.
 func TestTree_ListsOnlyListableBuckets(t *testing.T) {
 	t.Parallel()
 	mux, _ := grantedHandler(t)
@@ -169,35 +177,46 @@ func TestTree_ListsOnlyListableBuckets(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode tree: %v", err)
 	}
-	for _, e := range got.Entries {
-		if e.Name != "test-bucket/" {
-			t.Errorf("tree root lists %q, which the viewer has no list grant on", e.Name)
-		}
-	}
-}
-
-// TestAPIDashboard_ListsOnlyListableBuckets verifies the dashboard JSON's root
-// holds the buckets the user may list, an empty declared one included, and none
-// of the buckets they may not.
-func TestAPIDashboard_ListsOnlyListableBuckets(t *testing.T) {
-	t.Parallel()
-	mux, _ := grantedHandler(t)
-	_, cookies := signIn(t, mux, viewKey, viewSecret)
-
-	w := send(t, mux, cookies, http.MethodGet, "/ui/api/dashboard", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET /api/dashboard = %d, want 200", w.Code)
-	}
-	var got struct{ TopLevelEntries core.DirectoryListResult }
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode dashboard: %v", err)
-	}
 	var names []string
-	for _, e := range got.TopLevelEntries.Entries {
+	for _, e := range got.Entries {
 		names = append(names, e.Name)
 	}
 	if len(names) != 1 || names[0] != "test-bucket/" {
-		t.Errorf("dashboard root = %q, want only the viewer's listable test-bucket/", names)
+		t.Errorf("tree root = %q, want only the viewer's listable test-bucket/", names)
+	}
+}
+
+// TestRootEntries_PagedRootAddsOnlyCoveredBuckets verifies a root cut into
+// pages adds each empty declared bucket on the one page whose range it falls
+// in, in name order, and drops a held bucket the user may not list.
+func TestRootEntries_PagedRootAddsOnlyCoveredBuckets(t *testing.T) {
+	t.Parallel()
+	list := map[string]core.PermissionSet{"a": core.PermList, "b": core.PermList, "c": core.PermList, "d": core.PermList}
+	reg, err := auth.NewBucketRegistry(&provisioning.View{Users: []provisioning.User{{ID: "viewer", Name: "viewer", Grants: list}}})
+	if err != nil {
+		t.Fatalf("NewBucketRegistry: %v", err)
+	}
+	viewer, _ := reg.UserByID("viewer")
+	ctx := withUser(context.Background(), viewer)
+	declared := []string{"a", "b", "c", "d"}
+	names := func(entries []core.DirEntry) []string {
+		out := make([]string, len(entries))
+		for i := range entries {
+			out[i] = entries[i].Name
+		}
+		return out
+	}
+
+	first := &core.DirectoryListResult{
+		Entries: []core.DirEntry{{Name: "a/", IsDir: true}, {Name: "c/", IsDir: true}},
+		HasMore: true, NextCursor: "c/",
+	}
+	if got := names(rootEntries(ctx, first, "", declared)); !slices.Equal(got, []string{"a/", "b/", "c/"}) {
+		t.Errorf("first page = %q, want a/ b/ c/", got)
+	}
+	last := &core.DirectoryListResult{Entries: []core.DirEntry{{Name: "x/", IsDir: true}}}
+	if got := names(rootEntries(ctx, last, "c/", declared)); !slices.Equal(got, []string{"d/"}) {
+		t.Errorf("last page = %q, want d/", got)
 	}
 }
 

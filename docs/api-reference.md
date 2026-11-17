@@ -61,34 +61,29 @@ Returns the full dashboard data. Every figure is read for the request: quota, ob
   "UsageLimits": {
     "oci": {"EgressByteLimit": 10737418240, "IngressByteLimit": 0, "Period": {"reset_day": 15, "timezone": "America/Los_Angeles"}}
   },
-  "UsagePeriod": "2026-03",
-  "TopLevelEntries": {
-    "entries": [{"name": "my-bucket/", "isDir": true, "size": 6291456, "count": 57}],
-    "hasMore": false,
-    "nextCursor": ""
-  }
+  "UsagePeriod": "2026-03"
 }
 ```
 
 ### GET /ui/api/tree
 
-Returns children of a directory prefix for the lazy-loaded file browser.
+Returns one page of a directory prefix's children for the lazy-loaded file browser. Folders and files page together in key order behind one cursor, and each page lists its folders ahead of its files. A folder carries the distinct objects and the replica bytes beneath it; a file carries the size the client wrote and every backend holding a copy. Keys clients cannot list are left out. An empty prefix returns the buckets the user may list, a declared bucket that holds nothing yet included.
 
 **Query parameters:**
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `prefix` | No | Directory prefix to list (e.g., `my-bucket/photos/`). Empty returns top-level entries. |
-| `startAfter` | No | Cursor for pagination (value of `nextCursor` from previous response) |
-| `maxKeys` | No | Maximum entries to return (0-200, larger values are capped; default: 200) |
+| `startAfter` | No | Cursor for pagination (value of `nextCursor` from previous response). It may name a folder. |
+| `maxKeys` | No | Maximum entries to return, folders and files together (0-200, larger values are capped; default: 200) |
 
 **Response:**
 
 ```json
 {
   "entries": [
-    {"name": "my-bucket/photos/2024/", "isDir": true, "size": 1048576, "count": 10},
-    {"name": "my-bucket/photos/avatar.jpg", "isDir": false, "size": 51200, "count": 0}
+    {"name": "my-bucket/photos/2024/", "isDir": true, "fileCount": 10, "totalSize": 1048576, "backends": null, "createdAt": ""},
+    {"name": "my-bucket/photos/avatar.jpg", "isDir": false, "fileCount": 0, "totalSize": 51200, "backends": ["oci", "r2"], "createdAt": "2026-03-14 09:12"}
   ],
   "hasMore": true,
   "nextCursor": "my-bucket/photos/avatar.jpg"

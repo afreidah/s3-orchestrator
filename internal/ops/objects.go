@@ -37,8 +37,15 @@ const MaxUploadSize = 512 << 20
 // walking a prefix ahead of a bulk delete.
 const deletePrefixPageSize = 1000
 
-// listPageSize is how many keys one browse page holds.
+// listPageSize is how many entries one List page holds.
 const listPageSize = 1000
+
+// BrowsePageSize is the most entries one page of the web UI's file browser
+// holds, folders and files together.
+const BrowsePageSize = 200
+
+// browseDelimiter groups the file browser's keys into folders.
+const browseDelimiter = "/"
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -76,6 +83,28 @@ func NewObjects(d ObjectsDeps) *Objects {
 // continuation resumes a previously truncated page.
 func (o *Objects) List(ctx context.Context, prefix, delimiter, continuation string) (*core.ListObjectsResult, error) {
 	return o.d.Store.ListObjects(ctx, prefix, delimiter, continuation, listPageSize)
+}
+
+// Browse returns one page of the file browser under prefix: its folders, each
+// totalled over only the keys the page covers, then its files with the
+// backends holding them. A cursor naming a folder resumes past it.
+func (o *Objects) Browse(ctx context.Context, prefix, cursor string, maxKeys int) (*core.DirectoryListResult, error) {
+	page, err := o.d.Store.ListObjects(ctx, prefix, browseDelimiter, cursor, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+	var stats []core.DirStat
+	if len(page.CommonPrefixes) > 0 {
+		from, end := core.PageRange(prefix, browseDelimiter, cursor, page)
+		if stats, err = o.d.Store.DirectoryStats(ctx, prefix, from, end); err != nil {
+			return nil, err
+		}
+	}
+	backends, err := o.d.Store.GetObjectBackendsForKeys(ctx, core.KeysOf(page.Objects))
+	if err != nil {
+		return nil, err
+	}
+	return core.BuildDirectoryListing(prefix, page, stats, backends), nil
 }
 
 // Locations reports every backend holding a copy of one key, for callers

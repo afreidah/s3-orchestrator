@@ -174,12 +174,10 @@ func (s *Stack) Fleet() worker.Fleet {
 	return worker.Fleet{Ops: s.Runtime, Placement: s.Coord, Metrics: s.Metrics}
 }
 
-// Dashboard builds the dashboard aggregator over the stack and store, as di
-// wires it.
-func (s *Stack) Dashboard(store core.DirectoryLister) *dashboard.Aggregator {
+// Dashboard builds the dashboard aggregator over the stack, as di wires it.
+func (s *Stack) Dashboard() *dashboard.Aggregator {
 	return dashboard.New(&dashboard.Deps{
-		Store: store, Usage: s.Runtime.Usage(),
-		Fleet: s.Runtime, Snapshots: s.Metrics, Drain: s.States,
+		Usage: s.Runtime.Usage(), Fleet: s.Runtime, Snapshots: s.Metrics, Drain: s.States,
 	})
 }
 

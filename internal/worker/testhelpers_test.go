@@ -257,7 +257,6 @@ type mockMetadataStore struct {
 	core.IntegrityStore
 	core.ExpiredObjectsLister
 	core.BackendStateStore
-	core.DirectoryLister
 	core.UsageFlusher
 	core.AdvisoryLocker
 	core.LifecycleAdmin

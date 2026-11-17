@@ -508,6 +508,21 @@ func (mr *MockMetadataStoreMockRecorder) DeleteUser(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUser", reflect.TypeOf((*MockMetadataStore)(nil).DeleteUser), ctx, id)
 }
 
+// DirectoryStats mocks base method.
+func (m *MockMetadataStore) DirectoryStats(ctx context.Context, prefix, from, end string) ([]core.DirStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DirectoryStats", ctx, prefix, from, end)
+	ret0, _ := ret[0].([]core.DirStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DirectoryStats indicates an expected call of DirectoryStats.
+func (mr *MockMetadataStoreMockRecorder) DirectoryStats(ctx, prefix, from, end any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectoryStats", reflect.TypeOf((*MockMetadataStore)(nil).DirectoryStats), ctx, prefix, from, end)
+}
+
 // DiscardPending mocks base method.
 func (m *MockMetadataStore) DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
@@ -834,21 +849,6 @@ func (m *MockMetadataStore) ListCredentials(ctx context.Context) ([]core.Credent
 func (mr *MockMetadataStoreMockRecorder) ListCredentials(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCredentials", reflect.TypeOf((*MockMetadataStore)(nil).ListCredentials), ctx)
-}
-
-// ListDirectoryChildren mocks base method.
-func (m *MockMetadataStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListDirectoryChildren", ctx, prefix, startAfter, maxKeys)
-	ret0, _ := ret[0].(*core.DirectoryListResult)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListDirectoryChildren indicates an expected call of ListDirectoryChildren.
-func (mr *MockMetadataStoreMockRecorder) ListDirectoryChildren(ctx, prefix, startAfter, maxKeys any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDirectoryChildren", reflect.TypeOf((*MockMetadataStore)(nil).ListDirectoryChildren), ctx, prefix, startAfter, maxKeys)
 }
 
 // ListExpiredObjects mocks base method.

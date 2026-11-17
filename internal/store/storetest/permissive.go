@@ -87,11 +87,11 @@ func Permissive(m *MockMetadataStore) {
 		func(context.Context, *core.PendingObject, core.BackendFlags) (bool, error) { return true, nil },
 	)).AnyTimes()
 	r.ListCleanupDLQ(a, a, a).Return(nil, nil).AnyTimes()
-	r.ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	r.ListExpiredObjects(a, a).Return(nil, nil).AnyTimes()
 	r.ListMultipartUploads(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjects(a, a, a, a, a).Return(&core.ListObjectsResult{}, nil).AnyTimes()
 	r.CountObjectsByPrefix(a, a).Return(int64(0), nil).AnyTimes()
+	r.DirectoryStats(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackend(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackendKeyAsc(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListedPathStates(a, a, a).Return(map[string]core.PathState{}, nil).AnyTimes()

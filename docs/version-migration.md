@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.181.x (current)
+### v0.182.x (current)
+
+**The object browser pages folders as well as files ([#1921](https://github.com/afreidah/s3-orchestrator/issues/1921), v0.182.0)**
+
+The dashboard's object browser used to page only a folder's files, so a folder holding many subfolders came back in one response however many it held, and a folder holding more than one page of files listed its subfolders again on every "Load more". A page now holds at most 200 entries, folders and files together behind one cursor, and only the folders on the page are totalled. The root of the tree loads through `/ui/api/tree` like every other folder, so the dashboard page no longer totals every bucket before it renders.
+
+**Operator action items after upgrade:**
+
+- **`/ui/api/dashboard` no longer carries `TopLevelEntries`.** `GET /ui/api/tree` with an empty prefix returns the same root, one page at a time.
+- **The browser lists only what clients can list.** Copies recorded as unmanaged, such as an imported envelope no key can open, no longer appear in it. A folder's totals still count every copy's bytes.
+- **A file in the browser shows the size the client wrote** rather than one copy's stored size, which differed for compressed and encrypted objects.
+- **Each page lists its folders ahead of its files**, as the TUI does. `startAfter` may now name a folder, and `maxKeys=0` returns an empty page.
+
+### v0.181.x
 
 **Fleet figures are counters the writes keep ([#1883](https://github.com/afreidah/s3-orchestrator/issues/1883), v0.181.0)**
 

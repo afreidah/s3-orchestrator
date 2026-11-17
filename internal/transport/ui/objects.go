@@ -31,9 +31,9 @@ import (
 // BROWSING
 // -------------------------------------------------------------------------
 
-// handleTreeAPI returns children of a directory prefix as JSON for the
-// lazy-loaded file browser. The root lists only the buckets the user may list;
-// below it, the prefix's bucket must grant list.
+// handleTreeAPI returns one page of a directory prefix's children as JSON for
+// the lazy-loaded file browser. The root lists only the buckets the user may
+// list; below it, the prefix's bucket must grant list.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 	if prefix != "" && !h.d.Buckets.HasPrefix(prefix) {
@@ -44,18 +44,18 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startAfter := r.URL.Query().Get("startAfter")
-	maxKeys, ok := httputil.RequireQueryCount(w, r, "maxKeys", 200, 200)
+	maxKeys, ok := httputil.RequireQueryCount(w, r, "maxKeys", ops.BrowsePageSize, ops.BrowsePageSize)
 	if !ok {
 		return
 	}
 
-	result, err := h.d.Dashboard.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
+	result, err := h.d.Ops.Objects.Browse(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to list children", err, "prefix", prefix)
 		return
 	}
 	if prefix == "" {
-		result.Entries = listable(r.Context(), result.Entries)
+		result.Entries = rootEntries(r.Context(), result, startAfter, h.listableBuckets(r.Context()))
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, result)

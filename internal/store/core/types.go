@@ -640,10 +640,7 @@ func ListPage(
 	if maxKeys <= 0 {
 		return &ListObjectsResult{}, nil
 	}
-	from, end := KeysFrom(prefix, startAfter), PrefixEnd(prefix)
-	if group, ok := commonPrefix(prefix, delimiter, startAfter); ok && group == startAfter {
-		from = PrefixEnd(group)
-	}
+	from, end := pageStart(prefix, delimiter, startAfter), PrefixEnd(prefix)
 	var (
 		rows []ObjectLocation
 		err  error
@@ -657,6 +654,30 @@ func ListPage(
 		return nil, err
 	}
 	return buildPage(rows, prefix, delimiter, maxKeys), nil
+}
+
+// PageRange returns the keys one delimited page covers: from where its cursor
+// resumes to just past its last entry, or to the end of the prefix when nothing
+// follows it. A query bounded by it reads only what the page lists.
+func PageRange(prefix, delimiter, startAfter string, page *ListObjectsResult) (from, end string) {
+	from = pageStart(prefix, delimiter, startAfter)
+	if !page.IsTruncated {
+		return from, PrefixEnd(prefix)
+	}
+	last := page.NextContinuationToken
+	if group, ok := commonPrefix(prefix, delimiter, last); ok && group == last {
+		return from, PrefixEnd(last)
+	}
+	return from, last + keyStep
+}
+
+// pageStart returns the lowest key a page after the cursor may hold. A cursor
+// naming a common prefix resumes past every key the prefix groups.
+func pageStart(prefix, delimiter, startAfter string) string {
+	if group, ok := commonPrefix(prefix, delimiter, startAfter); ok && group == startAfter {
+		return PrefixEnd(group)
+	}
+	return KeysFrom(prefix, startAfter)
 }
 
 // keyStep is the lowest character a stored key can hold, because Postgres text
@@ -734,53 +755,43 @@ func buildPage(rows []ObjectLocation, prefix, delimiter string, maxKeys int) *Li
 	return result
 }
 
-// DirStat is one aggregated child of a directory prefix: a sub-directory
-// roll-up, or a file directly beneath the prefix. TotalSize sums every
-// replica, so a directory reports the physical storage it takes.
+// DirStat totals one folder directly beneath a directory prefix, named relative
+// to it. TotalSize sums every replica, so a folder reports the physical storage
+// it takes.
 type DirStat struct {
 	Name      string
-	IsDir     bool
 	FileCount int64
 	TotalSize int64
-}
-
-// DirFile is one file directly beneath a directory prefix: the backends
-// holding it, one replica's size, and when it was written.
-type DirFile struct {
-	ObjectKey string
-	Backends  []string
-	SizeBytes int64
-	CreatedAt time.Time
 }
 
 // dirTimeFormat is how a directory listing renders a file's write time.
 const dirTimeFormat = "2006-01-02 15:04"
 
-// BuildDirectoryListing merges the roll-ups for a prefix with one page of file
-// detail, fetched one row past maxKeys to detect truncation. A file outside
-// the page is left out, and a file reports one replica's size, which is what
-// the client uploaded, rather than the replica sum.
-func BuildDirectoryListing(prefix string, stats []DirStat, files []DirFile, maxKeys int) *DirectoryListResult {
-	result := &DirectoryListResult{Entries: make([]DirEntry, 0, len(stats))}
-	files, result.HasMore = TrimPage(files, maxKeys)
-	if result.HasMore {
-		result.NextCursor = files[len(files)-1].ObjectKey
-	}
-	byName := make(map[string]*DirFile, len(files))
-	for i := range files {
-		byName[files[i].ObjectKey[len(prefix):]] = &files[i]
-	}
+// BuildDirectoryListing turns one delimited page under prefix into the file
+// browser's entries, folders ahead of files as the TUI shows them. A folder
+// takes its totals from stats, and a file the backends holding it and the size
+// the client wrote.
+func BuildDirectoryListing(prefix string, page *ListObjectsResult, stats []DirStat, backends map[string][]string) *DirectoryListResult {
+	totals := make(map[string]DirStat, len(stats))
 	for _, s := range stats {
-		entry := DirEntry{Name: prefix + s.Name, IsDir: s.IsDir, FileCount: s.FileCount, TotalSize: s.TotalSize}
-		if !s.IsDir {
-			f, ok := byName[s.Name]
-			if !ok {
-				continue
-			}
-			entry.Backends, entry.TotalSize = f.Backends, f.SizeBytes
-			entry.CreatedAt = f.CreatedAt.Format(dirTimeFormat)
-		}
-		result.Entries = append(result.Entries, entry)
+		totals[prefix+s.Name] = s
+	}
+	result := &DirectoryListResult{
+		Entries:    make([]DirEntry, 0, page.KeyCount()),
+		HasMore:    page.IsTruncated,
+		NextCursor: page.NextContinuationToken,
+	}
+	for _, name := range page.CommonPrefixes {
+		s := totals[name]
+		result.Entries = append(result.Entries, DirEntry{Name: name, IsDir: true, FileCount: s.FileCount, TotalSize: s.TotalSize})
+	}
+	for i := range page.Objects {
+		o := &page.Objects[i]
+		held := backends[o.ObjectKey]
+		slices.Sort(held)
+		result.Entries = append(result.Entries, DirEntry{
+			Name: o.ObjectKey, TotalSize: o.SizeBytes, Backends: held, CreatedAt: o.CreatedAt.Format(dirTimeFormat),
+		})
 	}
 	return result
 }

@@ -98,7 +98,7 @@ type integrityStats struct {
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	data, buckets, err := h.dashboardData(r.Context())
+	data, err := h.d.Dashboard.GetStatus(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -125,7 +125,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Version:          telemetry.Version,
 		DBHealthy:        h.d.DBHealthy(),
 		Data:             data,
-		Buckets:          buckets,
+		Buckets:          h.listableBuckets(r.Context()),
 		TotalBytesUsed:   totalUsed,
 		TotalBytesLimit:  totalLimit,
 		TotalOrphanBytes: totalOrphan,
@@ -159,7 +159,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDashboard returns dashboard data as JSON.
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
-	data, _, err := h.dashboardData(r.Context())
+	data, err := h.d.Dashboard.GetStatus(r.Context())
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to load data", err)
 		return
@@ -168,30 +168,26 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, data)
 }
 
-// dashboardData loads the dashboard figures with the root of the object tree
-// cut to the buckets this user may list, each declared one shown even when it
-// holds nothing yet, and returns those bucket names for the page's pickers.
-func (h *Handler) dashboardData(ctx context.Context) (*dashboard.Data, []string, error) {
-	data, err := h.d.Dashboard.GetData(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	buckets := slices.DeleteFunc(h.d.Buckets.Names(), func(name string) bool { return !canList(ctx, name) })
-
-	root := listable(ctx, data.TopLevelEntries.Entries)
-	for _, name := range buckets {
-		if !slices.ContainsFunc(root, func(e core.DirEntry) bool { return e.Name == name+"/" }) {
-			root = append(root, core.DirEntry{Name: name + "/", IsDir: true})
-		}
-	}
-	data.TopLevelEntries.Entries = root
-	return data, buckets, nil
+// listableBuckets names the declared buckets this user may list, which fill
+// the page's bucket pickers and the root of the object tree.
+func (h *Handler) listableBuckets(ctx context.Context) []string {
+	return slices.DeleteFunc(h.d.Buckets.Names(), func(name string) bool { return !canList(ctx, name) })
 }
 
-// listable keeps the root entries naming a bucket this user may list, the one
-// filter the dashboard tree and the tree API both apply to the root.
-func listable(ctx context.Context, entries []core.DirEntry) []core.DirEntry {
-	return slices.DeleteFunc(entries, func(e core.DirEntry) bool {
+// rootEntries cuts one page of the tree's root to the buckets this user may
+// list, and adds each such bucket the page covers that holds nothing yet, so a
+// declared bucket shows before its first write.
+func rootEntries(ctx context.Context, page *core.DirectoryListResult, startAfter string, buckets []string) []core.DirEntry {
+	root := slices.DeleteFunc(page.Entries, func(e core.DirEntry) bool {
 		return !canList(ctx, strings.TrimSuffix(e.Name, "/"))
 	})
+	for _, name := range buckets {
+		dir := name + "/"
+		covered := dir > startAfter && (!page.HasMore || dir <= page.NextCursor)
+		if covered && !slices.ContainsFunc(root, func(e core.DirEntry) bool { return e.Name == dir }) {
+			root = append(root, core.DirEntry{Name: dir, IsDir: true})
+		}
+	}
+	slices.SortFunc(root, func(a, b core.DirEntry) int { return strings.Compare(a.Name, b.Name) })
+	return root
 }

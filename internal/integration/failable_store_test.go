@@ -167,15 +167,6 @@ func (f *FailableStore) ListObjects(ctx context.Context, prefix, delimiter, star
 	return f.inner.ListObjects(ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
-// ListDirectoryChildren lists one directory level unless the fault fails
-// the call.
-func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	if err := f.fail("ListDirectoryChildren", prefix); err != nil {
-		return nil, err
-	}
-	return f.inner.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
-}
-
 // ListObjectsByBackend pages through one backend's copies unless the fault
 // fails the call.
 func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {

@@ -297,32 +297,9 @@
     </div>
     <input type="file" id="upload-files-input" aria-label="Upload files" multiple hidden>
     <input type="file" id="upload-folder-input" aria-label="Upload folder" webkitdirectory hidden>
-    {{if .Data.TopLevelEntries.Entries}}
     <div class="object-tree" id="object-tree">
-      {{range .Data.TopLevelEntries.Entries}}
-        {{if .IsDir}}
-        <details class="tree-dir" data-prefix="{{.Name}}" data-loaded="false">
-          <summary>
-            <span class="tree-name">{{.Name}}</span>
-            <span class="tree-meta">{{.FileCount}} files &middot; {{formatBytes .TotalSize}}</span>
-            <span class="tree-action tree-delete" title="Delete">&#x2715;</span>
-          </summary>
-          <div class="tree-children">
-            <div class="tree-loading">Loading&hellip;</div>
-          </div>
-        </details>
-        {{else}}
-        <div class="tree-file" data-key="{{.Name}}">
-          <span class="tree-name">{{.Name}}</span>
-          <span class="tree-meta">{{joinStrings .Backends ", "}} &middot; {{formatBytes .TotalSize}} &middot; {{.CreatedAt}}</span>
-          <span class="tree-action tree-delete" title="Delete">&#x2715;</span>
-        </div>
-        {{end}}
-      {{end}}
+      <div class="tree-loading">Loading&hellip;</div>
     </div>
-    {{else}}
-    <p class="empty">No objects stored.</p>
-    {{end}}
   </section>
 
   <!-- Configuration -->

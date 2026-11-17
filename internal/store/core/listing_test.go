@@ -16,6 +16,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 // TestTrimPage verifies rows fetched one past the limit are cut back to it and
@@ -231,23 +232,62 @@ func TestKeysFrom(t *testing.T) {
 	}
 }
 
-// TestBuildDirectoryListing_TrimsFileDetail verifies the file fetched past
-// maxKeys is left out of the entries and the cursor is the last kept file,
-// while a directory roll-up is listed regardless of the file page.
-func TestBuildDirectoryListing_TrimsFileDetail(t *testing.T) {
+// TestPageRange verifies the range a page covers starts where its cursor resumes
+// and ends just past its last entry, a key or a whole group, or at the end of
+// the prefix when nothing follows the page.
+func TestPageRange(t *testing.T) {
 	t.Parallel()
-	stats := []DirStat{{Name: "a"}, {Name: "b"}, {Name: "sub/", IsDir: true, FileCount: 4}}
-	files := []DirFile{{ObjectKey: "p/a", SizeBytes: 1}, {ObjectKey: "p/b", SizeBytes: 2}}
+	cases := []struct {
+		name, after, token string
+		truncated          bool
+		wantFrom, wantEnd  string
+	}{
+		{"single page", "", "", false, "p/", "p0"},
+		{"truncated at a key", "", "p/b", true, "p/", "p/b\x01"},
+		{"truncated at a group", "", "p/b/", true, "p/", "p/b0"},
+		{"resumed past a group", "p/b/", "", false, "p/b0", "p0"},
+		{"resumed past a key", "p/b", "p/d/", true, "p/b\x01", "p/d0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			page := &ListObjectsResult{IsTruncated: tc.truncated, NextContinuationToken: tc.token}
+			from, end := PageRange("p/", "/", tc.after, page)
+			if from != tc.wantFrom || end != tc.wantEnd {
+				t.Errorf("PageRange = %q, %q; want %q, %q", from, end, tc.wantFrom, tc.wantEnd)
+			}
+		})
+	}
+}
 
-	res := BuildDirectoryListing("p/", stats, files, 1)
-	if !res.HasMore || res.NextCursor != "p/a" {
-		t.Errorf("HasMore = %v NextCursor = %q, want true / p/a", res.HasMore, res.NextCursor)
+// TestBuildDirectoryListing_FoldersThenFiles verifies a page lists its folders
+// with their totals ahead of its files, each file carrying its sorted backends
+// and the size the client wrote, and that the page's cursor carries through.
+func TestBuildDirectoryListing_FoldersThenFiles(t *testing.T) {
+	t.Parallel()
+	written := time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
+	page := &ListObjectsResult{
+		CommonPrefixes:        []string{"p/a/", "p/c/"},
+		Objects:               []ObjectLocation{{ObjectKey: "p/b", SizeBytes: 5, CreatedAt: written}},
+		IsTruncated:           true,
+		NextContinuationToken: "p/c/",
 	}
-	names := make([]string, 0, len(res.Entries))
-	for _, e := range res.Entries {
-		names = append(names, e.Name)
+	stats := []DirStat{{Name: "a/", FileCount: 3, TotalSize: 30}}
+	backends := map[string][]string{"p/b": {"z", "a"}}
+
+	res := BuildDirectoryListing("p/", page, stats, backends)
+	want := []DirEntry{
+		{Name: "p/a/", IsDir: true, FileCount: 3, TotalSize: 30},
+		{Name: "p/c/", IsDir: true},
+		{Name: "p/b", TotalSize: 5, Backends: []string{"a", "z"}, CreatedAt: "2026-11-01 09:30"},
 	}
-	if !slices.Equal(names, []string{"p/a", "p/sub/"}) {
-		t.Errorf("entries = %v, want [p/a p/sub/]", names)
+	if !slices.EqualFunc(res.Entries, want, func(a, b DirEntry) bool {
+		return a.Name == b.Name && a.IsDir == b.IsDir && a.FileCount == b.FileCount &&
+			a.TotalSize == b.TotalSize && slices.Equal(a.Backends, b.Backends) && a.CreatedAt == b.CreatedAt
+	}) {
+		t.Errorf("entries = %+v, want %+v", res.Entries, want)
+	}
+	if !res.HasMore || res.NextCursor != "p/c/" {
+		t.Errorf("HasMore = %v NextCursor = %q, want true / p/c/", res.HasMore, res.NextCursor)
 	}
 }

@@ -1159,30 +1159,6 @@ func TestRecordObject_OverwriteNetsTheDelta(t *testing.T) {
 	}
 }
 
-// TestListDirectoryChildren_Pagination covers the hasMore branch: when
-// more files exist under a prefix than maxKeys allows, the caller must
-// see HasMore=true and a NextCursor pointing at the last returned entry.
-func TestListDirectoryChildren_Pagination(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "b/a.txt", "backend-a", 10)
-	mustRecordObject(t, s, "b/b.txt", "backend-a", 20)
-	mustRecordObject(t, s, "b/c.txt", "backend-a", 30)
-
-	result, err := s.ListDirectoryChildren(ctx, "b/", "", 2)
-	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
-	}
-	if !result.HasMore {
-		t.Error("expected HasMore=true")
-	}
-	if result.NextCursor == "" {
-		t.Error("expected non-empty NextCursor")
-	}
-}
-
 // TestLedgerStats_BackendObjectsAndBytes verifies a backend's object count and
 // stored bytes come back from the counters its writes charged.
 func TestLedgerStats_BackendObjectsAndBytes(t *testing.T) {
@@ -2349,136 +2325,41 @@ func TestIntegrity_HashOperations(t *testing.T) {
 // DIRECTORY LISTING
 // -------------------------------------------------------------------------
 
-// TestListDirectoryChildren verifies the list directory children contract.
-// Asserts that ListDirectoryChildren:.
-func TestListDirectoryChildren(t *testing.T) {
+// TestDirectoryStats_TotalsFoldersOnly verifies the totals cover each folder
+// directly beneath the prefix and leave out the files beside them.
+func TestDirectoryStats_TotalsFoldersOnly(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/file.txt", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/dir/a.txt", "backend-a", 200)
 	mustRecordObject(t, s, "bucket/dir/b.txt", "backend-a", 300)
 
-	result, err := s.ListDirectoryChildren(ctx, "bucket/", "", 100)
+	stats, err := s.DirectoryStats(context.Background(), "bucket/", "bucket/", core.PrefixEnd("bucket/"))
 	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
+		t.Fatalf("DirectoryStats: %v", err)
 	}
-
-	if len(result.Entries) < 2 {
-		t.Fatalf("expected at least 2 entries (dir + file), got %d", len(result.Entries))
-	}
-
-	// Should have a directory entry "dir/" and a file entry "file.txt"
-	var foundDir, foundFile bool
-	for _, e := range result.Entries {
-		if e.Name == "bucket/dir/" && e.IsDir {
-			foundDir = true
-			if e.FileCount != 2 {
-				t.Errorf("dir file_count = %d, want 2", e.FileCount)
-			}
-		}
-		if e.Name == "bucket/file.txt" && !e.IsDir {
-			foundFile = true
-		}
-	}
-	if !foundDir {
-		t.Error("missing directory entry for dir/")
-	}
-	if !foundFile {
-		t.Error("missing file entry for file.txt")
+	if want := []core.DirStat{{Name: "dir/", FileCount: 2, TotalSize: 500}}; !slices.Equal(stats, want) {
+		t.Errorf("stats = %+v, want %+v", stats, want)
 	}
 }
 
-// seedReplicationFixture creates a 2-replica object plus a single-copy
-// object under "bucket/" so the replication-aware listing tests share a
-// stable fixture. Physical bytes for the bucket/ roll-up is
-// (100 + 100) + 50 = 250; logical file count is 2.
-func seedReplicationFixture(t *testing.T, s *Store) {
-	t.Helper()
+// TestDirectoryStats_RollupPhysicalBytes asserts a folder's total sums physical
+// bytes across every replica row and counts distinct object keys for FileCount:
+// (100 + 100) + 50 bytes over two keys.
+func TestDirectoryStats_RollupPhysicalBytes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
 	mustRecordObject(t, s, "bucket/replicated.txt", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/replicated.txt", "backend-b", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/single.txt", "backend-a", 50)
-}
 
-// findEntry returns the first DirEntry matching name; nil when absent.
-func findEntry(entries []core.DirEntry, name string) *core.DirEntry {
-	for i := range entries {
-		if entries[i].Name == name {
-			return &entries[i]
-		}
-	}
-	return nil
-}
-
-// TestListDirectoryChildren_FileRowReplicated asserts that a replicated
-// file's row reports logical (single replica) size and the full sorted
-// backend set the object lives on.
-func TestListDirectoryChildren_FileRowReplicated(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	seedReplicationFixture(t, s)
-
-	result, err := s.ListDirectoryChildren(context.Background(), "bucket/", "", 100)
+	stats, err := s.DirectoryStats(context.Background(), "", "", core.PrefixEnd(""))
 	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
+		t.Fatalf("DirectoryStats: %v", err)
 	}
-	got := findEntry(result.Entries, "bucket/replicated.txt")
-	if got == nil {
-		t.Fatal("missing entry for replicated.txt")
-	}
-	if got.TotalSize != 100 {
-		t.Errorf("TotalSize = %d, want 100 (logical)", got.TotalSize)
-	}
-	if want := []string{"backend-a", "backend-b"}; !reflect.DeepEqual(got.Backends, want) {
-		t.Errorf("Backends = %v, want %v (sorted)", got.Backends, want)
-	}
-}
-
-// TestListDirectoryChildren_FileRowSingle asserts that a single-copy
-// object reports its lone backend in a one-element slice.
-func TestListDirectoryChildren_FileRowSingle(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	seedReplicationFixture(t, s)
-
-	result, err := s.ListDirectoryChildren(context.Background(), "bucket/", "", 100)
-	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
-	}
-	got := findEntry(result.Entries, "bucket/single.txt")
-	if got == nil {
-		t.Fatal("missing entry for single.txt")
-	}
-	if got.TotalSize != 50 {
-		t.Errorf("TotalSize = %d, want 50", got.TotalSize)
-	}
-	if want := []string{"backend-a"}; !reflect.DeepEqual(got.Backends, want) {
-		t.Errorf("Backends = %v, want %v", got.Backends, want)
-	}
-}
-
-// TestListDirectoryChildren_DirRollupPhysicalBytes asserts that a
-// directory roll-up sums physical bytes across every replica row and
-// counts distinct object keys for FileCount.
-func TestListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	seedReplicationFixture(t, s)
-
-	root, err := s.ListDirectoryChildren(context.Background(), "", "", 100)
-	if err != nil {
-		t.Fatalf("ListDirectoryChildren: %v", err)
-	}
-	got := findEntry(root.Entries, "bucket/")
-	if got == nil || !got.IsDir {
-		t.Fatal("missing directory entry for bucket/ at root")
-	}
-	if got.FileCount != 2 {
-		t.Errorf("FileCount = %d, want 2 (distinct object keys)", got.FileCount)
-	}
-	if got.TotalSize != 250 {
-		t.Errorf("TotalSize = %d, want 250 (physical: 100+100+50)", got.TotalSize)
+	if want := []core.DirStat{{Name: "bucket/", FileCount: 2, TotalSize: 250}}; !slices.Equal(stats, want) {
+		t.Errorf("stats = %+v, want %+v", stats, want)
 	}
 }
 
