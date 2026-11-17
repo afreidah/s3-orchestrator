@@ -166,6 +166,10 @@ sudo apt remove s3-orchestrator
 sudo apt purge s3-orchestrator
 ```
 
+### Cloudflare Edge Proxy
+
+A backend whose provider is in Cloudflare's Bandwidth Alliance can be reached through the Cloudflare Worker in [`deploy/cloudflare-worker/`](../deploy/cloudflare-worker/README.md), so its reads leave the provider to Cloudflare. The [Cloudflare Edge Proxy guide](/guides/cloudflare-edge-proxy/) on the project website covers deploying the worker with Wrangler or Terraform, and [Backend configuration](backends.md#backend-configuration) covers the settings a proxied backend needs.
+
 ## Shared state across instances
 
 Multiple orchestrator instances can safely share the same PostgreSQL database. Background tasks (rebalancer, replicator, cleanup queue, multipart cleanup) use PostgreSQL advisory locks to prevent concurrent execution across instances - if one instance holds the lock for a task, other instances skip that tick silently.

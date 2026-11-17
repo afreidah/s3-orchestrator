@@ -126,6 +126,8 @@ For GCS backends, you typically need both `disable_checksum: true` and `strip_sd
     strip_sdk_headers: true
 ```
 
+**Cloudflare edge proxy:** providers in Cloudflare's Bandwidth Alliance, such as Backblaze B2, IBM Cloud Object Storage and Oracle Cloud, discount or waive egress to Cloudflare. Pointing a backend's `endpoint` at a Cloudflare Worker sends its reads through Cloudflare, so those terms apply. A proxied backend needs `strip_sdk_headers: true`, and only its `egress_byte_limit` can be relaxed, because every read still counts against the provider's request allowance. The [Cloudflare Edge Proxy guide](/guides/cloudflare-edge-proxy/) on the project website covers when it helps, how to deploy the worker, and its limits.
+
 **Credential source:** `credential_source` selects how the orchestrator obtains credentials for the backend. Default is `static`, which uses the `access_key_id` / `secret_access_key` fields above. Set to `default_chain` to delegate to the AWS SDK's default credential chain (env vars, EC2 IMDS, SSO, `~/.aws/credentials`, STS assume-role). When `default_chain` is set, the two key fields must be omitted - leaving stale keys behind is rejected at validation so they cannot silently shadow the SDK-resolved credentials.
 
 Use `default_chain` when:
