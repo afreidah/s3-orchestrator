@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// Admin API - Encryption Key Rotation and Bulk Encrypt/Decrypt
+// Admin API - Encryption Key Rotation
 //
 // Author: Alex Freidah
 //
-// Three fleet-wide encryption endpoints: re-wrap every DEK under the current
-// primary key, encrypt everything still stored as plaintext, and reverse that.
-// Each handler parses the request and renders the counts the matching
-// operation reports; the passes themselves live in internal/ops.
+// Re-wraps every DEK under the current primary key as a pass, streaming each
+// copy when the caller asks for the stream and answering the counts otherwise.
+// The bulk encrypt and decrypt passes live beside the other rewrites in
+// handler_bulkrewrite.go, and the work itself in internal/ops.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -14,9 +14,7 @@ package admin
 import (
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -28,21 +26,5 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
-
-	res, err := h.d.Ops.Encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
-		return
-	}
-	if err != nil {
-		httputil.WriteOpError(w, r, h.log, err, "failed to list encrypted objects")
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.RotateEncryptionKeyResponse{
-		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
-		Failed:  res.Failed,
-		Total:   res.Attempted + res.Skipped,
-		Rotated: res.Succeeded,
-	})
+	h.servePass(w, r, RotatePass(h.d.Ops, req.OldKeyID, req.AllStale))
 }

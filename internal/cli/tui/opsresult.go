@@ -161,31 +161,6 @@ func (r requeueResult) describe() string {
 		humanize.Count(r.Requeued, "row", "rows"), cmp.Or(r.Backend, "all backends"))
 }
 
-// rotateKeyResult reports a pass that re-wrapped object keys under the current
-// primary key.
-type rotateKeyResult struct {
-	adminapi.RotateEncryptionKeyResponse
-}
-
-func (r rotateKeyResult) skipReason() string { return skippedBecause(r.Status) }
-
-func (r rotateKeyResult) describe() string {
-	return rewriteSummary("rotated", r.Rotated, r.Failed, r.Total)
-}
-
-// rewriteSummary words a fleet-wide rewrite pass. A pass that left objects
-// behind says so, since "encrypted 900" reads as done when 100 failed.
-func rewriteSummary(verb string, succeeded, failed, total int) string {
-	if total == 0 {
-		return "nothing to " + strings.TrimSuffix(verb, "ed")
-	}
-	summary := verb + " " + humanize.Count(int64(succeeded), "object", "objects")
-	if failed > 0 {
-		summary += fmt.Sprintf(", %s failed", humanize.Comma(int64(failed)))
-	}
-	return summary
-}
-
 // skippedBecause reports why a pass did not run, or "" when it did. These
 // responses carry no reason field, so the status is the whole of the
 // explanation the endpoint offers.

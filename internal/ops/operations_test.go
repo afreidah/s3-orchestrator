@@ -652,7 +652,8 @@ func rotationFilter(keyID string) *core.FormFilter {
 }
 
 // TestRotateKey_RewrapsEveryLocation asserts a rotation re-wraps the DEK and
-// records the new key material, leaving the object bytes untouched.
+// records the new key material, leaving the object bytes untouched, and
+// reports the copy to the observer as one step.
 func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t)
@@ -681,7 +682,8 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), keyID, false)
+	var steps []progress.Step
+	res, err := svc.RotateKey(context.Background(), func(s progress.Step) { steps = append(steps, s) }, keyID, false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
@@ -690,6 +692,9 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	}
 	if !updated {
 		t.Error("UpdateCopyMetadata received no new key material")
+	}
+	if len(steps) != 2 || steps[1].Label != testBucket+"/file.txt" || steps[1].Status != progress.StatusOK {
+		t.Errorf("steps = %+v, want a start and an ok end for %s/file.txt", steps, testBucket)
 	}
 }
 
@@ -716,7 +721,7 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), keyID, false)
+	res, err := svc.RotateKey(context.Background(), nil, keyID, false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
@@ -783,7 +788,7 @@ func TestRotateKey_SkippedWithoutEncryptor(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	_, err := svc.Encryption.RotateKey(context.Background(), "old-key", false)
+	_, err := svc.Encryption.RotateKey(context.Background(), nil, "old-key", false)
 	assertSkipped(t, err)
 }
 
@@ -801,7 +806,7 @@ func TestRotateKey_RequiresExactlyOneScope(t *testing.T) {
 		{"neither", "", false},
 		{"both", "old-key", true},
 	} {
-		if _, err := svc.Encryption.RotateKey(context.Background(), tc.oldKeyID, tc.allStale); !errors.Is(err, ErrKeyIDRequired) {
+		if _, err := svc.Encryption.RotateKey(context.Background(), nil, tc.oldKeyID, tc.allStale); !errors.Is(err, ErrKeyIDRequired) {
 			t.Errorf("%s: err = %v, want ErrKeyIDRequired", tc.name, err)
 		}
 	}
@@ -822,7 +827,7 @@ func TestRotateKey_AllStaleSkipsCurrentKey(t *testing.T) {
 		Store:     store,
 		Mover:     &fakeMover{},
 	})
-	res, err := svc.RotateKey(context.Background(), "", true)
+	res, err := svc.RotateKey(context.Background(), nil, "", true)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
@@ -1491,7 +1496,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), "old", false)
+	res, err := svc.RotateKey(context.Background(), nil, "old", false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}

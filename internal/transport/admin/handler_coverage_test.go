@@ -799,6 +799,45 @@ func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	}
 }
 
+// TestHandleRotateEncryptionKey_Streams asserts a caller that accepts the
+// stream gets the rotation as a pass: a start, a step for the copy it tried,
+// and a terminal result, so a long rotation is not cut off by a client timeout.
+func TestHandleRotateEncryptionKey_Streams(t *testing.T) {
+	t.Parallel()
+	h := newRotateEncryptionKeyHandler(t)
+	encryptionWith(t, h, testEncryptor(t), singleRowEncryptionStore(t))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+		adminapi.PathRotateKey, strings.NewReader(`{"old_key_id":"old"}`))
+	req.Header.Set("Accept", adminstream.ContentType)
+	w := httptest.NewRecorder()
+	h.handleRotateEncryptionKey(w, req)
+
+	events := decodeEvents(t, w.Body.Bytes())
+	if len(events) < 3 || events[0].Kind != adminstream.KindStart || events[0].Op != "rotate-encryption-key" {
+		t.Fatalf("events = %+v, want a rotate-encryption-key start, a step and a result", events)
+	}
+	if last := events[len(events)-1]; last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK {
+		t.Errorf("last event = %+v, want result/ok", last)
+	}
+}
+
+// TestHandleRotateEncryptionKey_NotConfiguredIs400 asserts an instance started
+// without encryption still answers the caller's mistake as a 400.
+func TestHandleRotateEncryptionKey_NotConfiguredIs400(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	encryptionWith(t, h, nil, nil)
+
+	w := httptest.NewRecorder()
+	h.handleRotateEncryptionKey(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+		adminapi.PathRotateKey, strings.NewReader(`{"all_stale":true}`)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleScrub_ReportsUnreadableCount pins the count that used to be
 // dropped. A pass that could not read half the copies must not report the same
 // shape as a clean one, so the JSON response carries unreadable next to

@@ -84,12 +84,22 @@ func (c *client) delete(path string) int {
 // rendering the response like do. An unencodable request is reported to
 // stderr and returns exit code 1.
 func (c *client) sendJSON(method, path string, req any, render renderFunc) int {
-	body, err := json.Marshal(req)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
+	body, ok := c.encodeJSON(req)
+	if !ok {
 		return 1
 	}
 	return c.do(method, path, body, render)
+}
+
+// encodeJSON encodes req as a request body. A value that cannot be encoded is
+// reported to stderr and returns false.
+func (c *client) encodeJSON(req any) ([]byte, bool) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
+		return nil, false
+	}
+	return body, true
 }
 
 // do performs one admin request and renders the outcome per format, returning

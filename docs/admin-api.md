@@ -68,7 +68,7 @@ The permissions over a backend are the ones that name one: drain, cordon, decomm
 
 ## Streaming progress
 
-Thirteen endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `unreadable`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller sends `Accept: application/x-ndjson`:
+Fourteen endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `unreadable`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, `rotate-encryption-key`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller sends `Accept: application/x-ndjson`:
 
 ```bash
 s3-orchestrator admin scrub

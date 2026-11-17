@@ -111,8 +111,9 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 // moves rows still carrying an earlier release's positional IDs onto the
 // key's fingerprint. Exactly one of the two must be given. The old keys must
 // remain configured, since unwrapping happens with them. Object bytes are
-// untouched. A copy a newer write replaced mid-pass counts as skipped.
-func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bool) (batch.Summary, error) {
+// untouched. A copy a newer write replaced mid-pass counts as skipped, and each
+// copy is reported to obs as a step.
+func (e *Encryption) RotateKey(ctx context.Context, obs progress.Observer, oldKeyID string, allStale bool) (batch.Summary, error) {
 	if e.disabled() {
 		return batch.Summary{}, ErrEncryptionDisabled
 	}
@@ -131,7 +132,12 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bo
 		},
 		CursorOf: core.CursorOf,
 	}
-	res, _, err := pager.RunPages(ctx, batch.Runner[core.ObjectLocation]{Concurrency: 1},
+	runner := batch.Runner[core.ObjectLocation]{
+		Concurrency: 1,
+		Observer:    obs,
+		Key:         func(loc core.ObjectLocation) string { return loc.ObjectKey },
+	}
+	res, _, err := pager.RunPages(ctx, runner,
 		func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 			return e.rotateOneLocation(ctx, &loc)
 		})

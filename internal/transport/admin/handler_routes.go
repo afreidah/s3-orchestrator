@@ -430,6 +430,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Re-wrap sealed DEKs under the current primary key",
 			Request:  adminapi.RotateEncryptionKeyRequest{},
 			Response: adminapi.RotateEncryptionKeyResponse{},
+			Stream:   adminstream.Event{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminKeys,
 		},
 		bulkRewriteRoute(adminapi.PathEncryptExisting, h.handleEncryptExisting,
