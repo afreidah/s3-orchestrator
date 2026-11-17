@@ -29,7 +29,7 @@ Every table fits the terminal's width. In a narrow terminal the less important c
 
 Browsing issues only `GET` requests to the admin API and never changes state. The actions that do change state - upload and delete in Files, the Backends actions, the inspector's scrub, the Cleanup pane's requeue and the Ops menu - each ask before they act.
 
-![The Dashboard: a usage bar per backend with its health, here one backend degraded and refusing GetObject, the fleet total, and the fleet-wide backlogs and coverage](/docs/images/tui-dashboard.png?classes=lightbox)
+![The Dashboard: a usage bar per backend with its health, the fleet total, the nearest usage limit, here one backend past its request budget, the fleet-wide backlogs and coverage, and each backend's usage limits](/docs/images/tui-dashboard.png?classes=lightbox)
 
 ![The Files section listing a prefix of objects and sub-directories, with the navigation sidebar](/docs/images/tui-files.png?classes=lightbox)
 
@@ -115,7 +115,7 @@ minio-a    1.9 MiB   2.4 MiB   zstd   2h ago    yes   vault:tra~   9f3a2b1c4d~  
 minio-c    1.9 MiB   2.4 MiB   zstd   2h ago    yes   vault:tra~   9f3a2b1c4d~   1h ago
 ```
 
-![The inspector showing an object's two backend copies](/docs/images/tui-file-details.png?classes=lightbox)
+![The inspector showing an object's two backend copies, each stored compressed and encrypted](/docs/images/tui-file-details.png?classes=lightbox)
 
 Reading the columns:
 
@@ -161,7 +161,7 @@ The second line carries fleet-wide state. `verified:` is how far behind
 integrity checking is: an age when every copy has been checked at least once,
 or a count of never-checked copies while the first sweep is still running.
 
-![The Backends section listing per-backend health and usage](/docs/images/tui-backends.png?classes=lightbox)
+![The Backends section listing per-backend health, state and quota, with the selected backend's detail below](/docs/images/tui-backends.png?classes=lightbox)
 
 Reading the columns:
 
@@ -184,7 +184,7 @@ The pane polls every 10 seconds; press `r` to poll now. Every figure is read on 
 
 Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `F` to follow new entries as they arrive; the pane stays on the newest entries unless you scroll up. Press `/` and type to keep only the entries whose component or message contains the text - `replicator`, say, or an object key that appears in an entry's attributes; `esc` clears it.
 
-![The Logs section showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
+![The Logs section filtered to warnings and above, showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
 
 ## Step 6: Check the background services
 
