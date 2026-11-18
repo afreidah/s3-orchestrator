@@ -186,7 +186,7 @@ The pane polls every 10 seconds; press `r` to poll now. Every figure is read on 
 
 Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `F` to follow new entries as they arrive; the pane stays on the newest entries unless you scroll up. Press `/` and type to keep only the entries whose component or message contains the text - `replicator`, say, or an object key that appears in an entry's attributes; `esc` clears it.
 
-![The Logs section filtered to warnings and above, showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
+![The Logs section at INFO and above, showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
 
 ## Step 6: Check the background services
 
@@ -195,6 +195,8 @@ Press `w` (or select **Workers**) for each registered background service's last-
 ![The Workers section listing each background service's last-tick health](/docs/images/tui-workers.png?classes=lightbox)
 
 The neighbouring status sections read the same way: `p` for the replication factor and the under- and over-replicated counts, `u` for the cleanup queue and its dead-letter table, `i` for the unhashed and unreadable copies (`t` switches between them, `m` narrows the unhashed ones to managed or unmanaged), and `c` for the object cache's entry count, size, and hit rate.
+
+![The Integrity section listing unhashed copies on one backend, managed copies under a bucket prefix and unmanaged ones outside every prefix](/docs/images/tui-integrity.png?classes=lightbox)
 
 ## Step 7: Run an admin action
 
