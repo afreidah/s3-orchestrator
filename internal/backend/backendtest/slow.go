@@ -25,7 +25,8 @@ import (
 // NewSlow; the embedded backend serves every operation not delayed.
 //
 // Puts are delayed by default because that is the common case; the read side
-// stays fast unless a test asks otherwise.
+// stays fast unless a test asks otherwise. IgnoreCancel sleeps every delay
+// out, for a backend that does not honour cancellation.
 type Slow struct {
 	backend.ObjectBackend
 
@@ -35,6 +36,7 @@ type Slow struct {
 	DelayGets    bool
 	DelayHeads   bool
 	DelayDeletes bool
+	IgnoreCancel bool
 }
 
 // NewSlow wraps inner so PutObject waits for d. Set DelayGets, DelayHeads or
@@ -46,7 +48,13 @@ func NewSlow(inner backend.ObjectBackend, d time.Duration) *Slow {
 // wait sleeps for the configured delay unless ctx expires first, in which case
 // it reports the context error so the caller's timeout is what surfaces.
 func (s *Slow) wait(ctx context.Context, enabled bool) error {
-	if !enabled || syncutil.Sleep(ctx, s.delay) {
+	switch {
+	case !enabled:
+		return nil
+	case s.IgnoreCancel:
+		time.Sleep(s.delay)
+		return nil
+	case syncutil.Sleep(ctx, s.delay):
 		return nil
 	}
 	return ctx.Err()

@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // The one loop that calls a function on an interval until its context ends,
-// and the one wait that gives up when its context does. The wait starts when
-// a call returns, so a call that runs longer than the interval is never
+// and the waits that give up when their context does. The loop's wait starts
+// when a call returns, so a call that runs longer than the interval is never
 // followed straight away by another.
 // -------------------------------------------------------------------------------
 
@@ -60,6 +60,18 @@ func Sleep(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+// Receive waits for a value from ch, or returns ctx's error once ctx ends
+// first. A value sent after that stays in ch for whoever releases it.
+func Receive[T any](ctx context.Context, ch <-chan T) (T, error) {
+	select {
+	case v := <-ch:
+		return v, nil
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
 	}
 }
 

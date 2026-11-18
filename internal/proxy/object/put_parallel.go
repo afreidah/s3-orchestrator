@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -50,10 +51,8 @@ type uploadOutcome struct {
 // writeOutcome is what the client is answered with, handed to the request
 // goroutine by whichever copy commits first.
 type writeOutcome struct {
-	backend string
-	etag    string
-	size    int64
-	err     error
+	etag string
+	err  error
 }
 
 // copyFanout carries one write's fan-out across the goroutines that run it: the
@@ -67,6 +66,7 @@ type copyFanout struct {
 	mgr     *Manager
 	req     *PutObjectRequest
 	plan    *putPlan
+	start   time.Time // when the write began, for its operation metric
 	claimed []*core.PendingObject
 	release func() // the tail's slot in the detached registry
 	uploads chan uploadOutcome
@@ -81,7 +81,8 @@ type copyFanout struct {
 // once, and answers the client as soon as one copy is committed. The remaining
 // uploads continue on a context that outlives the request and commit as they
 // finish, so the slowest backend stays off the write's critical path. A copy
-// that does not land is left for the replicator.
+// that does not land is left for the replicator. A client that goes away gets
+// its context's error and the write carries on.
 func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req *PutObjectRequest, plan *putPlan, eligible []string, start time.Time) (string, error) {
 	const operation = s3op.PutObject
 
@@ -107,6 +108,7 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 		mgr:     o,
 		req:     req,
 		plan:    plan,
+		start:   start,
 		claimed: claimed,
 		release: release,
 		uploads: make(chan uploadOutcome, len(claimed)),
@@ -124,12 +126,14 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 	}
 	go f.commitAsTheyLand(detached, span)
 
-	out := <-f.settled
-	if out.err != nil {
-		observe.RecordSpanError(span, out.err)
-		return "", out.err
+	out, err := syncutil.Receive(ctx, f.settled)
+	if err == nil {
+		err = out.err
 	}
-	o.finalizePutSuccess(ctx, span, operation, req.Key, out.backend, out.size, start, nil)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
 	return out.etag, nil
 }
 
@@ -240,11 +244,11 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 	}
 }
 
-// commitFirstCopy records the object from the copy that landed first and
-// answers the client with it. The copies still uploading are passed as Placing
-// so their intents survive the clearing of the key's other intents. Their bytes
-// are safe from this commit's displacement because each sits at its own
-// intent's path.
+// commitFirstCopy records the object from the copy that landed first, finishes
+// the write and answers the client with it. The copies still uploading are
+// passed as Placing so their intents survive the clearing of the key's other
+// intents. Their bytes are safe from this commit's displacement because each
+// sits at its own intent's path.
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
 	record := p.RecordFor(f.plan.form)
 	record.Placing = placingCopies(live)
@@ -255,7 +259,8 @@ func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *co
 	// Not counted as a placed copy: this one is the object, and the metric
 	// measures the copies that would otherwise have been the replicator's.
 	span.SetAttributes(telemetry.AttrBackendName.String(p.BackendName))
-	f.settle(writeOutcome{backend: p.BackendName, etag: p.Identity.ETag, size: f.plan.uploadSize})
+	f.mgr.finalizePutSuccess(ctx, span, s3op.PutObject, f.req.Key, p.BackendName, f.plan.uploadSize, f.start, nil)
+	f.settle(writeOutcome{etag: p.Identity.ETag})
 	return nil
 }
 

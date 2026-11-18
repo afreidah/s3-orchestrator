@@ -6,13 +6,14 @@
 // Pins when the loop calls its function: after each interval, once straight
 // away when asked, later by the jitter on the first wait, at the period Next
 // returns, and never once its context ends. Also pins that Sleep reports
-// whether its wait ran.
+// whether its wait ran, and that Receive gives up when its context ends.
 // -------------------------------------------------------------------------------
 
 package syncutil
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -116,6 +117,23 @@ func TestSleep_ReportsWhetherTheWaitRan(t *testing.T) {
 		start = time.Now()
 		if Sleep(ctx, time.Hour) || time.Since(start) != time.Second {
 			t.Errorf("cancelled wait: want false after 1s, slept %v", time.Since(start))
+		}
+	})
+}
+
+// TestReceive_ReturnsTheValueOrTheContextError verifies Receive returns a sent
+// value, or the context's error when nothing is sent.
+func TestReceive_ReturnsTheValueOrTheContextError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ch := make(chan int, 1)
+		ch <- 7
+		if v, err := Receive(t.Context(), ch); v != 7 || err != nil {
+			t.Errorf("sent value: got %d, %v; want 7, nil", v, err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if v, err := Receive(ctx, ch); v != 0 || !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("nothing sent: got %d, %v; want 0, deadline exceeded", v, err)
 		}
 	})
 }

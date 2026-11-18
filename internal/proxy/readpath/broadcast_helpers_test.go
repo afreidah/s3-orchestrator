@@ -78,7 +78,7 @@ func TestDrainAndCleanupLosers_InvokesCleanupOnEachResult(t *testing.T) {
 	ch <- broadcastResult[int]{name: "b", cleanup: mkCleanup()}
 	ch <- broadcastResult[int]{name: "c", cleanup: mkCleanup()}
 
-	drainAndCleanupLosers(context.Background(), "GET", ch, 3, time.Second)
+	drainAndCleanupLosers("GET", ch, 3, time.Second)
 	if got := cleanups.Load(); got != 3 {
 		t.Errorf("cleanup invocations = %d, want 3", got)
 	}
@@ -95,7 +95,7 @@ func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 	ch <- broadcastResult[int]{name: "errored", err: errors.New("fail")} // nil cleanup
 	ch <- broadcastResult[int]{name: "won", cleanup: cleanupFn}
 
-	drainAndCleanupLosers(context.Background(), "GET", ch, 2, time.Second)
+	drainAndCleanupLosers("GET", ch, 2, time.Second)
 	if got := cleanups.Load(); got != 1 {
 		t.Errorf("cleanup invocations = %d, want 1 (nil cleanup skipped)", got)
 	}
@@ -119,7 +119,7 @@ func TestDrainAndCleanupLosers_TimesOutOnHungProbe(t *testing.T) {
 
 		const timeout = 5 * time.Second
 		start := time.Now()
-		drainAndCleanupLosers(context.Background(), op, ch, 2, timeout)
+		drainAndCleanupLosers(op, ch, 2, timeout)
 		if elapsed := time.Since(start); elapsed != timeout {
 			t.Errorf("drain returned after %v, want the %v timeout", elapsed, timeout)
 		}
@@ -133,32 +133,15 @@ func TestDrainAndCleanupLosers_TimesOutOnHungProbe(t *testing.T) {
 	})
 }
 
-// TestDrainAndCleanupLosers_ReturnsOnContextCancel verifies the drain returns
-// at once when the request context is already cancelled, without waiting out
-// its timeout.
-func TestDrainAndCleanupLosers_ReturnsOnContextCancel(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ch := make(chan broadcastResult[int]) // unbuffered; nothing is ever sent
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		start := time.Now()
-		drainAndCleanupLosers(ctx, "GET", ch, 1, time.Hour)
-		if elapsed := time.Since(start); elapsed != 0 {
-			t.Errorf("drain returned after %v, want at once", elapsed)
-		}
-	})
-}
-
 // -------------------------------------------------------------------------
-// cancelLosers
+// cancelProbes
 // -------------------------------------------------------------------------
 
-// TestCancelLosers_LeavesWinnerAliveCancelsRest verifies that the winner's
+// TestCancelProbes_LeavesWinnerAliveCancelsRest verifies that the winner's
 // context is preserved (its response body is still being read) while every
 // other per-probe context is cancelled so losing backends stop wasting CPU
 // and API calls.
-func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
+func TestCancelProbes_LeavesWinnerAliveCancelsRest(t *testing.T) {
 	t.Parallel()
 	parent := context.Background()
 	ctxA, cancelA := context.WithCancel(parent)
@@ -174,7 +157,7 @@ func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
 		"c": cancelC,
 	}
 
-	cancelLosers(cancels, "b")
+	cancelProbes(cancels, "b")
 
 	if ctxA.Err() == nil {
 		t.Errorf("loser a was not cancelled")
@@ -189,18 +172,16 @@ func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
 	cancelB()
 }
 
-// TestCancelLosers_UnknownWinnerCancelsEveryone verifies the defensive
-// behavior when the winner's name does not match any tracked probe (which
-// should not happen in practice). Every cancel still fires so no per-probe
-// context leaks.
-func TestCancelLosers_UnknownWinnerCancelsEveryone(t *testing.T) {
+// TestCancelProbes_NoneKeptCancelsEveryone verifies an empty keep cancels
+// every probe, so no per-probe context leaks.
+func TestCancelProbes_NoneKeptCancelsEveryone(t *testing.T) {
 	t.Parallel()
 	ctxA, cancelA := context.WithCancel(context.Background())
 	defer cancelA()
 	ctxB, cancelB := context.WithCancel(context.Background())
 	defer cancelB()
 
-	cancelLosers(map[string]context.CancelFunc{"a": cancelA, "b": cancelB}, "no-such-backend")
+	cancelProbes(map[string]context.CancelFunc{"a": cancelA, "b": cancelB}, "")
 
 	if ctxA.Err() == nil || ctxB.Err() == nil {
 		t.Errorf("expected both contexts cancelled, got a=%v b=%v", ctxA.Err(), ctxB.Err())

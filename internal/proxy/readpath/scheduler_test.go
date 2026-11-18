@@ -112,6 +112,28 @@ func TestProbeScheduler_WinnerCancelsLosers(t *testing.T) {
 	})
 }
 
+// TestProbeScheduler_ReturnsWhenTheRequestEnds verifies a probe that ignores
+// cancellation cannot hold the request, and its late body is still closed.
+func TestProbeScheduler_ReturnsWhenTheRequestEnds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release, closed := make(chan struct{}), make(chan struct{})
+		s := &ProbeScheduler[int]{pending: mkPending("stuck"), drainTimeout: time.Minute}
+		probe := func(context.Context, string, *core.ObjectLocation, backend.ObjectBackend) (ProbeResult[int], error) {
+			<-release // answers only when the test says, whatever its context
+			return ProbeResult[int]{Value: 1, Cleanup: func() { close(closed) }}, nil
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+
+		start := time.Now()
+		if _, _, found := s.FirstSuccess(ctx, probe); found || time.Since(start) != time.Second {
+			t.Fatalf("found = %v after %v, want false once the request ended at 1s", found, time.Since(start))
+		}
+		close(release)
+		<-closed // a body never closed deadlocks the bubble
+	})
+}
+
 // TestProbeScheduler_RespectsParallelismCap verifies the rolling window never
 // runs more than `parallelism` probes at once: with a cap of 2 and 5 backends,
 // only 2 probes start until one returns.

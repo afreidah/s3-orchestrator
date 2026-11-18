@@ -62,7 +62,7 @@ func spent(tracker *UsageTracker, name string, api, egress, ingress int64) {
 		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}
 	baselines := make(map[string]core.Usage)
-	for other, b := range *tracker.baseline.Load() {
+	for other, b := range tracker.snapshot().baselines {
 		baselines[other] = b.used
 	}
 	baselines[name] = u
@@ -471,6 +471,30 @@ func TestSetBaselines_ReplacesEveryBackend(t *testing.T) {
 	}
 }
 
+// TestPublish_KeepsAChangePublishedMidWrite asserts a write that another writer
+// overtook is redone on top of it, so neither change is lost.
+func TestPublish_KeepsAChangePublishedMidWrite(t *testing.T) {
+	t.Parallel()
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
+	overtaken := false
+	tracker.publish(func(cur usageSnapshot) usageSnapshot {
+		if !overtaken {
+			overtaken = true
+			tracker.UpdateLimits(map[string]core.UsageLimits{"b1": capped(t, 10, 0, 0)})
+		}
+		cur.baselines = map[string]cycleBaseline{"b1": {}}
+		return cur
+	})
+
+	snap := tracker.snapshot()
+	if _, ok := snap.limits["b1"]; !ok {
+		t.Error("the limits published mid-write were lost")
+	}
+	if _, ok := snap.baselines["b1"]; !ok {
+		t.Error("the overtaken write was not redone")
+	}
+}
+
 // TestCycleBaseline_ClearsAtTheReset asserts flushed usage applies until the
 // cycle's reset and reads as zero from then, in the following cycle.
 func TestCycleBaseline_ClearsAtTheReset(t *testing.T) {
@@ -583,7 +607,10 @@ func TestCycleUsage_ReportsEachBackendsCycle(t *testing.T) {
 	}
 
 	stale := mid.Period.Cycle(now.AddDate(0, -1, 0))
-	tracker.baseline.Store(&map[string]cycleBaseline{"b1": {used: core.Usage{APIRequests: 4}, cycle: stale}})
+	tracker.publish(func(cur usageSnapshot) usageSnapshot {
+		cur.baselines = map[string]cycleBaseline{"b1": {used: core.Usage{APIRequests: 4}, cycle: stale}}
+		return cur
+	})
 	got = tracker.CycleUsage()
 	if cu := got["b1"]; cu.Cycle != stale.Following() || cu.Usage.APIRequests != 0 {
 		t.Errorf("b1 after its reset = %+v, want zero usage in %+v", cu, stale.Following())
