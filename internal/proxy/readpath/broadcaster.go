@@ -165,13 +165,17 @@ func (b *Broadcaster) tryAllBackends[T any](ctx context.Context, op readOp, prob
 		b.recordBroadcastWinner(op, res.name, res.size)
 		return res.value, res.name, nil
 	}
+	var zero T
+	// A read the client abandoned is not a broadcast the backends failed.
+	if err := ctx.Err(); err != nil {
+		return zero, "", err
+	}
 
 	var tally broadcastErrTally
 	for _, e := range errs {
 		tally.add(e)
 	}
 	tally.recordMixedOutcomes(op.operation)
-	var zero T
 	return zero, "", broadcastAllFailed(op.span, errs)
 }
 

@@ -385,6 +385,30 @@ func TestStreamPartsThroughPipe_OpensPartsAhead(t *testing.T) {
 	})
 }
 
+// TestStreamPartsThroughPipe_StopsWhenTheRequestEnds verifies a part GET that
+// ignores cancellation cannot hold the assembly once its context ends.
+func TestStreamPartsThroughPipe_StopsWhenTheRequestEnds(t *testing.T) {
+	mp := newTestMultipartManager(nil)
+	synctest.Test(t, func(t *testing.T) {
+		inner := backendtest.NewInMemory()
+		const uploadID = "upload-abandoned"
+		preloadPart(inner, uploadID, 1, []byte("a"))
+		slow := backendtest.NewSlow(inner, time.Minute)
+		slow.DelayGets, slow.IgnoreCancel = true, true
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+
+		start := time.Now()
+		pr, stop := mp.streamPartsThroughPipe(ctx, partSource(slow), uploadID, []core.MultipartPart{{PartNumber: 1, SizeBytes: 1}})
+		defer stop()
+		if _, err := io.ReadAll(pr); !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != time.Second {
+			t.Errorf("read ended with %v after %v, want the context's error at 1s", err, time.Since(start))
+		}
+		time.Sleep(time.Minute) // the ignored GET answers and is discarded
+		synctest.Wait()
+	})
+}
+
 // TestStreamPartsThroughPipe_PropagatesPartFailure verifies the stream parts through pipe propagates part failure contract.
 // Asserts that error missing phase / part number:.
 func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {

@@ -1013,7 +1013,10 @@ func (mp *Manager) streamParts(ctx context.Context, src s3be.Endpoint, bw io.Wri
 	}()
 	openMore()
 	for len(ahead) > 0 {
-		opened := <-ahead[0]
+		opened, err := syncutil.Receive(ctx, ahead[0])
+		if err != nil {
+			return err
+		}
 		ahead = ahead[1:]
 		openMore()
 		if err := mp.streamOnePart(ctx, src.Name, bw, opened); err != nil {

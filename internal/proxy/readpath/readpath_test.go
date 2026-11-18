@@ -18,8 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -155,6 +158,33 @@ func TestRead_DBUnavailableBroadcasts(t *testing.T) {
 	}
 	if cache[readTestKey] != "b" {
 		t.Errorf("cached winner = %q, want b", cache[readTestKey])
+	}
+}
+
+// TestRead_AbandonedBroadcastReturnsTheContextError verifies an abandoned
+// degraded read returns the context's error and counts no mixed outcome.
+func TestRead_AbandonedBroadcastReturnsTheContextError(t *testing.T) {
+	t.Parallel()
+	const op = "abandoned-read-test"
+	f, _ := newReadTestFailover(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	probe := func(ctx context.Context, name string, _ *core.ObjectLocation, be backend.ObjectBackend) (ProbeResult[string], error) {
+		if name == "b" {
+			cancel()
+			return ProbeResult[string]{}, ctx.Err()
+		}
+		_, err := be.HeadObject(ctx, readTestKey)
+		return ProbeResult[string]{}, err
+	}
+	before := testutil.ToFloat64(telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(op))
+
+	_, _, err := f.Read(ctx, op, readTestKey, nil, core.ErrDBUnavailable, probe)
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "all backends failed") {
+		t.Errorf("error = %v, want the context's error alone", err)
+	}
+	if after := testutil.ToFloat64(telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(op)); after != before {
+		t.Errorf("mixed outcomes counted %v times, want none", after-before)
 	}
 }
 

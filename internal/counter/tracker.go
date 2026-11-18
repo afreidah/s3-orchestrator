@@ -8,7 +8,7 @@
 // the store. Counters are keyed by hourly bucket, independent of any backend's
 // cycle; a backend's usage is the sum of its buckets from its cycle's start.
 //
-// The limits and baseline maps are copy-on-write snapshots, so WithinLimits,
+// The limits and baselines are one copy-on-write snapshot, so WithinLimits,
 // which runs on every backend operation, reads them without a lock.
 // -------------------------------------------------------------------------------
 
@@ -33,12 +33,11 @@ import (
 // UsageTracker tracks per-backend usage counters, enforces monthly usage
 // limits, and flushes accumulated deltas to the database. Counter storage
 // is delegated to a Backend (local atomics or shared Redis). The
-// limits and baseline maps live behind atomic.Pointer snapshots so reads
-// require no locking; each write replaces a whole map.
+// limits and baselines live behind one atomic.Pointer so reads require no
+// locking; each write replaces the whole snapshot.
 type UsageTracker struct {
-	backend  Backend
-	limits   atomic.Pointer[map[string]core.UsageLimits]
-	baseline atomic.Pointer[map[string]cycleBaseline]
+	backend Backend
+	state   atomic.Pointer[usageSnapshot]
 }
 
 // cycleBaseline is a backend's flushed usage in its current cycle, with the
@@ -62,6 +61,7 @@ func (b *cycleBaseline) at(now time.Time) (core.Usage, core.UsageCycle) {
 // are stored locally (default) or in a shared store like Redis.
 func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *UsageTracker {
 	u := &UsageTracker{backend: backend}
+	u.state.Store(&usageSnapshot{})
 	u.UpdateLimits(limits)
 	u.SetBaselines(nil)
 	return u
@@ -76,7 +76,7 @@ func (u *UsageTracker) Record(ctx context.Context, backendName string, op s3op.O
 		APIRequests:  1,
 		EgressBytes:  egress,
 		IngressBytes: ingress,
-		Pools:        (*u.limits.Load())[backendName].PoolsFor(op),
+		Pools:        u.snapshot().limits[backendName].PoolsFor(op),
 		PoolN:        1,
 	}
 	u.backend.Charge(backendName, core.UsageBucket(time.Now()), c)
@@ -139,11 +139,22 @@ func (s usageSnapshot) cycle(name string, now time.Time) (core.Usage, core.Usage
 	return core.Usage{}, s.limits[name].Period.Cycle(now)
 }
 
-// snapshot loads the copy-on-write views in one go. Callers that check
-// several backends take it once so every per-backend decision sees the same
-// view and the atomic loads do not repeat per iteration.
+// snapshot loads the current view. Callers that check several backends take it
+// once so every per-backend decision sees the same view.
 func (u *UsageTracker) snapshot() usageSnapshot {
-	return usageSnapshot{limits: *u.limits.Load(), baselines: *u.baseline.Load()}
+	return *u.state.Load()
+}
+
+// publish replaces the snapshot with next applied to the current one, retrying
+// when another writer published first so neither change is lost.
+func (u *UsageTracker) publish(next func(cur usageSnapshot) usageSnapshot) {
+	for {
+		cur := u.state.Load()
+		replaced := next(*cur)
+		if u.state.CompareAndSwap(cur, &replaced) {
+			return
+		}
+	}
 }
 
 // unflushedPool recycles the values the limit checks read the unflushed
@@ -184,7 +195,10 @@ func poolsFit(lim core.UsageLimits, op s3op.Operation, base core.Usage, cur *cor
 func (u *UsageTracker) UpdateLimits(limits map[string]core.UsageLimits) {
 	cp := make(map[string]core.UsageLimits, len(limits))
 	maps.Copy(cp, limits)
-	u.limits.Store(&cp)
+	u.publish(func(cur usageSnapshot) usageSnapshot {
+		cur.limits = cp
+		return cur
+	})
 }
 
 // GetLimits returns a shallow copy of the current per-backend usage
@@ -192,7 +206,7 @@ func (u *UsageTracker) UpdateLimits(limits map[string]core.UsageLimits) {
 // the API contract from leaking the live snapshot to callers that
 // might mutate it.
 func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
-	src := *u.limits.Load()
+	src := u.snapshot().limits
 	cp := make(map[string]core.UsageLimits, len(src))
 	maps.Copy(cp, src)
 	return cp
@@ -211,12 +225,14 @@ func (u *UsageTracker) SetBaselines(baselines map[string]core.Usage) {
 // setBaselines stores each backend's flushed usage with its cycle's bounds at
 // now, for every backend counted or limited.
 func (u *UsageTracker) setBaselines(baselines map[string]core.Usage, now time.Time) {
-	limits := *u.limits.Load()
-	out := make(map[string]cycleBaseline, len(limits))
-	for _, name := range u.names(limits) {
-		out[name] = cycleBaseline{used: baselines[name], cycle: limits[name].Period.Cycle(now)}
-	}
-	u.baseline.Store(&out)
+	u.publish(func(cur usageSnapshot) usageSnapshot {
+		out := make(map[string]cycleBaseline, len(cur.limits))
+		for _, name := range u.names(cur.limits) {
+			out[name] = cycleBaseline{used: baselines[name], cycle: cur.limits[name].Period.Cycle(now)}
+		}
+		cur.baselines = out
+		return cur
+	})
 }
 
 // names lists every backend the tracker counts or holds limits for: the
@@ -235,7 +251,7 @@ func (u *UsageTracker) names(limits map[string]core.UsageLimits) []string {
 // makes it the baseline admission is judged against. Returns it by workload.
 func (u *UsageTracker) RefreshUsage(ctx context.Context, store core.UsageReader) (map[string]core.WorkloadUsage, error) {
 	now := time.Now()
-	limits := *u.limits.Load()
+	limits := u.snapshot().limits
 	names := u.names(limits)
 	starts := make(map[string]time.Time, len(names))
 	for _, name := range names {

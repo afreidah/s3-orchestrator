@@ -209,6 +209,43 @@ func TestPutObject_ParallelCopies_AnswersOnTheFirstCopy(t *testing.T) {
 	})
 }
 
+// TestPutObject_ParallelCopies_ClientLeavingDoesNotHoldTheRequest asserts a
+// client that goes away is answered at once, and the write still finishes.
+func TestPutObject_ParallelCopies_ClientLeavingDoesNotHoldTheRequest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const slowUpload = settleTimeout / 2
+		a := &slowMockBackend{InMemory: backendtest.NewInMemory(), delay: slowUpload}
+		b := &slowMockBackend{InMemory: backendtest.NewInMemory(), delay: slowUpload}
+
+		store, _ := eligibleStore(t)
+		mgr := newFleet(t, store, map[string]backend.ObjectBackend{"a": a, "b": b}, &fleetOpts{
+			Order:          []string{"a", "b"},
+			CopiesPerWrite: 2,
+			BackendTimeout: settleTimeout,
+		})
+		mgr.LocationCache().Set("key", "stale")
+
+		ctx, cancel := context.WithTimeout(t.Context(), slowUpload/2)
+		defer cancel()
+		payload := []byte("written after the client left")
+		start := time.Now()
+		_, err := mgr.PutObject(ctx, &PutObjectRequest{
+			Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != slowUpload/2 {
+			t.Fatalf("PutObject = %v after %v, want the context's error once the client left", err, time.Since(start))
+		}
+
+		settle(t, mgr)
+		if !a.HasCopyOf("key") || !b.HasCopyOf("key") {
+			t.Error("the write did not finish after the client left")
+		}
+		if _, cached := mgr.LocationCache().Get("key"); cached {
+			t.Error("the committed write left its stale cached location")
+		}
+	})
+}
+
 // TestPutObject_ParallelCopies_ShortfallIsNotAFailure asserts a write asked for
 // more copies than the fleet will take places what it can. The replicator
 // fills the rest, which is what it does for every copy today.
