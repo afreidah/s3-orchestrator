@@ -41,6 +41,7 @@ const (
 	PathScrub             = "/admin/api/scrub"
 	PathObjectScrub       = "/admin/api/object-scrub"
 	PathUnreadable        = "/admin/api/unreadable"
+	PathUnhashed          = "/admin/api/unhashed"
 	PathBackfillChecksums = "/admin/api/backfill-checksums"
 
 	PathEncryptExisting    = "/admin/api/encrypt-existing"

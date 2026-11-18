@@ -479,6 +479,8 @@ var simpleWrapperCases = []wrapperCase{
 	{"unreadable-limit", "unreadable", []string{"-limit", "20"}, http.MethodGet, "/admin/api/unreadable", "limit=20"},
 	{"unreadable-execute", "unreadable", []string{"-execute"}, http.MethodPost, "/admin/api/unreadable", ""},
 	{"unreadable-execute-batch", "unreadable", []string{"-execute", "-batch-size", "50"}, http.MethodPost, "/admin/api/unreadable", "batch_size=50"},
+	{"unhashed", "unhashed", nil, http.MethodGet, "/admin/api/unhashed", ""},
+	{"unhashed-scoped", "unhashed", []string{"-backend", "b1", "-managed", "false", "-limit", "20"}, http.MethodGet, "/admin/api/unhashed", "backend=b1&limit=20&managed=false"},
 	{"log-level-get", "log-level", nil, http.MethodGet, "/admin/api/log-level", ""},
 	{"log-level-set", "log-level", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
 	{"scrub", "scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
@@ -1010,7 +1012,7 @@ func TestCommand_TextVsJSONRendering(t *testing.T) {
 func TestCommand_FlagParseErrors(t *testing.T) {
 	t.Parallel()
 	cmds := []string{
-		"object-locations", "over-replication", "unreadable", "log-level", "scrub",
+		"object-locations", "over-replication", "unreadable", "unhashed", "log-level", "scrub",
 		"backfill-checksums", "reconcile", "remove-backend",
 		"cache-invalidate", "cache-invalidate-prefix",
 	}

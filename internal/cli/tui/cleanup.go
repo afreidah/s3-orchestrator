@@ -143,8 +143,8 @@ func (m *model) armRequeue() (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// Titles of the columns both cleanup listings share, used by the column specs
-// and the comparators alike.
+// Titles of the columns the cleanup and copy listings share, used by the
+// column specs and the comparators alike.
 const (
 	colObjectKey = "OBJECT KEY"
 	colBackend   = "BACKEND"

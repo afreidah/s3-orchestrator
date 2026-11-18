@@ -533,17 +533,28 @@ type CompressionStat struct {
 
 // FormFilter selects copies by the layers their bytes carry: every flag of With
 // and none of Without. Backend and KeyID narrow the page to one value when set,
-// ExceptKeyID leaves out copies under that key, and ManagedOnly leaves out data
-// the orchestrator does not manage. Candidates, when set, keeps only copies a
-// compression pass would still try to encode.
+// ExceptKeyID leaves out copies under that key, and Managed, when set, keeps
+// only the managed copies or only the unmanaged ones. Candidates, when set,
+// keeps only copies a compression pass would still try to encode.
 type FormFilter struct {
 	With        StoredFlags
 	Without     StoredFlags
 	Backend     string
 	KeyID       string
 	ExceptKeyID string
-	ManagedOnly bool
+	Managed     *bool
 	Candidates  *CompressionThresholds
+}
+
+// UnreadableCopies selects copies encrypted with no key, which nothing can
+// decrypt: the copies the ledger counts as Unreadable.
+var UnreadableCopies = FormFilter{With: StoredEncrypted, Without: StoredKeyed}
+
+// UnhashedCopies selects the copies with no content hash on backend, every
+// backend when it is empty, narrowed by managed when that is set. The managed
+// ones are the backlog the checksum backfill works through.
+func UnhashedCopies(backend string, managed *bool) FormFilter {
+	return FormFilter{Without: StoredHashed, Backend: backend, Managed: managed}
 }
 
 // CompressionThresholds are the settings that decide whether a copy is worth

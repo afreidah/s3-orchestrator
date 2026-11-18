@@ -26,36 +26,29 @@ import (
 
 // Data holds a snapshot of all operational data for the dashboard.
 //
-// UnverifiedObjectCounts is the per-backend count of objects with a NULL
-// content_hash, which drives the "needs backfill" column. PlaintextCopies is
-// how many copies are still stored unencrypted: encryption covers new writes
-// only, so a non-zero value means existing objects were never rewritten.
-//
-// CompressionStats holds only backends that hold an encoded copy, so a missing
-// entry means nothing there is compressed rather than compressed to nothing.
-// RefusedCalls holds only backends refusing at least one call, so a missing
-// entry means the backend serves every call. Unsupported likewise holds only
-// backends that have refused an optional feature. Profiles holds every backend.
+// Ledger holds each backend's object, checksum, encryption and compression
+// figures, and a backend that holds no rows is absent from it, so a lookup
+// reads as zero. RefusedCalls holds only backends refusing at least one call,
+// so a missing entry means the backend serves every call. Unsupported likewise
+// holds only backends that have refused an optional feature. Profiles holds
+// every backend.
 type Data struct {
-	BackendOrder           []string
-	QuotaStats             map[string]core.QuotaStat
-	ObjectCounts           map[string]int64
-	UnverifiedObjectCounts map[string]int64
-	NeverVerifiedCopies    int64
-	OldestUnverifiedAge    time.Duration
-	DeferredCopies         int64
-	PlaintextCopies        int64
-	CompressionStats       map[string]core.CompressionStat
-	ActiveMultipartCounts  map[string]int64
-	UsageStats             map[string]core.Usage
-	UsageCycles            map[string]core.UsageCycle
-	UsageLimits            map[string]core.UsageLimits
-	UsagePeriod            string
-	DrainingBackends       map[string]backendstate.DrainProgress
-	BackendFlags           map[string]core.BackendFlags
-	RefusedCalls           map[string]core.BackendCalls
-	Unsupported            map[string]core.BackendFeatures
-	Profiles               map[string]core.BackendProfile
+	BackendOrder          []string
+	QuotaStats            map[string]core.QuotaStat
+	Ledger                core.LedgerStats
+	NeverVerifiedCopies   int64
+	OldestUnverifiedAge   time.Duration
+	DeferredCopies        int64
+	ActiveMultipartCounts map[string]int64
+	UsageStats            map[string]core.Usage
+	UsageCycles           map[string]core.UsageCycle
+	UsageLimits           map[string]core.UsageLimits
+	UsagePeriod           string
+	DrainingBackends      map[string]backendstate.DrainProgress
+	BackendFlags          map[string]core.BackendFlags
+	RefusedCalls          map[string]core.BackendCalls
+	Unsupported           map[string]core.BackendFeatures
+	Profiles              map[string]core.BackendProfile
 }
 
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
@@ -176,18 +169,15 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 	}
 
 	data := &Data{
-		BackendOrder:           da.d.Fleet.BackendOrder(),
-		UsageLimits:            da.d.Usage.GetLimits(),
-		UsagePeriod:            counter.CurrentPeriod(),
-		QuotaStats:             snap.Quota,
-		ObjectCounts:           snap.Ledger.ObjectCounts(),
-		UnverifiedObjectCounts: snap.Ledger.UnhashedCounts(),
-		OldestUnverifiedAge:    snap.Coverage.OldestUnverifiedAge,
-		NeverVerifiedCopies:    snap.Coverage.NeverVerified,
-		DeferredCopies:         snap.Coverage.Deferred,
-		PlaintextCopies:        snap.Ledger.PlaintextCopies(),
-		CompressionStats:       snap.Ledger.Compression(),
-		ActiveMultipartCounts:  snap.Multipart,
+		BackendOrder:          da.d.Fleet.BackendOrder(),
+		UsageLimits:           da.d.Usage.GetLimits(),
+		UsagePeriod:           counter.CurrentPeriod(),
+		QuotaStats:            snap.Quota,
+		Ledger:                snap.Ledger,
+		OldestUnverifiedAge:   snap.Coverage.OldestUnverifiedAge,
+		NeverVerifiedCopies:   snap.Coverage.NeverVerified,
+		DeferredCopies:        snap.Coverage.Deferred,
+		ActiveMultipartCounts: snap.Multipart,
 	}
 	data.UsageStats, data.UsageCycles = splitCycleUsage(da.d.Usage.CycleUsage())
 	da.decorateLiveState(ctx, data)
@@ -199,10 +189,10 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 // arithmetic, and this is the number an operator reads first.
 func (d *Data) CompressionTotals() core.CompressionStat {
 	var total core.CompressionStat
-	for _, s := range d.CompressionStats {
-		total.Objects += s.Objects
-		total.LogicalBytes += s.LogicalBytes
-		total.StoredBytes += s.StoredBytes
+	for _, st := range d.Ledger {
+		total.Objects += st.Compressed.Objects
+		total.LogicalBytes += st.Compressed.LogicalBytes
+		total.StoredBytes += st.Compressed.StoredBytes
 	}
 	return total
 }
@@ -216,9 +206,6 @@ func (d *Data) HasCompressedData() bool {
 // CompressionSaved reports the bytes compression saved on one backend, or zero
 // when nothing there is stored encoded.
 func (d *Data) CompressionSaved(backend string) int64 {
-	s, ok := d.CompressionStats[backend]
-	if !ok {
-		return 0
-	}
+	s := d.Ledger[backend].Compressed
 	return s.LogicalBytes - s.StoredBytes
 }

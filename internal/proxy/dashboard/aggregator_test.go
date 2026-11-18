@@ -15,6 +15,7 @@ package dashboard
 
 import (
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
@@ -67,18 +68,12 @@ func TestAggregator_Success(t *testing.T) {
 	if data.UsageCycles["b1"] != cycle {
 		t.Errorf("UsageCycles = %+v, want b1 in %+v", data.UsageCycles, cycle)
 	}
-	if data.ObjectCounts["b1"] != 5 {
-		t.Errorf("ObjectCounts = %d, want 5", data.ObjectCounts["b1"])
-	}
-	if data.PlaintextCopies != 7 {
-		t.Errorf("PlaintextCopies = %d, want 7", data.PlaintextCopies)
+	if !maps.Equal(data.Ledger, snap.snap.Ledger) {
+		t.Errorf("Ledger = %+v, want the snapshot's %+v", data.Ledger, snap.snap.Ledger)
 	}
 	if data.OldestUnverifiedAge != time.Hour || data.NeverVerifiedCopies != 3 || data.DeferredCopies != 4 {
 		t.Errorf("coverage = %v, %d, %d; want the snapshot's 1h, 3, 4",
 			data.OldestUnverifiedAge, data.NeverVerifiedCopies, data.DeferredCopies)
-	}
-	if data.CompressionStats["b1"].StoredBytes != 250 {
-		t.Errorf("CompressionStats = %+v, want b1 stored 250", data.CompressionStats)
 	}
 	if len(data.BackendOrder) != 1 || data.BackendOrder[0] != "b1" {
 		t.Errorf("BackendOrder = %v, want [b1]", data.BackendOrder)
@@ -140,7 +135,7 @@ func TestData_CompressionViews(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			d := &Data{CompressionStats: tt.stats}
+			d := &Data{Ledger: compressedLedger(tt.stats)}
 
 			if got := d.HasCompressedData(); got != tt.wantAny {
 				t.Errorf("HasCompressedData() = %v, want %v", got, tt.wantAny)
@@ -159,10 +154,20 @@ func TestData_CompressionViews(t *testing.T) {
 // encoded reports zero rather than a stale figure from another backend.
 func TestData_CompressionSavedUnknownBackend(t *testing.T) {
 	t.Parallel()
-	d := &Data{CompressionStats: map[string]core.CompressionStat{
+	d := &Data{Ledger: compressedLedger(map[string]core.CompressionStat{
 		"b1": {Objects: 1, LogicalBytes: 900, StoredBytes: 100},
-	}}
+	})}
 	if got := d.CompressionSaved("b2"); got != 0 {
 		t.Errorf("CompressionSaved(b2) = %d, want 0", got)
 	}
+}
+
+// compressedLedger is a ledger whose backends hold only the given encoded
+// copies.
+func compressedLedger(stats map[string]core.CompressionStat) core.LedgerStats {
+	ledger := make(core.LedgerStats, len(stats))
+	for name, s := range stats {
+		ledger[name] = core.LedgerStat{Compressed: s}
+	}
+	return ledger
 }

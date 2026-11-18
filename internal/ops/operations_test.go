@@ -179,6 +179,7 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Backlog:    mock,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
+		CopyStore:  mock,
 		Locker:     mock,
 		Declared:   declaredBuckets(testBucket),
 		Config:     st.Config,
@@ -351,7 +352,9 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{Busy: true}, Config: integrityEnabled()})
+	d := integrityDeps(t, scrubber)
+	d.Locker = testx.Locker{Busy: true}
+	svc := NewIntegrity(d)
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if !errors.Is(err, ErrScrubInProgress) {
@@ -372,7 +375,9 @@ func TestScrub_LockErrorSurfaces(t *testing.T) {
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	wantErr := errors.New("lock unavailable")
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{Err: wantErr}, Config: integrityEnabled()})
+	d := integrityDeps(t, scrubber)
+	d.Locker = testx.Locker{Err: wantErr}
+	svc := NewIntegrity(d)
 
 	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
 		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
@@ -401,7 +406,9 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 		return true, err
 	})
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: locker, Config: integrityEnabled()})
+	d := integrityDeps(t, scrubber)
+	d.Locker = locker
+	svc := NewIntegrity(d)
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if err != nil {
@@ -884,11 +891,32 @@ func TestObjectsGet_NotFound(t *testing.T) {
 	}
 }
 
+// integrityDeps is an integrity service's collaborators: one stubbed scrubber,
+// a copy store that expects no call, a free lock and verification enabled. A
+// test replaces the one it exercises.
+func integrityDeps(t *testing.T, scrubber ScrubberOps) IntegrityDeps {
+	t.Helper()
+	return IntegrityDeps{
+		Scrubber: scrubber,
+		Store:    opstest.NewMockCopyStore(gomock.NewController(t)),
+		Locker:   testx.Locker{},
+		Config:   integrityEnabled(),
+	}
+}
+
 // integrityOver builds an integrity service over one stubbed scrubber with
 // verification enabled.
 func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	t.Helper()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Locker: testx.Locker{}, Config: integrityEnabled()})
+	return NewIntegrity(integrityDeps(t, scrubber))
+}
+
+// integrityListing builds an integrity service whose listings read store.
+func integrityListing(t *testing.T, store CopyStore) *Integrity {
+	t.Helper()
+	d := integrityDeps(t, opstest.NewMockScrubberOps(gomock.NewController(t)))
+	d.Store = store
+	return NewIntegrity(d)
 }
 
 // integrityEnabled is a running config with verification on, so the integrity
@@ -968,20 +996,65 @@ func TestPurgeUnreadable_DefaultsTheBatchAndReportsTheTally(t *testing.T) {
 	}
 }
 
-// TestListUnreadable_DefaultsTheLimit asserts a zero limit asks the scrubber
-// for the default page and passes the total through.
+// TestListUnreadable_DefaultsTheLimit asserts a zero limit asks the store for
+// the default page of unreadable copies, and the total is the ledger's
+// unreadable figure.
 func TestListUnreadable_DefaultsTheLimit(t *testing.T) {
 	t.Parallel()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().ListUnreadable(gomock.Any(), 100).
-		Return([]core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1"}}, int64(7), nil)
+	store := opstest.NewMockCopyStore(gomock.NewController(t))
+	store.EXPECT().ListCopiesByForm(gomock.Any(), &core.UnreadableCopies, defaultCopyListLimit, core.Cursor{}).
+		Return([]core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1"}}, nil)
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Unreadable: 4}, "b2": {Unreadable: 3}}, nil)
 
-	res, err := integrityOver(t, scrubber).ListUnreadable(context.Background(), 0)
+	res, err := integrityListing(t, store).ListUnreadable(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("ListUnreadable: %v", err)
 	}
 	if res.Total != 7 || len(res.Copies) != 1 {
 		t.Errorf("res = %+v, want 1 copy of 7", res)
+	}
+}
+
+// TestListUnhashed_NarrowsTheListingAndTheTotal asserts the backend and
+// management reach the store's filter, and the total counts only the copies
+// that filter selects.
+func TestListUnhashed_NarrowsTheListingAndTheTotal(t *testing.T) {
+	t.Parallel()
+	store := opstest.NewMockCopyStore(gomock.NewController(t))
+	filter := core.UnhashedCopies("b1", new(false))
+	store.EXPECT().ListCopiesByForm(gomock.Any(), &filter, 5, core.Cursor{}).
+		Return([]core.ObjectLocation{{ObjectKey: "bucket/stray", BackendName: "b1", Unmanaged: true}}, nil)
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{
+		"b1": {Unhashed: 3, UnmanagedUnhashed: 4},
+		"b2": {UnmanagedUnhashed: 9},
+	}, nil)
+
+	res, err := integrityListing(t, store).ListUnhashed(context.Background(), "b1", new(false), 5)
+	if err != nil {
+		t.Fatalf("ListUnhashed: %v", err)
+	}
+	if res.Total != 4 || len(res.Copies) != 1 {
+		t.Errorf("res = %+v, want 1 copy of the 4 unmanaged on b1", res)
+	}
+}
+
+// TestListUnhashed_ReportsStoreErrors asserts a failed page or a failed
+// ledger read fails the listing rather than answering with a partial one.
+func TestListUnhashed_ReportsStoreErrors(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("store unavailable")
+
+	listing := opstest.NewMockCopyStore(gomock.NewController(t))
+	listing.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, wantErr)
+	if _, err := integrityListing(t, listing).ListUnhashed(context.Background(), "", nil, 0); !errors.Is(err, wantErr) {
+		t.Errorf("list failure: err = %v, want %v", err, wantErr)
+	}
+
+	ledger := opstest.NewMockCopyStore(gomock.NewController(t))
+	ledger.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+	ledger.EXPECT().LedgerStats(gomock.Any()).Return(nil, wantErr)
+	if _, err := integrityListing(t, ledger).ListUnhashed(context.Background(), "", nil, 0); !errors.Is(err, wantErr) {
+		t.Errorf("ledger failure: err = %v, want %v", err, wantErr)
 	}
 }
 

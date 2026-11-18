@@ -35,7 +35,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 		QuotaStats: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		ObjectCounts: map[string]int64{"b1": 7},
+		Ledger: core.LedgerStats{"b1": {Objects: 7}},
 		UsageStats: map[string]core.Usage{
 			"b1": {UsageStat: core.UsageStat{APIRequests: 3, EgressBytes: 20, IngressBytes: 40}},
 		},
@@ -74,22 +74,23 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 }
 
 // TestBackendStatuses_ProfileAndHoldings verifies each backend carries its
-// configured profile, its unhashed copies and its uploads in progress, and a
-// backend absent from those maps reads as zero.
+// configured profile, its managed and unmanaged unhashed copies apart, and its
+// uploads in progress, and a backend absent from those maps reads as zero.
 func TestBackendStatuses_ProfileAndHoldings(t *testing.T) {
 	t.Parallel()
 	profile := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "data", MaxObjectSize: 5 << 30}
 	got := backendStatuses(&dashboard.Data{
-		BackendOrder:           []string{"b1", "b2"},
-		UnverifiedObjectCounts: map[string]int64{"b1": 2},
-		ActiveMultipartCounts:  map[string]int64{"b1": 1},
-		Profiles:               map[string]core.BackendProfile{"b1": profile},
+		BackendOrder:          []string{"b1", "b2"},
+		Ledger:                core.LedgerStats{"b1": {Unhashed: 2, UnmanagedUnhashed: 5}},
+		ActiveMultipartCounts: map[string]int64{"b1": 1},
+		Profiles:              map[string]core.BackendProfile{"b1": profile},
 	})
 
-	if b1 := got[0]; b1.UnhashedCopies != 2 || b1.ActiveMultipartUploads != 1 || b1.Profile != adminapi.BackendProfile(profile) {
-		t.Errorf("b1 = %+v, want 2 unhashed, 1 upload and profile %+v", b1, profile)
+	b1 := got[0]
+	if b1.UnhashedCopies != 2 || b1.UnmanagedUnhashedCopies != 5 || b1.ActiveMultipartUploads != 1 || b1.Profile != adminapi.BackendProfile(profile) {
+		t.Errorf("b1 = %+v, want 2 unhashed, 5 unmanaged unhashed, 1 upload and profile %+v", b1, profile)
 	}
-	if b2 := got[1]; b2.UnhashedCopies != 0 || b2.ActiveMultipartUploads != 0 || b2.Profile != (adminapi.BackendProfile{}) {
+	if b2 := got[1]; b2.UnhashedCopies != 0 || b2.UnmanagedUnhashedCopies != 0 || b2.ActiveMultipartUploads != 0 || b2.Profile != (adminapi.BackendProfile{}) {
 		t.Errorf("b2 = %+v, want zero holdings and the zero profile", b2)
 	}
 }

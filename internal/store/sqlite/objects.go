@@ -368,8 +368,9 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 
 // ListCopiesByForm returns up to limit copies after the cursor that the filter
 // selects, in key order: every flag of With and none of Without, narrowed by an
-// optional backend and key ID. Paged by cursor, since a pass usually takes the
-// copies it acts on out of its own filter and an offset would skip rows.
+// optional backend, key ID and management. Paged by cursor, since a pass
+// usually takes the copies it acts on out of its own filter and an offset would
+// skip rows.
 //
 // Candidates adds the compression candidate test: a copy already measured at
 // the configured level as unable to reach the ratio is excluded, so it is not
@@ -384,7 +385,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		SELECT `+objectColumns+`
 		FROM object_locations
 		WHERE (form & ?) = ? AND (form & ?) = 0
-		  AND (NOT ? OR managed)
+		  AND (? IS NULL OR managed = ?)
 		  AND (? = '' OR backend_name = ?)
 		  AND (? = '' OR key_id = ?)
 		  AND (? = '' OR key_id IS NOT ?)
@@ -397,7 +398,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		ORDER BY object_key, backend_name
 		LIMIT ?`,
 		f.With, f.With, f.Without,
-		f.ManagedOnly,
+		f.Managed, f.Managed,
 		f.Backend, f.Backend,
 		f.KeyID, f.KeyID,
 		f.ExceptKeyID, f.ExceptKeyID,

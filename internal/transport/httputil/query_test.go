@@ -52,3 +52,24 @@ func TestRequireQueryCount(t *testing.T) {
 		t.Errorf("RequireQueryCount(1O) ok=%v status=%d; want false, 400", ok, w.Code)
 	}
 }
+
+// TestRequireQueryBool verifies an absent value is no choice, true and false
+// pass through, and anything else is answered 400.
+func TestRequireQueryBool(t *testing.T) {
+	t.Parallel()
+	req := func(target string) *http.Request {
+		return httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	}
+	if v, ok := RequireQueryBool(httptest.NewRecorder(), req("/"), "managed"); !ok || v != nil {
+		t.Errorf("RequireQueryBool(absent) = %v, %v; want nil, true", v, ok)
+	}
+	for target, want := range map[string]bool{"/?managed=true": true, "/?managed=false": false} {
+		if v, ok := RequireQueryBool(httptest.NewRecorder(), req(target), "managed"); !ok || v == nil || *v != want {
+			t.Errorf("RequireQueryBool(%s) = %v, %v; want %v", target, v, ok, want)
+		}
+	}
+	w := httptest.NewRecorder()
+	if _, ok := RequireQueryBool(w, req("/?managed=maybe"), "managed"); ok || w.Code != http.StatusBadRequest {
+		t.Errorf("RequireQueryBool(maybe) ok=%v status=%d; want false, 400", ok, w.Code)
+	}
+}

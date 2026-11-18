@@ -498,7 +498,7 @@ SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_k
 FROM object_locations
 WHERE (form & $1::bigint) = $1::bigint
   AND (form & $2::bigint) = 0
-  AND (NOT $3::boolean OR managed)
+  AND ($3::boolean IS NULL OR managed = $3::boolean)
   AND ($4::text = '' OR backend_name = $4::text)
   AND ($5::text = '' OR key_id = $5::text)
   AND ($6::text = '' OR key_id IS DISTINCT FROM $6::text)
@@ -515,7 +515,7 @@ LIMIT $12
 type ListCopiesByFormParams struct {
 	WithFlags     int64
 	WithoutFlags  int64
-	ManagedOnly   bool
+	Managed       *bool
 	BackendFilter string
 	KeyID         string
 	ExceptKeyID   string
@@ -531,7 +531,8 @@ type ListCopiesByFormParams struct {
 // every bit of with_flags set and none of without_flags. The rest narrows the
 // page to what the pass will act on, so row_limit is not spent on rows it
 // would decline: an empty backend_filter, key_id or except_key_id matches every
-// value, and managed_only leaves out data the orchestrator does not manage.
+// value, and a NULL managed matches copies whether or not the orchestrator
+// manages them.
 //
 // Paged by cursor rather than offset, since a pass usually takes the copies it
 // acts on out of its own predicate, and an offset would step over the rows
@@ -548,7 +549,7 @@ func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormPara
 	rows, err := q.db.Query(ctx, listCopiesByForm,
 		arg.WithFlags,
 		arg.WithoutFlags,
-		arg.ManagedOnly,
+		arg.Managed,
 		arg.BackendFilter,
 		arg.KeyID,
 		arg.ExceptKeyID,

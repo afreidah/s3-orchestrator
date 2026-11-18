@@ -4,9 +4,10 @@
 // Author: Alex Freidah
 //
 // Wire types for the per-object location ledger shared by the admin
-// object-locations handler and its clients (the TUI inspector, adminctl). Kept
-// in the leaf adminapi package so the server and out-of-process clients depend
-// on one definition and the JSON shape cannot drift.
+// object-locations handler and its clients (the TUI inspector, adminctl), and
+// the copy listings that name each copy's key beside the same fields. Kept in
+// the leaf adminapi package so the server and out-of-process clients depend on
+// one definition and the JSON shape cannot drift.
 // -------------------------------------------------------------------------------
 
 package adminapi
@@ -24,11 +25,13 @@ type ObjectLocationsResponse struct {
 //
 // LastScrubbedAt is absent for a copy that has never been verified.
 // An empty CompressionAlgorithm means the copy is stored verbatim, and
-// LogicalSize is only meaningful when an algorithm is set.
+// LogicalSize is only meaningful when an algorithm is set. Managed is false
+// for bytes that count toward quota but that no worker touches.
 type ObjectLocation struct {
 	Backend        string     `json:"backend"`
 	SizeBytes      int64      `json:"size_bytes"`
 	CreatedAt      time.Time  `json:"created_at"`
+	Managed        bool       `json:"managed"`
 	Encrypted      bool       `json:"encrypted"`
 	KeyID          string     `json:"key_id,omitempty"`
 	PlaintextSize  int64      `json:"plaintext_size"`
@@ -37,4 +40,18 @@ type ObjectLocation struct {
 
 	CompressionAlgorithm string `json:"compression_algorithm,omitempty"`
 	LogicalSize          int64  `json:"logical_size,omitempty"`
+}
+
+// ListedCopy is one copy in a listing that spans keys: the key it holds, and
+// the copy as the object-locations endpoint reports it.
+type ListedCopy struct {
+	Key string `json:"key"`
+	ObjectLocation
+}
+
+// CopyListResponse is a listing of copies by what their bytes lack: up to the
+// requested limit of them, and how many the listing selects in total.
+type CopyListResponse struct {
+	Total  int64        `json:"total"`
+	Copies []ListedCopy `json:"copies"`
 }

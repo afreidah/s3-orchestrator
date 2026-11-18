@@ -327,11 +327,7 @@ func TestStoreInt_CompressionStats_PerBackendTotals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LedgerStats: %v", err)
 	}
-	stats := ledger.Compression()
-	got, ok := stats["backend-a"]
-	if !ok {
-		t.Fatalf("backend-a missing from %+v", stats)
-	}
+	got := ledger["backend-a"].Compressed
 	// Other tests in this package seed rows too, so assert the shape rather
 	// than exact totals: the verbatim copy must not have been counted.
 	if got.Objects < 1 {

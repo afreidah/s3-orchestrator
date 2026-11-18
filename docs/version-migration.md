@@ -62,7 +62,19 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.182.x (current)
+### v0.183.x (current)
+
+**Unhashed copies are listed, and counted apart from the unmanaged ones ([#1684](https://github.com/afreidah/s3-orchestrator/issues/1684), v0.183.0)**
+
+The unhashed count used to include unmanaged copies, which `backfill-checksums` never hashes, so it could stay above zero after a backfill finished. It now counts only the managed copies, and the unmanaged ones are reported beside it. `GET /admin/api/unhashed`, `admin unhashed` and the TUI's Integrity pane list the copies themselves, narrowed by backend and by whether the orchestrator manages them.
+
+**Operator action items after upgrade:**
+
+- **`unhashed_copies` in `GET /admin/api/status` counts managed copies only.** The unmanaged ones are in the new `unmanaged_unhashed_copies` field, and the dashboard's **No Hash** column follows the managed count.
+- **`GET /admin/api/unreadable` returns more per copy.** Each entry keeps `key`, `backend`, `size_bytes` and `created_at` and gains the fields `GET /admin/api/object-locations` reports, including `managed` and `encrypted`. `admin unreadable` now prints a table.
+- **`GET /admin/api/object-locations` reports `managed` for each copy.**
+
+### v0.182.x
 
 **The object browser pages folders as well as files ([#1921](https://github.com/afreidah/s3-orchestrator/issues/1921), v0.182.0)**
 

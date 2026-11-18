@@ -75,6 +75,10 @@ type fakeLister struct {
 	deletedPrefix string                                  // prefix passed to DeletePrefix
 	deletedCount  int                                     // count DeletePrefix reports
 	deleteErr     error                                   // when set, both deletes fail
+
+	unhashed      *adminapi.CopyListResponse // the unhashed listing served
+	unreadable    *adminapi.CopyListResponse // the unreadable listing served
+	unhashedAsked []*bool                    // the managed filter of each unhashed request
 }
 
 // -------------------------------------------------------------------------
@@ -173,6 +177,21 @@ func (f *fakeLister) GetCleanupDLQ(_ context.Context) (*adminapi.CleanupDLQRespo
 		return f.cleanupD, nil
 	}
 	return &adminapi.CleanupDLQResponse{}, nil
+}
+
+func (f *fakeLister) ListUnhashed(_ context.Context, managed *bool) (*adminapi.CopyListResponse, error) {
+	f.unhashedAsked = append(f.unhashedAsked, managed)
+	if f.unhashed != nil {
+		return f.unhashed, nil
+	}
+	return &adminapi.CopyListResponse{}, nil
+}
+
+func (f *fakeLister) ListUnreadable(_ context.Context) (*adminapi.CopyListResponse, error) {
+	if f.unreadable != nil {
+		return f.unreadable, nil
+	}
+	return &adminapi.CopyListResponse{}, nil
 }
 
 func (f *fakeLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsResponse, error) {

@@ -3296,15 +3296,16 @@ func TestLedgerStats_ObjectCounts(t *testing.T) {
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 	mustRecordObject(t, s, "bucket/c", "backend-b", 300)
 
-	counts := ledgerOf(t, s).ObjectCounts()
-	if counts["backend-a"] != 2 || counts["backend-b"] != 1 {
-		t.Errorf("counts = %v, want backend-a 2 and backend-b 1", counts)
+	ledger := ledgerOf(t, s)
+	if ledger["backend-a"].Objects != 2 || ledger["backend-b"].Objects != 1 {
+		t.Errorf("ledger = %+v, want backend-a 2 and backend-b 1", ledger)
 	}
 }
 
-// TestLedgerStats_UnhashedCounts pins the per-backend NULL-content_hash count
-// that drives the dashboard's "Unverified" column, with one hashed and one
-// unhashed object on the same backend.
+// TestLedgerStats_UnhashedCounts pins the per-backend counts of copies with no
+// content hash that drive the dashboard's "No Hash" column, with one hashed
+// and one unhashed object on the same backend, and an unmanaged unhashed copy
+// counted apart from the backfill backlog.
 func TestLedgerStats_UnhashedCounts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -3316,10 +3317,18 @@ func TestLedgerStats_UnhashedCounts(t *testing.T) {
 		t.Fatalf("RecordObject hashed: %v", err)
 	}
 	mustRecordObject(t, s, "bucket/c", "backend-b", 300)
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+		Key: "stray.txt", Backend: "backend-b", Size: 400, Unmanaged: true,
+	}); err != nil {
+		t.Fatalf("ImportObject(unmanaged): %v", err)
+	}
 
-	counts := ledgerOf(t, s).UnhashedCounts()
-	if counts["backend-a"] != 1 || counts["backend-b"] != 1 {
-		t.Errorf("unhashed = %v, want 1 on each backend", counts)
+	ledger := ledgerOf(t, s)
+	if ledger["backend-a"].Unhashed != 1 || ledger["backend-b"].Unhashed != 1 {
+		t.Errorf("ledger = %+v, want 1 managed unhashed copy on each backend", ledger)
+	}
+	if ledger["backend-a"].UnmanagedUnhashed != 0 || ledger["backend-b"].UnmanagedUnhashed != 1 {
+		t.Errorf("ledger = %+v, want the stray alone unmanaged unhashed", ledger)
 	}
 }
 
@@ -3773,12 +3782,12 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 func assertUnreadableOnly(t *testing.T, s *Store, key string, size int64) {
 	t.Helper()
 	ctx := context.Background()
-	unreadable := listByForm(t, s, &unreadableCopies)
+	unreadable := listByForm(t, s, &core.UnreadableCopies)
 	if len(unreadable) != 1 || unreadable[0].ObjectKey != key || unreadable[0].SizeBytes != size {
 		t.Fatalf("unreadable = %+v, want only %s", unreadable, key)
 	}
 	past := core.Cursor{ObjectKey: unreadable[0].ObjectKey, BackendName: unreadable[0].BackendName}
-	if rest, err := s.ListCopiesByForm(ctx, &unreadableCopies, 10, past); err != nil || len(rest) != 0 {
+	if rest, err := s.ListCopiesByForm(ctx, &core.UnreadableCopies, 10, past); err != nil || len(rest) != 0 {
 		t.Errorf("unreadable listing past the only row = %+v, %v; want none", rest, err)
 	}
 	if n := ledgerOf(t, s).UnreadableCopies(); n != 1 {

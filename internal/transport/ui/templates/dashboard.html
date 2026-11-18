@@ -87,15 +87,14 @@
           <th class="num">Objects</th>
           <th class="num">Multipart</th>
           {{if .Data.HasCompressedData}}<th class="num" title="Bytes this backend is not storing because the objects on it are compressed: what those objects are, less what they occupy. Objects stored verbatim contribute nothing.">Saved</th>{{end}}
-          {{if .Config.IntegrityEnabled}}<th class="num" title="Objects without a stored SHA-256 content hash. Run Backfill Checksums to populate. Having a hash is not the same as having been verified against it - see Integrity Coverage below.">No Hash</th>{{end}}
+          {{if .Config.IntegrityEnabled}}<th class="num" title="Managed objects without a stored SHA-256 content hash. Run Backfill Checksums to populate. Unmanaged copies are left out, since backfill leaves them alone. Having a hash is not the same as having been verified against it - see Integrity Coverage below.">No Hash</th>{{end}}
         </tr>
       </thead>
       <tbody>
         {{range .Data.BackendOrder}}
           {{$stat := index $.Data.QuotaStats .}}
-          {{$objects := index $.Data.ObjectCounts .}}
+          {{$ledger := index $.Data.Ledger .}}
           {{$multipart := index $.Data.ActiveMultipartCounts .}}
-          {{$unverified := index $.Data.UnverifiedObjectCounts .}}
           {{$drain := index $.Data.DrainingBackends .}}
           {{$refused := index $.Data.RefusedCalls .}}
           {{$health := $refused.Health}}
@@ -120,13 +119,13 @@
               </div>
               {{end}}
             </td>
-            <td class="num">{{formatNumber $objects}}</td>
+            <td class="num">{{formatNumber $ledger.Objects}}</td>
             <td class="num">{{formatNumber $multipart}}</td>
             {{if $.Data.HasCompressedData}}
               {{$saved := $.Data.CompressionSaved .}}
               <td class="num">{{if ne $saved 0}}{{formatBytes $saved}}{{else}}&mdash;{{end}}</td>
             {{end}}
-            {{if $.Config.IntegrityEnabled}}<td class="num">{{if ne $unverified 0}}<span class="orphan-value">{{formatNumber $unverified}}</span>{{else}}&mdash;{{end}}</td>{{end}}
+            {{if $.Config.IntegrityEnabled}}<td class="num">{{if ne $ledger.Unhashed 0}}<span class="orphan-value">{{formatNumber $ledger.Unhashed}}</span>{{else}}&mdash;{{end}}</td>{{end}}
           </tr>
         {{end}}
       </tbody>
@@ -191,7 +190,7 @@
       <tbody>
         <tr>
           <td>Plaintext copies</td>
-          <td class="num">{{if ne .Data.PlaintextCopies 0}}<span class="orphan-value">{{formatNumber .Data.PlaintextCopies}}</span>{{else}}&mdash;{{end}}</td>
+          <td class="num">{{with .Data.Ledger.PlaintextCopies}}<span class="orphan-value">{{formatNumber .}}</span>{{else}}&mdash;{{end}}</td>
           <td>Copies still stored unencrypted. Enabling encryption applies to new writes only, so anything already on a backend stays as it is until you run Encrypt Existing. A non-zero value means the fleet is only partly encrypted despite the setting being on.</td>
         </tr>
       </tbody>

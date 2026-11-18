@@ -48,7 +48,6 @@ import (
 // It also records a plaintext ETag for an object that has none.
 type ScrubberStore interface {
 	core.IntegrityStore
-	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error
@@ -282,24 +281,6 @@ func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, re
 // UNREADABLE  -  copies encrypted with no key
 // -------------------------------------------------------------------------
 
-// unreadableCopies selects copies encrypted with no key, which nothing can
-// decrypt.
-var unreadableCopies = core.FormFilter{With: core.StoredEncrypted, Without: core.StoredKeyed}
-
-// ListUnreadable returns up to limit copies that are encrypted with no key,
-// and how many there are in total.
-func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error) {
-	locs, err := s.d.Store.ListCopiesByForm(ctx, &unreadableCopies, limit, core.Cursor{})
-	if err != nil {
-		return nil, 0, err
-	}
-	ledger, err := s.d.Store.LedgerStats(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-	return locs, ledger.UnreadableCopies(), nil
-}
-
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
 // at a time, as one purge pass. Nothing can decrypt them, so they only hold
 // quota. The listing is walked by cursor, so a copy that fails to discard is
@@ -307,7 +288,7 @@ func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.Object
 func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error) {
 	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadPurge}, func(ctx context.Context) (batch.Summary, error) {
 		pager := copyPager(batchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return s.d.Store.ListCopiesByForm(ctx, &unreadableCopies, limit, after)
+			return s.d.Store.ListCopiesByForm(ctx, &core.UnreadableCopies, limit, after)
 		})
 		runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
 		total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
@@ -376,7 +357,7 @@ func (s *Scrubber) Backfill(ctx context.Context, req BackfillRequest, observer p
 // pause sit between pages, so stopping on them leaves the page that was just
 // hashed complete.
 func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
-	unhashed := core.FormFilter{Without: core.StoredHashed, Backend: req.Backend, ManagedOnly: true}
+	unhashed := core.UnhashedCopies(req.Backend, new(true))
 	pager := copyPager(req.BatchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 		return s.d.Store.ListCopiesByForm(ctx, &unhashed, limit, after)
 	})

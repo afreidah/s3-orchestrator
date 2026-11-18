@@ -50,7 +50,7 @@ Every other endpoint declares a permission over a **backend** or over the **inst
 
 | Permission | What it reaches |
 | --- | --- |
-| `admin-read` | Status, workers, instances, reload outcome, replication and over-replication counts, unreadable copies, cleanup depths, cache utilization, the current log level, drain progress |
+| `admin-read` | Status, workers, instances, reload outcome, replication and over-replication counts, unhashed and unreadable copies, cleanup depths, cache utilization, the current log level, drain progress |
 | `admin-logs` | The in-memory log buffer and flight-recorder trace snapshots |
 | `admin-maintain` | `replicate`, replication queue rebuild, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, unreadable purge, usage flush and reconcile, cleanup DLQ requeue |
 | `admin-convert` | `encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing` |
@@ -222,6 +222,8 @@ A backend's bucket can hold objects the orchestrator never wrote: data that pred
 An unmanaged object counts toward the backend's `bytes_used`, because the bytes really are occupying the quota and placement decisions read those totals. Nothing else touches it: replication will not copy it, rebalance will not move it, drain will not relocate it, and scrub and checksum backfill skip it rather than spending egress reading a body the orchestrator does not manage. It is also unreachable through the S3 API: S3 listings leave it out, and a read of its key answers `NoSuchKey`. A client PUT to the key replaces it, and a client DELETE removes it.
 
 To bring an object from outside every prefix under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object. An unreadable encrypted object cannot be recovered without its key; restore it from another source, or remove it. `GET /admin/api/unreadable` lists unreadable copies with their total (`limit` caps the list), and `POST /admin/api/unreadable` deletes all of them: each copy's bytes, its row and its quota. The `s3o_unreadable_copies` gauge reports how many exist.
+
+`GET /admin/api/unhashed` lists the copies with no content hash in the same shape, narrowed by `backend` and by `managed`: `true` keeps the managed copies `backfill-checksums` hashes, `false` the unmanaged ones it leaves alone, and leaving it out lists both. The status endpoint reports the two counts apart per backend, as `unhashed_copies` and `unmanaged_unhashed_copies`, so the number beside a backfill is the number it can clear.
 
 ## Skipped operations
 

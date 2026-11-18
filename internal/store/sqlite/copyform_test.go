@@ -45,11 +45,7 @@ const paritySize = 1000
 
 // backfillCopies is the filter the checksum backfill lists by: managed copies
 // with no content hash.
-var backfillCopies = core.FormFilter{Without: core.StoredHashed, ManagedOnly: true}
-
-// unreadableCopies is the filter the unreadable purge lists by: copies
-// encrypted with no key.
-var unreadableCopies = core.FormFilter{With: core.StoredEncrypted, Without: core.StoredKeyed}
+var backfillCopies = core.UnhashedCopies("", new(true))
 
 // listByForm returns the first page of copies f selects, failing the test on
 // error.
@@ -251,9 +247,10 @@ func TestLedgerStats_CountsEveryForm(t *testing.T) {
 	}
 }
 
-// TestListCopiesByForm_ManagedOnly verifies ManagedOnly leaves out a copy the
-// orchestrator does not manage, and that without it the copy is listed.
-func TestListCopiesByForm_ManagedOnly(t *testing.T) {
+// TestListCopiesByForm_Managed verifies Managed keeps only the copies the
+// orchestrator manages or only the ones it does not, and that unset it lists
+// both.
+func TestListCopiesByForm_Managed(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	recordForm(t, s, keyOwned, 100, nil)
@@ -263,11 +260,16 @@ func TestListCopiesByForm_ManagedOnly(t *testing.T) {
 		t.Fatalf("ImportObject(unmanaged): %v", err)
 	}
 
-	if got := keysOf(listByForm(t, s, &core.FormFilter{Without: core.StoredHashed})); len(got) != 2 {
+	every := core.UnhashedCopies("", nil)
+	if got := keysOf(listByForm(t, s, &every)); len(got) != 2 {
 		t.Errorf("every unhashed copy = %v, want the owned and the stray", got)
 	}
 	if got := keysOf(listByForm(t, s, &backfillCopies)); !slices.Equal(got, []string{keyOwned}) {
 		t.Errorf("managed unhashed copies = %v, want only %s", got, keyOwned)
+	}
+	stray := core.UnhashedCopies("", new(false))
+	if got := keysOf(listByForm(t, s, &stray)); !slices.Equal(got, []string{"stray.txt"}) {
+		t.Errorf("unmanaged unhashed copies = %v, want only the stray", got)
 	}
 }
 

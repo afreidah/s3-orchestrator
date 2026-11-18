@@ -55,11 +55,7 @@ const paritySize = 1000
 
 // backfillCopies is the filter the checksum backfill lists by: managed copies
 // with no content hash.
-var backfillCopies = core.FormFilter{Without: core.StoredHashed, ManagedOnly: true}
-
-// unreadableCopies is the filter the unreadable purge lists by: copies
-// encrypted with no key.
-var unreadableCopies = core.FormFilter{With: core.StoredEncrypted, Without: core.StoredKeyed}
+var backfillCopies = core.UnhashedCopies("", new(true))
 
 // pgCandidatesUnder is the filter compress-existing lists by: uncompressed
 // copies still worth encoding under thresholds.
@@ -280,7 +276,8 @@ func TestStoreInt_ListCopiesByForm_NarrowsByBackendKeyAndManagement(t *testing.T
 		{"except an unused key", core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: "key-absent"}, []string{onA, onB}},
 		{"except keeps keyless copies", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted, ExceptKeyID: "key-1"}, []string{stray}},
 		{"unmanaged included", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted}, []string{stray}},
-		{"managed only", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted, ManagedOnly: true}, nil},
+		{"managed only", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted, Managed: new(true)}, nil},
+		{"unmanaged only", core.FormFilter{Without: core.StoredHashed, Managed: new(false)}, []string{stray}},
 	}
 	for _, tc := range cases {
 		if got := pgKeysByForm(t, s, &tc.f); !slices.Equal(got, tc.want) {

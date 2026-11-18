@@ -89,6 +89,7 @@ var (
 	userIDPath        = param{Name: adminapi.ParamID, In: inPath, Required: true, Type: typeString, Description: descUserID}
 	resourceNamePath  = param{Name: adminapi.ParamName, In: inPath, Required: true, Type: typeString, Description: descResourceName}
 	resourceKindQuery = param{Name: adminapi.ParamKind, In: inQuery, Type: typeString, Description: descResourceKind}
+	copyListLimit     = param{Name: adminapi.ParamLimit, In: inQuery, Type: typeInteger, Description: "Maximum copies to return"}
 )
 
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
@@ -475,13 +476,22 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: adminapi.ParamBackend,
 		},
 		{
+			Method: http.MethodGet, Pattern: adminapi.PathUnhashed, Handler: h.handleListUnhashed,
+			Summary:  "List copies that have no content hash",
+			Response: adminapi.CopyListResponse{},
+			Params: []param{
+				{Name: adminapi.ParamBackend, In: inQuery, Type: typeString, Description: "Restrict the listing to one backend"},
+				{Name: adminapi.ParamManaged, In: inQuery, Type: typeBoolean, Description: "true for the managed copies backfill hashes, false for the unmanaged ones; omit for both"},
+				copyListLimit,
+			},
+			Kind: core.ResourceBackend, Perm: core.PermAdminRead, Resource: adminapi.ParamBackend,
+		},
+		{
 			Method: http.MethodGet, Pattern: adminapi.PathUnreadable, Handler: h.handleListUnreadable,
 			Summary:  "List copies that are encrypted with no key",
-			Response: adminapi.UnreadableListResponse{},
-			Params: []param{
-				{Name: adminapi.ParamLimit, In: inQuery, Type: typeInteger, Description: "Maximum copies to return"},
-			},
-			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
+			Response: adminapi.CopyListResponse{},
+			Params:   []param{copyListLimit},
+			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathUnreadable, Handler: h.handlePurgeUnreadable,

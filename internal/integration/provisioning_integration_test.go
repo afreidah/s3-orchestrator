@@ -119,6 +119,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Backlog:      testStore,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		CopyStore:    testStore,
 		Provisioning: testStore,
 		Registry:     publisher,
 		Declared:     declared,

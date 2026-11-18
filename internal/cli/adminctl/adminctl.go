@@ -95,6 +95,7 @@ var adminCommands = []verb{
 	{"remove-backend", "Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)", cmdRemoveBackend},
 	{"scrub", "Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now, -backend to scope)", cmdScrub},
 	{"backfill-checksums", "Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run, -backend to scope)", cmdBackfillChecksums},
+	{"unhashed", "List copies with no content hash (use -backend to scope, -managed=true|false to split)", cmdUnhashed},
 	{"reconcile", "Reconcile DB against backend (use -backend to scope to one backend)", cmdReconcile},
 	{"lifecycle", "Run one lifecycle expiration sweep now instead of waiting for the hourly tick", cmdLifecycle},
 	{"usage-reconcile", "Recompute bytes_used from the object ledger to correct quota drift", cmdUsageReconcile},

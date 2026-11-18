@@ -92,6 +92,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	}
 	h.d.Ops.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber: newScrubber(t, sc),
+		Store:    newCopyStore(t, sc),
 		Locker:   testx.Locker{},
 		Config:   config.NewLive(running),
 	})
@@ -276,6 +277,27 @@ type scrubberStub struct {
 	backfillBacklog int
 	backfillReq     worker.BackfillRequest
 	unreadable      []core.ObjectLocation
+	unhashed        []core.ObjectLocation
+	ledger          core.LedgerStats
+	listFilter      core.FormFilter
+}
+
+// newCopyStore builds a CopyStore mock from cfg: the unreadable filter pages
+// cfg.unreadable and any other pages cfg.unhashed, the filter asked for is
+// recorded in cfg.listFilter, and the ledger is cfg.ledger.
+func newCopyStore(t *testing.T, cfg *scrubberStub) *opstest.MockCopyStore {
+	t.Helper()
+	m := opstest.NewMockCopyStore(gomock.NewController(t))
+	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, f *core.FormFilter, _ int, _ core.Cursor) ([]core.ObjectLocation, error) {
+			cfg.listFilter = *f
+			if *f == core.UnreadableCopies {
+				return cfg.unreadable, nil
+			}
+			return cfg.unhashed, nil
+		}).AnyTimes()
+	m.EXPECT().LedgerStats(gomock.Any()).Return(cfg.ledger, nil).AnyTimes()
+	return m
 }
 
 // newScrubber builds a ScrubberOps mock from cfg.
@@ -310,10 +332,6 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 				Summary: batch.Summary{Attempted: n, Succeeded: n},
 				Done:    cfg.backfillBacklog == 0,
 			}, nil
-		}).AnyTimes()
-	m.EXPECT().ListUnreadable(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, int) ([]core.ObjectLocation, int64, error) {
-			return cfg.unreadable, int64(len(cfg.unreadable)), nil
 		}).AnyTimes()
 	// Purges every unreadable copy in one pass, so the next pass finds none.
 	m.EXPECT().PurgeUnreadable(gomock.Any(), gomock.Any(), gomock.Any()).

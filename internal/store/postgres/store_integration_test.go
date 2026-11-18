@@ -924,23 +924,31 @@ func pgCoverage(t *testing.T, s *Store, reachable []string) core.CoverageStat {
 }
 
 // TestStoreInt_LedgerStats_CountsAndUnhashed verifies the grouped pass counts a
-// new copy on its backend and, with no content hash, in the unhashed backlog.
-// The suite shares one database, so the assertions are deltas.
+// new copy on its backend and, with no content hash, in the unhashed backlog,
+// while an unmanaged unhashed copy is counted apart from it. The suite shares
+// one database, so the assertions are deltas.
 func TestStoreInt_LedgerStats_CountsAndUnhashed(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	before := pgLedger(t, s)["backend-a"]
 
-	key := uniqueKey(t, "ledger")
+	key, stray := uniqueKey(t, "ledger"), uniqueKey(t, "stray")
 	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: stray, Backend: "backend-a", Size: 10, Unmanaged: true}); err != nil {
+		t.Fatalf("ImportObject(unmanaged): %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, stray) }()
 
 	after := pgLedger(t, s)["backend-a"]
-	if after.Objects != before.Objects+1 || after.Unhashed != before.Unhashed+1 {
-		t.Errorf("objects %d -> %d, unhashed %d -> %d; want each up by one",
+	if after.Objects != before.Objects+2 || after.Unhashed != before.Unhashed+1 {
+		t.Errorf("objects %d -> %d, unhashed %d -> %d; want two more objects and one more unhashed",
 			before.Objects, after.Objects, before.Unhashed, after.Unhashed)
+	}
+	if after.UnmanagedUnhashed != before.UnmanagedUnhashed+1 {
+		t.Errorf("unmanaged unhashed %d -> %d; want up by one", before.UnmanagedUnhashed, after.UnmanagedUnhashed)
 	}
 	if _, err := s.GetActiveMultipartCounts(ctx); err != nil {
 		t.Errorf("GetActiveMultipartCounts: %v", err)

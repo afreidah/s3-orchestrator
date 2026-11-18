@@ -370,8 +370,8 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
   // internal/worker/scrubber.go
   type ScrubberStore interface {
       core.IntegrityStore
-      LedgerStats(ctx context.Context) (core.LedgerStats, error)
-      DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
+      DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
+      GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
       // ...
   }
 

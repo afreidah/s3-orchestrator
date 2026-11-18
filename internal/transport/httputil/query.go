@@ -5,9 +5,10 @@
 //
 // Shared parsing for the optional count parameters every surface takes: S3's
 // paging parameters and the admin and dashboard caps (batch_size, max,
-// delay_ms, limit). Absent means the default, and a malformed value is refused
-// rather than treated as absent, because the default for a cap like max is the
-// whole fleet and a typo must not widen a run.
+// delay_ms, limit), and for the optional boolean filters. Absent means the
+// default, and a malformed value is refused rather than treated as absent,
+// because the default for a cap like max is the whole fleet and a typo must
+// not widen a run.
 // -------------------------------------------------------------------------------
 
 package httputil
@@ -50,4 +51,20 @@ func RequireQueryCount(w http.ResponseWriter, r *http.Request, param string, def
 		return 0, false
 	}
 	return n, true
+}
+
+// RequireQueryBool reads an optional boolean parameter: absent or empty is nil,
+// meaning the caller did not choose. A value strconv.ParseBool refuses writes a
+// 400 JSON error and returns false so the caller can return early.
+func RequireQueryBool(w http.ResponseWriter, r *http.Request, param string) (*bool, bool) {
+	s := r.URL.Query().Get(param)
+	if s == "" {
+		return nil, true
+	}
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, fmt.Sprintf("Argument %s must be true or false", param))
+		return nil, false
+	}
+	return &v, true
 }

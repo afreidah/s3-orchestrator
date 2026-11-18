@@ -545,13 +545,16 @@ func profileText(p adminapi.BackendProfile) string {
 }
 
 // holdingsText renders what a backend holds: its objects, the copies backfill
-// has yet to hash, the uploads in progress and, when compression saves
-// anything there, how much.
+// has yet to hash, the unmanaged unhashed copies it leaves alone when there are
+// any, the uploads in progress and, when compression saves anything there, how
+// much.
 func holdingsText(b *adminapi.BackendStatus) string {
-	text := fmt.Sprintf("%s objects   %s unhashed   %s uploads in progress",
-		humanize.Comma(b.ObjectCount),
-		backlogStyle(b.UnhashedCopies).Render(humanize.Comma(b.UnhashedCopies)),
-		humanize.Comma(b.ActiveMultipartUploads))
+	unhashed := backlogStyle(b.UnhashedCopies).Render(humanize.Comma(b.UnhashedCopies)) + " unhashed"
+	if b.UnmanagedUnhashedCopies > 0 {
+		unhashed += fmt.Sprintf(" (+%s unmanaged)", humanize.Comma(b.UnmanagedUnhashedCopies))
+	}
+	text := fmt.Sprintf("%s objects   %s   %s uploads in progress",
+		humanize.Comma(b.ObjectCount), unhashed, humanize.Comma(b.ActiveMultipartUploads))
 	if b.CompressionSavedBytes > 0 {
 		text += "   " + statusOKStyle.Render(humanize.Bytes(b.CompressionSavedBytes)) + " saved"
 	}

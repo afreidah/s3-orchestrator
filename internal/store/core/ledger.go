@@ -24,21 +24,23 @@ import (
 // -------------------------------------------------------------------------
 
 // LedgerStat is one backend's share of the ledger. Objects counts every row,
-// managed or not, and StoredBytes what they hold. Unhashed counts rows with no
-// content hash, the checksum backfill's backlog. Plaintext counts rows stored
+// managed or not, and StoredBytes what they hold. Unhashed counts managed rows
+// with no content hash, the checksum backfill's backlog, and UnmanagedUnhashed
+// the unmanaged ones, which backfill leaves alone. Plaintext counts rows stored
 // unencrypted, the set encrypt-existing would process, and Unreadable counts
 // rows encrypted with no key. Compressed covers encoded copies only. Verifiable
 // counts the hashed managed rows the scrub sweep reads, and NeverVerified those
 // of them never scrubbed.
 type LedgerStat struct {
-	Objects       int64
-	StoredBytes   int64
-	Unhashed      int64
-	Plaintext     int64
-	Unreadable    int64
-	Compressed    CompressionStat
-	Verifiable    int64
-	NeverVerified int64
+	Objects           int64
+	StoredBytes       int64
+	Unhashed          int64
+	UnmanagedUnhashed int64
+	Plaintext         int64
+	Unreadable        int64
+	Compressed        CompressionStat
+	Verifiable        int64
+	NeverVerified     int64
 }
 
 // LedgerStats is the ledger's figures keyed by backend name. A backend that
@@ -88,14 +90,23 @@ func FoldLedger(groups []LedgerGroup) LedgerStats {
 	return out
 }
 
-// ObjectCounts returns each backend's row count.
-func (s LedgerStats) ObjectCounts() map[string]int64 {
-	return s.perBackend(func(st LedgerStat) int64 { return st.Objects })
-}
-
-// UnhashedCounts returns each backend's count of rows with no content hash.
-func (s LedgerStats) UnhashedCounts() map[string]int64 {
-	return s.perBackend(func(st LedgerStat) int64 { return st.Unhashed })
+// UnhashedCount returns how many copies on backend, or on every backend when it
+// is empty, have no content hash, counting only the managed or only the
+// unmanaged ones when managed is set. It totals what UnhashedCopies selects.
+func (s LedgerStats) UnhashedCount(backend string, managed *bool) int64 {
+	var n int64
+	for name, st := range s {
+		if backend != "" && name != backend {
+			continue
+		}
+		if managed == nil || *managed {
+			n += st.Unhashed
+		}
+		if managed == nil || !*managed {
+			n += st.UnmanagedUnhashed
+		}
+	}
+	return n
 }
 
 // PlaintextCopies returns how many copies across the fleet are stored
@@ -108,18 +119,6 @@ func (s LedgerStats) PlaintextCopies() int64 {
 // no key.
 func (s LedgerStats) UnreadableCopies() int64 {
 	return s.total(func(st LedgerStat) int64 { return st.Unreadable })
-}
-
-// Compression returns each backend's encoded-copy totals. Backends holding no
-// encoded copies are absent rather than present as zeroes.
-func (s LedgerStats) Compression() map[string]CompressionStat {
-	out := make(map[string]CompressionStat)
-	for name, st := range s {
-		if st.Compressed.Objects > 0 {
-			out[name] = st.Compressed
-		}
-	}
-	return out
 }
 
 // Coverage reports how far behind verification is as of now, split by whether
@@ -166,7 +165,11 @@ func (st *LedgerStat) add(g *LedgerGroup) {
 	st.Objects += g.Copies
 	st.StoredBytes += g.StoredBytes
 	if !g.Form.Has(StoredHashed) {
-		st.Unhashed += g.Copies
+		if g.Managed {
+			st.Unhashed += g.Copies
+		} else {
+			st.UnmanagedUnhashed += g.Copies
+		}
 	}
 	if !g.Form.Has(StoredEncrypted) {
 		st.Plaintext += g.Copies
@@ -216,15 +219,6 @@ func (c LedgerCounts) plus(o LedgerCounts, n int64) LedgerCounts {
 		ObjectBytes:   c.ObjectBytes + n*o.ObjectBytes,
 		NeverScrubbed: c.NeverScrubbed + n*o.NeverScrubbed,
 	}
-}
-
-// perBackend maps each backend to one of its figures.
-func (s LedgerStats) perBackend(field func(LedgerStat) int64) map[string]int64 {
-	out := make(map[string]int64, len(s))
-	for name, st := range s {
-		out[name] = field(st)
-	}
-	return out
 }
 
 // total sums one figure across every backend.
