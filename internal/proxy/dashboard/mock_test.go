@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	counter "github.com/afreidah/s3-orchestrator/internal/counter"
 	backendstate "github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
@@ -68,6 +69,20 @@ func (m *MockFleetView) BackendOrder() []string {
 func (mr *MockFleetViewMockRecorder) BackendOrder() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockFleetView)(nil).BackendOrder))
+}
+
+// PressureState mocks base method.
+func (m *MockFleetView) PressureState(name string) counter.PressureState {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PressureState", name)
+	ret0, _ := ret[0].(counter.PressureState)
+	return ret0
+}
+
+// PressureState indicates an expected call of PressureState.
+func (mr *MockFleetViewMockRecorder) PressureState(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PressureState", reflect.TypeOf((*MockFleetView)(nil).PressureState), name)
 }
 
 // Profile mocks base method.

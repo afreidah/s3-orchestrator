@@ -20,6 +20,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -92,6 +93,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		}
 		return "", o.d.Core.ClassifyWriteError(span, operation, err)
 	}
+	locations = accounting.PressuredLast(o.d.Core.Acct(), locations, func(loc core.ObjectLocation) string { return loc.BackendName })
 
 	size, contentType, metadata, srcForm, ok := o.headSourceForCopy(ctx, sourceKey, locations)
 	if !ok {

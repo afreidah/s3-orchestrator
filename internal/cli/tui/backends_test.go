@@ -203,9 +203,18 @@ func TestBackendDetail_Contents(t *testing.T) {
 		t.Errorf("detail lists unsupported features for a backend that refused none:\n%s", got)
 	}
 
+	if strings.Contains(got, "pressure") {
+		t.Errorf("detail reports pressure on a backend under none:\n%s", got)
+	}
+
 	b.Unsupported = []string{"range", "batch-delete"}
 	if got := m.backendDetail(b); !strings.Contains(got, "unsupported") || !strings.Contains(got, "range,batch-delete") {
 		t.Errorf("detail missing the unsupported features:\n%s", got)
+	}
+
+	b.Pressure = adminapi.BackendPressure{Reasons: []string{"slow"}, SlowShare: 0.31, BaselineSeconds: 0.042}
+	if got := m.backendDetail(b); !strings.Contains(got, "slow (31% slow, 0% timed out over 1m, baseline 42ms)") {
+		t.Errorf("detail missing the pressure:\n%s", got)
 	}
 }
 

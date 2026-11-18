@@ -31,7 +31,7 @@ import (
 // newListTestManager wires a Manager with only what ListObjects touches: the
 // store and a no-op accounting recorder.
 func newListTestManager(store Stores) *Manager {
-	rec := accounting.New(nil, func(_, _ string, _ time.Time, _ error) {})
+	rec := accounting.New(nil, nil, func(_, _ string, _ time.Time, _ error) {})
 	return &Manager{d: Deps{Stores: store, Core: listTestRuntime{acct: rec}}, log: slog.Default()}
 }
 

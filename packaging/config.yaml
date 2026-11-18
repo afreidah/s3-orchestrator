@@ -260,6 +260,16 @@ backends:
 #   failure_threshold: 5         # Consecutive failures before opening (default: 5)
 #   open_timeout: 5m             # Delay before probing recovery (default: 5m)
 
+# --- Backend pressure (on by default) ---
+# Tries a backend after the others while its calls run slow against its own
+# baseline or hit the backend timeout. It is never refused, only tried last.
+# backend_pressure:
+#   enabled: true
+#   slow_factor: 3               # A call over this many times the baseline is slow (default: 3)
+#   slow_share: 0.25             # Share of slow calls that puts a backend under pressure (default: 0.25)
+#   timeout_share: 0.05          # Share of backend-timeout hits that does (default: 0.05)
+#   min_calls: 20                # Fewest calls in the last minute it is judged on (default: 20)
+
 # --- Prometheus metrics ---
 # telemetry:
 #   metrics:

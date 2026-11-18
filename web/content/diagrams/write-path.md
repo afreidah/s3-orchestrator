@@ -184,7 +184,7 @@ window.s3oDiagram = {
     RANK: {
       title: 'Routing Strategy',
       badge: 'decision', badgeText: 'routing strategy',
-      body: '<p>Orders the eligible backends for the claim. Ranking reads an in-memory snapshot of what each backend holds, reloaded on the usage service tick, so a stale ranking costs only an uneven spread that the next reload corrects.</p><p>Nothing here decides whether a backend has room; the intent insert does.</p>'
+      body: '<p>Orders the eligible backends for the claim. Ranking reads an in-memory snapshot of what each backend holds, reloaded on the usage service tick, so a stale ranking costs only an uneven spread that the next reload corrects.</p><p>Under either strategy, a backend under <a href="../../docs/configuration/#backend_pressure">pressure</a> - its calls slowed against its own baseline or hitting the backend timeout - goes last, so it takes the write only when no other candidate has room.</p><p>Nothing here decides whether a backend has room; the intent insert does.</p>'
     },
     LEAST: {
       title: 'Least Utilized First',

@@ -101,6 +101,8 @@ These notify about infrastructure state changes. The subject field typically con
 | `backend.removed` | Backend removed after drain |
 | `backend.cordoned` | Backend cordoned: no new copies land on it |
 | `backend.uncordoned` | Backend cordon cleared |
+| `backend.pressure.demoted` | A backend's calls slowed against its baseline or hit the backend timeout, so this instance tries it after the others; `reasons` names why, with the last minute's `slow_share` and `timeout_share` |
+| `backend.pressure.restored` | A backend left pressure and is tried in its normal order again |
 | `integrity.corruption_detected` | Scrubber found a hash mismatch |
 | `cleanup.exhausted` | Cleanup queue item hit max retry attempts |
 | `replication.target_exhausted` | No backend has space for a replica |

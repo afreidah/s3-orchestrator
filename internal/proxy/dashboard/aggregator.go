@@ -30,8 +30,8 @@ import (
 // figures, and a backend that holds no rows is absent from it, so a lookup
 // reads as zero. RefusedCalls holds only backends refusing at least one call,
 // so a missing entry means the backend serves every call. Unsupported likewise
-// holds only backends that have refused an optional feature. Profiles holds
-// every backend.
+// holds only backends that have refused an optional feature. Pressure and
+// Profiles hold every backend.
 type Data struct {
 	BackendOrder          []string
 	QuotaStats            map[string]core.QuotaStat
@@ -48,6 +48,7 @@ type Data struct {
 	BackendFlags          map[string]core.BackendFlags
 	RefusedCalls          map[string]core.BackendCalls
 	Unsupported           map[string]core.BackendFeatures
+	Pressure              map[string]counter.PressureState
 	Profiles              map[string]core.BackendProfile
 }
 
@@ -60,6 +61,7 @@ type FleetView interface {
 	BackendFlags(name string) core.BackendFlags
 	ServedCalls(name string) core.BackendCalls
 	Unsupported(name string) core.BackendFeatures
+	PressureState(name string) counter.PressureState
 	Profile(name string) core.BackendProfile
 }
 
@@ -131,10 +133,12 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.BackendFlags = make(map[string]core.BackendFlags)
 	data.RefusedCalls = make(map[string]core.BackendCalls)
 	data.Unsupported = make(map[string]core.BackendFeatures)
+	data.Pressure = make(map[string]counter.PressureState)
 	data.Profiles = make(map[string]core.BackendProfile)
 
 	for _, name := range da.d.Fleet.BackendOrder() {
 		data.Profiles[name] = da.d.Fleet.Profile(name)
+		data.Pressure[name] = da.d.Fleet.PressureState(name)
 		if refused := core.AllCalls &^ da.d.Fleet.ServedCalls(name); refused != 0 {
 			data.RefusedCalls[name] = refused
 		}

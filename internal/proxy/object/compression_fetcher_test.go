@@ -69,7 +69,7 @@ func newFakeRangeRuntime(beName string, limits core.UsageLimits) *fakeRangeRunti
 	)
 	return &fakeRangeRuntime{
 		usage: usage,
-		acct:  accounting.New(usage, func(string, string, time.Time, error) {}),
+		acct:  accounting.New(usage, nil, func(string, string, time.Time, error) {}),
 	}
 }
 

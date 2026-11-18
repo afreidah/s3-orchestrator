@@ -56,6 +56,8 @@ const (
 	BackendRemoved             = "backend.removed"
 	BackendCordoned            = "backend.cordoned"
 	BackendUncordoned          = "backend.uncordoned"
+	BackendPressureDemoted     = "backend.pressure.demoted"
+	BackendPressureRestored    = "backend.pressure.restored"
 	RebalanceCompleted         = "rebalance.completed"
 	ReplicationCompleted       = "replication.completed"
 	LifecycleCompleted         = "lifecycle.completed"

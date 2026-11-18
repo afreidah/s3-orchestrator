@@ -505,9 +505,9 @@ func (m *model) backendsBody() []pane {
 // -------------------------------------------------------------------------
 
 // backendDetail renders one backend in full: its health and flags, where it
-// is, what it holds, the optional features it has refused when there are any,
-// each of its limits as a bar against its ceiling, and the instance whose view
-// of the breakers and features this is.
+// is, what it holds, the optional features it has refused and the pressure it
+// is under when there are any, each of its limits as a bar against its
+// ceiling, and the instance whose view of the breakers and features this is.
 func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 	storage := output.StorageCeiling(b)
 	rows := []meterRow{{Ceiling: storage, name: storage.Label}}
@@ -522,12 +522,23 @@ func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 	if len(b.Unsupported) > 0 {
 		fields = append(fields, field{"unsupported", logLevelWarn.Render(output.NameList(b.Unsupported))})
 	}
+	if len(b.Pressure.Reasons) > 0 {
+		fields = append(fields, field{"pressure", logLevelWarn.Render(pressureText(b.Pressure))})
+	}
 	fields = append(fields, field{"instance", output.Instance(m.backends.instance)})
 	return strings.Join([]string{
 		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
 		fieldBlock(summaryLabelWidth, fields...),
 		meterBlock("usage   "+output.Cycle(b.UsageCycle), m.meterColumns(rows), rows),
 	}, "\n")
+}
+
+// pressureText renders why a backend is tried last, with the last minute's
+// shares and the baseline a call is judged slow against.
+func pressureText(p adminapi.BackendPressure) string {
+	baseline := time.Duration(p.BaselineSeconds * float64(time.Second)).Round(time.Millisecond)
+	return fmt.Sprintf("%s (%.0f%% slow, %.0f%% timed out over 1m, baseline %s)",
+		output.NameList(p.Reasons), p.SlowShare*100, p.TimeoutShare*100, baseline)
 }
 
 // profileText renders where a backend is and the largest object it takes,

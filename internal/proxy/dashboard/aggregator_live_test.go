@@ -18,9 +18,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -69,15 +71,18 @@ func newStubFleet(ctrl *gomock.Controller, order ...string) *MockFleetView {
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
+	fleet.EXPECT().PressureState(gomock.Any()).Return(counter.PressureState{}).AnyTimes()
 	return fleet
 }
 
 // newLiveFleet returns a FleetView over the named backends, each with an empty
-// profile. Each test states the flags and served calls it is about.
+// profile and under no pressure. Each test states the flags and served calls
+// it is about.
 func newLiveFleet(ctrl *gomock.Controller, order ...string) *MockFleetView {
 	fleet := NewMockFleetView(ctrl)
 	fleet.EXPECT().BackendOrder().Return(order).AnyTimes()
 	fleet.EXPECT().Profile(gomock.Any()).Return(core.BackendProfile{}).AnyTimes()
+	fleet.EXPECT().PressureState(gomock.Any()).Return(counter.PressureState{}).AnyTimes()
 	return fleet
 }
 
@@ -231,10 +236,10 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	}
 }
 
-// TestDecorateLiveState_RecordsProfiles asserts every backend's configured
-// profile is carried, including a healthy backend with no flags, which the
-// flag and drain maps leave out.
-func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
+// TestDecorateLiveState_RecordsProfilesAndPressure asserts every backend's
+// configured profile and pressure are carried, including a healthy backend with
+// no flags, which the flag and drain maps leave out.
+func TestDecorateLiveState_RecordsProfilesAndPressure(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
@@ -243,6 +248,8 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
+	pressured := counter.PressureState{Reasons: counter.PressureSlow, Baseline: time.Second}
+	fleet.EXPECT().PressureState("b1").Return(pressured).AnyTimes()
 	want := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "b", MaxObjectSize: 5 << 30}
 	fleet.EXPECT().Profile("b1").Return(want).AnyTimes()
 
@@ -253,5 +260,8 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	}
 	if got := data.Profiles["b1"]; got != want {
 		t.Errorf("profile = %+v, want %+v", got, want)
+	}
+	if got := data.Pressure["b1"]; got != pressured {
+		t.Errorf("pressure = %+v, want %+v", got, pressured)
 	}
 }

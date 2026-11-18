@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
@@ -143,6 +144,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		States:  states,
 		Config:  live.UsageFlush(),
 	}))
+	sm.Register(counter.NewPressureService(rt.Pressure()))
 	sm.Register(breaker.NewWatchdog(registry))
 	if fr := Optional[*debug.FlightRecorderService](i).Get(ctx); fr != nil {
 		sm.Register(fr)

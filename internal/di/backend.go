@@ -383,6 +383,7 @@ func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
 	br := r.Resolve[*BackendsResult]()
 	usage := r.Resolve[*counter.UsageTracker]()
 	if r.err != nil {
@@ -397,6 +398,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		BackendTimeout:  cfg.Server.BackendTimeout,
 		Usage:           usage,
 		Quota:           counter.NewQuotaTracker(),
+		Pressure:        counter.NewPressureTracker(br.Order, live.BackendPressure()),
 		RoutingStrategy: cfg.RoutingStrategy,
 		Profiles:        br.Profiles,
 		AdmissionSem:    admissionSemFor(&cfg.Server),

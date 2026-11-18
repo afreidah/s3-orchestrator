@@ -443,6 +443,28 @@ Unlike the database circuit breaker, which triggers degraded mode for the entire
 
 The `s3o_circuit_breaker_state{name="<backend>"}` metric reports a backend as open (1) while any of its calls is not served and closed (0) once every call is. Alert on `> 0` for individual backends to detect credential or provider issues; the breaker log lines name which call opened (`breaker_name` is `<backend>/<call>` for a call breaker). Requires a restart to change (not hot-reloadable).
 
+### backend_pressure
+
+A backend that is up but slow never trips a breaker, since nothing fails. Pressure catches it: a backend whose calls have slowed against its own normal speed is tried after the others. Reads try its copy last and writes prefer the other targets, falling back to it only when none of them has room. It is never refused, so an object whose only copy is there still reads. On by default.
+
+Each instance times the calls whose length does not depend on the object's size - HEAD, a GET until its response arrives, and a DELETE - and keeps, per backend, the share of calls slower than `slow_factor` times the backend's baseline and the share ended by `server.backend_timeout`. A call the client ended is not counted. The shares are kept over 10, 60 and 300 seconds, and the 60-second window decides:
+
+- **slow:** at least `slow_share` of the window's calls were slow.
+- **timeouts:** at least `timeout_share` of them hit the backend timeout.
+
+A reason holds until its share falls below half its threshold, and a backend with fewer than `min_calls` calls in the window is under no pressure, so one that stops being called is tried normally again. The baseline is the geometric mean of the backend's call times over about an hour, and it takes no calls in while the backend is under pressure, so a long slowdown never becomes its normal. A backend that is slow from the moment the process starts makes that its baseline, and only the timeout reason can catch it.
+
+```yaml
+backend_pressure:
+  enabled: true                    # default: true
+  slow_factor: 3                   # a call over this many times the baseline is slow (default: 3)
+  slow_share: 0.25                 # share of slow calls that puts a backend under pressure (default: 0.25)
+  timeout_share: 0.05              # share of backend-timeout hits that does (default: 0.05)
+  min_calls: 20                    # fewest calls in the window it is judged on (default: 20)
+```
+
+The judgement runs every 2 seconds on every instance and needs no lock or Redis: each instance judges from its own calls. The status endpoint and the TUI report each backend's reasons, shares and baseline, the `s3o_backend_pressure`, `s3o_backend_pressured` and `s3o_backend_latency_baseline_seconds` metrics carry them, and `backend.pressure.demoted` and `backend.pressure.restored` [notifications](notifications.md) fire as a backend comes under pressure and leaves it. Hot-reloadable.
+
 ### rebalance
 
 Moves objects between backends to optimize storage distribution. Disabled by default - enabling it will generate egress/ingress traffic on your backends.
@@ -997,6 +1019,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `rebalance` | Yes | Strategy, threshold, concurrency, enabled/disabled; `interval` needs a restart |
 | `replication` | Yes | Factor, batch size; `worker_interval` needs a restart |
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |
+| `backend_pressure` | Yes | Enabled, slow factor, shares, minimum calls |
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
 | `integrity` | Yes | Enabled, verify_on_read, scrubber batch size; `scrubber_interval` needs a restart |
 | `server.listen_addr` | No | Requires restart |

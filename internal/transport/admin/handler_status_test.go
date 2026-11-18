@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -155,16 +156,28 @@ func TestBackendStatuses_UsageCycle(t *testing.T) {
 	}
 }
 
-// TestBackendStatuses_RefusedCalls covers the refused-call and unsupported
-// feature names: listed in order for a backend with some, and an empty list
-// for one with none.
+// TestBackendStatuses_RefusedCalls covers the refused-call, unsupported
+// feature and pressure reason names: listed in order for a backend with some,
+// and an empty list for one with none.
 func TestBackendStatuses_RefusedCalls(t *testing.T) {
 	t.Parallel()
+	pressured := counter.PressureState{Reasons: counter.PressureSlow | counter.PressureTimeouts, Baseline: 40 * time.Millisecond}
+	pressured.Windows[1] = counter.PressureShares{Slow: 0.3, Timeouts: 0.06}
 	got := backendStatuses(&dashboard.Data{
 		BackendOrder: []string{"b1", "b2"},
 		RefusedCalls: map[string]core.BackendCalls{"b2": core.CallGetObject | core.CallHeadObject},
 		Unsupported:  map[string]core.BackendFeatures{"b2": core.FeatureRange | core.FeatureNativeCopy},
+		Pressure:     map[string]counter.PressureState{"b2": pressured},
 	})
+
+	if r := got[0].Pressure.Reasons; r == nil || len(r) != 0 {
+		t.Errorf("b1 pressure reasons = %#v, want an empty non-nil list", r)
+	}
+	want := adminapi.BackendPressure{Reasons: []string{"slow", "timeouts"}, SlowShare: 0.3, TimeoutShare: 0.06, BaselineSeconds: 0.04}
+	if p := got[1].Pressure; !slices.Equal(p.Reasons, want.Reasons) || p.SlowShare != want.SlowShare ||
+		p.TimeoutShare != want.TimeoutShare || p.BaselineSeconds != want.BaselineSeconds {
+		t.Errorf("b2 pressure = %+v, want %+v", p, want)
+	}
 
 	if got[0].RefusedCalls == nil || len(got[0].RefusedCalls) != 0 {
 		t.Errorf("b1 refused calls = %#v, want an empty non-nil list", got[0].RefusedCalls)

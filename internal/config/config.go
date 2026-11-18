@@ -57,6 +57,7 @@ type Config struct {
 	RateLimit             RateLimitConfig             `yaml:"rate_limit"`
 	CircuitBreaker        CircuitBreakerConfig        `yaml:"circuit_breaker"`
 	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
+	BackendPressure       BackendPressureConfig       `yaml:"backend_pressure"`
 	Encryption            EncryptionConfig            `yaml:"encryption"`
 	Compression           CompressionConfig           `yaml:"compression"`
 	UI                    UIConfig                    `yaml:"ui"`
@@ -246,6 +247,7 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Notifications.setDefaultsAndValidate()...)
 	errs = append(errs, c.CircuitBreaker.setDefaultsAndValidate()...)
 	errs = append(errs, c.BackendCircuitBreaker.setDefaultsAndValidate()...)
+	errs = append(errs, c.BackendPressure.setDefaultsAndValidate()...)
 	errs = append(errs, c.Debug.FlightRecorder.setDefaultsAndValidate()...)
 	errs = append(errs, c.CleanupQueue.setDefaultsAndValidate()...)
 	errs = append(errs, c.Reconcile.setDefaultsAndValidate()...)
@@ -339,6 +341,7 @@ var reloadablePaths = []string{
 	"integrity.scrubber_egress_reserve",
 	"lifecycle",
 	"usage_flush",
+	"backend_pressure",
 }
 
 // indexPattern matches a list index in a config path.

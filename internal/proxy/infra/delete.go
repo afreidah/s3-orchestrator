@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -33,7 +34,9 @@ const singleDeleteConcurrency = 16
 func (c *BackendRuntime) Delete(ctx context.Context, name string, be backend.ObjectBackend, storageKey string) error {
 	dctx, dcancel := c.WithTimeout(ctx)
 	defer dcancel()
+	start := time.Now()
 	err := be.DeleteObject(dctx, storageKey)
+	c.timed(dctx, name, start, endedByTimeout(dctx))
 	c.Acct().APICall(ctx, s3op.DeleteObject, name)
 	return err
 }

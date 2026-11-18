@@ -57,3 +57,9 @@ func (l *Live) Lifecycle() syncutil.Section[LifecycleConfig] {
 func (l *Live) UsageFlush() syncutil.Section[UsageFlushConfig] {
 	return func() *UsageFlushConfig { return &l.Load().UsageFlush }
 }
+
+// BackendPressure reads the backend-pressure section of the configuration in
+// force.
+func (l *Live) BackendPressure() syncutil.Section[BackendPressureConfig] {
+	return func() *BackendPressureConfig { return &l.Load().BackendPressure }
+}

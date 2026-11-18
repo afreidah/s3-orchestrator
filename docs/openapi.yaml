@@ -1374,6 +1374,24 @@ components:
                 - status
                 - backend
             type: object
+        BackendPressure:
+            properties:
+                baseline_seconds:
+                    type: number
+                reasons:
+                    items:
+                        type: string
+                    type: array
+                slow_share:
+                    type: number
+                timeout_share:
+                    type: number
+            required:
+                - reasons
+                - slow_share
+                - timeout_share
+                - baseline_seconds
+            type: object
         BackendProfile:
             properties:
                 bucket:
@@ -1427,6 +1445,8 @@ components:
                 object_count:
                     format: int64
                     type: integer
+                pressure:
+                    $ref: '#/components/schemas/BackendPressure'
                 profile:
                     $ref: '#/components/schemas/BackendProfile'
                 refused_calls:
@@ -1468,6 +1488,7 @@ components:
                 - active_multipart_uploads
                 - usage_limits
                 - usage_cycle
+                - pressure
                 - profile
             type: object
         BackfillChecksumsResponse:

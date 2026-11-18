@@ -32,6 +32,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 - Rebalance settings (strategy, batch size, threshold, enable/disable)
 - Replication settings (factor, batch size, unhealthy threshold)
 - Usage flush settings (interval, adaptive enabled/threshold/fast interval)
+- Backend pressure settings (enabled, slow factor, shares, minimum calls)
 
 The rebalancer's `interval` and the replicator's `worker_interval` are read when the worker starts, so a new value applies after a restart.
 
