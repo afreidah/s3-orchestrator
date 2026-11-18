@@ -116,8 +116,8 @@ func TestDashboard_RefreshMarksEveryFigure(t *testing.T) {
 	page := dashboardPage{
 		DBHealthy: true,
 		Data: &dashboard.Data{
-			BackendOrder:     []string{"b1"},
-			CompressionStats: map[string]core.CompressionStat{"b1": {Objects: 1, LogicalBytes: 10, StoredBytes: 5}},
+			BackendOrder: []string{"b1"},
+			Ledger:       core.LedgerStats{"b1": {Compressed: core.CompressionStat{Objects: 1, LogicalBytes: 10, StoredBytes: 5}}},
 		},
 		Config: configSummary{IntegrityEnabled: true, EncryptionEnabled: true},
 	}

@@ -98,9 +98,10 @@ type IntegrityStatus struct {
 // backend's limit there, and UsageCycle is the cycle the usage figures are
 // counted in.
 //
-// UnhashedCopies counts copies with no content hash yet, which backfill
-// hashes, and ActiveMultipartUploads the uploads in progress on the backend.
-// Profile is the backend as configured.
+// UnhashedCopies counts managed copies with no content hash yet, which
+// backfill hashes, and UnmanagedUnhashedCopies the unmanaged ones, which it
+// leaves alone. ActiveMultipartUploads counts the uploads in progress on the
+// backend. Profile is the backend as configured.
 type BackendStatus struct {
 	Name         string   `json:"name"`
 	Healthy      bool     `json:"healthy"`
@@ -115,9 +116,10 @@ type BackendStatus struct {
 	EgressBytes  int64    `json:"egress_bytes"`
 	IngressBytes int64    `json:"ingress_bytes"`
 
-	CompressionSavedBytes  int64 `json:"compression_saved_bytes"`
-	UnhashedCopies         int64 `json:"unhashed_copies"`
-	ActiveMultipartUploads int64 `json:"active_multipart_uploads"`
+	CompressionSavedBytes   int64 `json:"compression_saved_bytes"`
+	UnhashedCopies          int64 `json:"unhashed_copies"`
+	UnmanagedUnhashedCopies int64 `json:"unmanaged_unhashed_copies"`
+	ActiveMultipartUploads  int64 `json:"active_multipart_uploads"`
 
 	UsageLimits []UsageMeter   `json:"usage_limits"`
 	UsageCycle  UsageCycle     `json:"usage_cycle"`

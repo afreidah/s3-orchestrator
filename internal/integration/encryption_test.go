@@ -110,6 +110,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Backlog:      testStore,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		CopyStore:    testStore,
 		Provisioning: testStore,
 		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
 		Config:       config.NewLive(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),

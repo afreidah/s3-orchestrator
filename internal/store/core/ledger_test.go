@@ -19,34 +19,51 @@ import (
 // ledgerFixture is two reachable backends and one the sweep cannot read.
 func ledgerFixture() LedgerStats {
 	return LedgerStats{
-		"a": {Objects: 10, Unhashed: 2, Plaintext: 3, Unreadable: 1, Verifiable: 8, NeverVerified: 2,
-			Compressed: CompressionStat{Objects: 4, LogicalBytes: 400, StoredBytes: 100}},
-		"b": {Objects: 5, Unhashed: 1, Plaintext: 1, Verifiable: 4, NeverVerified: 1},
+		"a": {Objects: 10, Unhashed: 2, UnmanagedUnhashed: 4, Plaintext: 3, Unreadable: 1,
+			Verifiable: 8, NeverVerified: 2},
+		"b": {Objects: 5, Unhashed: 1, UnmanagedUnhashed: 8, Plaintext: 1, Verifiable: 4, NeverVerified: 1},
 		"c": {Objects: 7, Verifiable: 6, NeverVerified: 6},
 	}
 }
 
-// TestLedgerStats_Views verifies each per-backend map and fleet total reads the
-// figure it names.
-func TestLedgerStats_Views(t *testing.T) {
+// TestLedgerStats_FleetTotals verifies each fleet total sums the figure it
+// names.
+func TestLedgerStats_FleetTotals(t *testing.T) {
 	t.Parallel()
 	s := ledgerFixture()
 
-	if got := s.ObjectCounts(); !maps.Equal(got, map[string]int64{"a": 10, "b": 5, "c": 7}) {
-		t.Errorf("ObjectCounts = %v", got)
-	}
-	if got := s.UnhashedCounts(); !maps.Equal(got, map[string]int64{"a": 2, "b": 1, "c": 0}) {
-		t.Errorf("UnhashedCounts = %v", got)
-	}
 	if got := s.PlaintextCopies(); got != 4 {
 		t.Errorf("PlaintextCopies = %d, want 4", got)
 	}
 	if got := s.UnreadableCopies(); got != 1 {
 		t.Errorf("UnreadableCopies = %d, want 1", got)
 	}
-	want := map[string]CompressionStat{"a": {Objects: 4, LogicalBytes: 400, StoredBytes: 100}}
-	if got := s.Compression(); !maps.Equal(got, want) {
-		t.Errorf("Compression = %v, want only backend a", got)
+}
+
+// TestLedgerStats_UnhashedCount verifies the unhashed total narrows to one
+// backend and to the managed or the unmanaged copies, matching what the
+// unhashed listing selects.
+func TestLedgerStats_UnhashedCount(t *testing.T) {
+	t.Parallel()
+	s := ledgerFixture()
+	cases := []struct {
+		name    string
+		backend string
+		managed *bool
+		want    int64
+	}{
+		{"whole fleet", "", nil, 2 + 4 + 1 + 8},
+		{"managed fleet", "", new(true), 2 + 1},
+		{"unmanaged fleet", "", new(false), 4 + 8},
+		{"one backend", "b", nil, 1 + 8},
+		{"one backend managed", "a", new(true), 2},
+		{"backend holding none", "c", nil, 0},
+		{"unknown backend", "z", nil, 0},
+	}
+	for _, tc := range cases {
+		if got := s.UnhashedCount(tc.backend, tc.managed); got != tc.want {
+			t.Errorf("%s: UnhashedCount = %d, want %d", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -79,9 +96,10 @@ func TestLedgerStats_CoverageWithNothingVerifiable(t *testing.T) {
 
 // TestFoldLedger_EveryFigure folds one group per interesting form on backend a
 // and checks each figure counts the groups its definition names: unmanaged
-// hashed rows are not verifiable, an encrypted row with no key is unreadable
-// while a key with no envelope is plaintext, and only compressed groups feed
-// the compression figures.
+// hashed rows are not verifiable, unmanaged unhashed rows stay out of the
+// backfill backlog, an encrypted row with no key is unreadable while a key with
+// no envelope is plaintext, and only compressed groups feed the compression
+// figures.
 func TestFoldLedger_EveryFigure(t *testing.T) {
 	t.Parallel()
 	groups := []LedgerGroup{
@@ -93,19 +111,21 @@ func TestFoldLedger_EveryFigure(t *testing.T) {
 		{Backend: "a", Form: StoredReadable | StoredCompressed | StoredHashed, Managed: true,
 			Copies: 32, StoredBytes: 100, ObjectBytes: 400, NeverScrubbed: 2},
 		{Backend: "b", Form: StoredCompressed, Managed: true, Copies: 64, StoredBytes: 5, ObjectBytes: 50},
+		{Backend: "a", Form: 0, Managed: false, Copies: 128},
 	}
 	got := FoldLedger(groups)
 
 	want := LedgerStats{
 		"a": {
-			Objects:       63,
-			StoredBytes:   110,
-			Unhashed:      1 + 16,
-			Plaintext:     1 + 2 + 4 + 16,
-			Unreadable:    8,
-			Compressed:    CompressionStat{Objects: 32, LogicalBytes: 400, StoredBytes: 100},
-			Verifiable:    2 + 8 + 32,
-			NeverVerified: 1 + 2,
+			Objects:           63 + 128,
+			StoredBytes:       110,
+			Unhashed:          1 + 16,
+			UnmanagedUnhashed: 128,
+			Plaintext:         1 + 2 + 4 + 16 + 128,
+			Unreadable:        8,
+			Compressed:        CompressionStat{Objects: 32, LogicalBytes: 400, StoredBytes: 100},
+			Verifiable:        2 + 8 + 32,
+			NeverVerified:     1 + 2,
 		},
 		"b": {
 			Objects:     64,

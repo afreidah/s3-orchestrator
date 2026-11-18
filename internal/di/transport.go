@@ -180,6 +180,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Backlog:      stores,
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
+		CopyStore:    stores,
 		Locker:       stores,
 		Expiry:       expirer,
 		Provisioning: stores,

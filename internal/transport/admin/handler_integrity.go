@@ -6,9 +6,10 @@
 // On-demand counterparts to the scheduled integrity workers: scrub kicks
 // one verification pass, backfill-checksums fills SHA-256 columns for
 // objects predating integrity verification, and reconcile lists each
-// backend, diffs against DB, and imports/removes drift. Each handler parses
-// the request, calls the matching operation, and renders the outcome; the
-// passes themselves live in internal/ops.
+// backend, diffs against DB, and imports/removes drift. The copy listings
+// name the unhashed and unreadable copies those passes act on. Each handler
+// parses the request, calls the matching operation, and renders the outcome;
+// the passes themselves live in internal/ops.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -133,27 +134,48 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 }
 
 // -------------------------------------------------------------------------
-// UNREADABLE COPIES
+// COPY LISTINGS
 // -------------------------------------------------------------------------
+
+// handleListUnhashed lists copies with no content hash. Accepts optional
+// backend, managed and limit query parameters: managed=true keeps the copies
+// backfill hashes, and managed=false the unmanaged ones it leaves alone.
+func (h *Handler) handleListUnhashed(w http.ResponseWriter, r *http.Request) {
+	backend, ok := h.backendParam(w, r)
+	if !ok {
+		return
+	}
+	managed, ok := httputil.RequireQueryBool(w, r, adminapi.ParamManaged)
+	if !ok {
+		return
+	}
+	h.serveCopyList(w, r, "unhashed", func(ctx context.Context, limit int) (ops.CopyList, error) {
+		return h.d.Ops.Integrity.ListUnhashed(ctx, backend, managed, limit)
+	})
+}
 
 // handleListUnreadable lists copies that are encrypted with no key. Accepts an
 // optional limit query parameter.
 func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
+	h.serveCopyList(w, r, "unreadable", h.d.Ops.Integrity.ListUnreadable)
+}
+
+// serveCopyList answers a copy listing: it reads the limit, runs list, and
+// writes the page with its total. what names the listing in the failure
+// message.
+func (h *Handler) serveCopyList(w http.ResponseWriter, r *http.Request, what string, list func(ctx context.Context, limit int) (ops.CopyList, error)) {
 	limit, ok := httputil.RequireQueryCount(w, r, adminapi.ParamLimit, 0, httputil.NoCeiling)
 	if !ok {
 		return
 	}
-	res, err := h.d.Ops.Integrity.ListUnreadable(r.Context(), limit)
+	res, err := list(r.Context(), limit)
 	if err != nil {
-		httputil.InternalError(r.Context(), h.log, w, "failed to list unreadable copies", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to list "+what+" copies", err)
 		return
 	}
-	resp := adminapi.UnreadableListResponse{Total: res.Total, Copies: make([]adminapi.UnreadableCopy, 0, len(res.Copies))}
+	resp := adminapi.CopyListResponse{Total: res.Total, Copies: make([]adminapi.ListedCopy, len(res.Copies))}
 	for i := range res.Copies {
-		c := &res.Copies[i]
-		resp.Copies = append(resp.Copies, adminapi.UnreadableCopy{
-			Key: c.ObjectKey, Backend: c.BackendName, SizeBytes: c.SizeBytes, CreatedAt: c.CreatedAt,
-		})
+		resp.Copies[i] = adminapi.ListedCopy{Key: res.Copies[i].ObjectKey, ObjectLocation: wireLocation(&res.Copies[i])}
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }

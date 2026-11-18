@@ -462,8 +462,7 @@ func TestDecompressInPlace_ClearsTheEncoding(t *testing.T) {
 
 // TestCompressionStats_ReportsPerBackendTotals covers what the dashboard reads.
 // Only encoded copies count: including the verbatim ones would report a ratio
-// no encoder produced, and a backend holding none is absent rather than zero so
-// "nothing compressed here" stays distinguishable from "compressed to nothing".
+// no encoder produced.
 func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -483,12 +482,7 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LedgerStats: %v", err)
 	}
-	stats := ledger.Compression()
-
-	got, ok := stats["backend-a"]
-	if !ok {
-		t.Fatalf("backend-a missing from %+v", stats)
-	}
+	got := ledger["backend-a"].Compressed
 	if got.Objects != 2 {
 		t.Errorf("Objects = %d, want 2", got.Objects)
 	}
@@ -499,8 +493,8 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	if got.StoredBytes != 400 {
 		t.Errorf("StoredBytes = %d, want 400", got.StoredBytes)
 	}
-	if _, ok := stats["backend-b"]; ok {
-		t.Error("backend-b holds nothing encoded and must be absent, not zero")
+	if b := ledger["backend-b"].Compressed; b != (core.CompressionStat{}) {
+		t.Errorf("backend-b holds nothing encoded, got %+v", b)
 	}
 }
 

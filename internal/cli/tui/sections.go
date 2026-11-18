@@ -27,6 +27,7 @@ const (
 	sectionReplication
 	sectionWorkers
 	sectionCleanup
+	sectionIntegrity
 	sectionCache
 	sectionConfig
 	sectionLogs
@@ -108,6 +109,15 @@ func sectionSpecs() [sectionCount]sectionSpec {
 			reload: func(m *model) tea.Cmd {
 				m.cleanup.loading = !m.cleanup.fetched
 				return m.fetch(pollCleanup)
+			},
+		},
+		sectionIntegrity: {
+			label: "Integrity", jump: "i",
+			keys: (*model).integrityKeys, handle: (*model).handleIntegrityKey,
+			header: (*model).integrityHeaderView, body: (*model).integrityBody,
+			reload: func(m *model) tea.Cmd {
+				m.integrity.loading = !m.integrity.fetched
+				return m.fetch(pollIntegrity)
 			},
 		},
 		sectionCache: {

@@ -58,6 +58,8 @@ type adminClient interface {
 	GetConfig(ctx context.Context) (*adminapi.ConfigResponse, error)
 	GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error)
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
+	ListUnhashed(ctx context.Context, managed *bool) (*adminapi.CopyListResponse, error)
+	ListUnreadable(ctx context.Context) (*adminapi.CopyListResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	GetProvisioning(ctx context.Context) (*adminapi.ProvisioningResponse, error)
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
@@ -86,6 +88,7 @@ type model struct {
 	replication replicationView // replication pane state, populated when section is sectionReplication
 	workers     workersView     // workers pane state, populated when section is sectionWorkers
 	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
+	integrity   integrityView   // integrity pane state, populated when section is sectionIntegrity
 	cache       cacheView       // cache pane state, populated when section is sectionCache
 	config      configView      // config pane state, populated when section is sectionConfig
 	ops         opsView         // ops pane state, populated when section is sectionOps
@@ -122,6 +125,7 @@ func initialModel(client adminClient) *model {
 	m.buckets = newBucketsView()
 	m.workers = newWorkersView()
 	m.cleanup = newCleanupView()
+	m.integrity = newIntegrityView()
 	return m
 }
 

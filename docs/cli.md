@@ -294,7 +294,11 @@ s3-orchestrator admin scrub -key photos/2024/beach.jpg
 # Scrub only one backend's copies
 s3-orchestrator admin scrub -backend wasabi-eu
 
-# Compute and store content hashes for all unhashed objects. A copy that can
+# List copies with no content hash and how many there are. -managed=true keeps
+# the copies backfill hashes, -managed=false the unmanaged ones it leaves alone
+s3-orchestrator admin unhashed -backend wasabi-eu -managed=true -limit 50
+
+# Compute and store content hashes for all managed unhashed objects. A copy that can
 # never be decoded (its row and bytes disagree about encryption, it is
 # compressed with no codec configured, or it is encrypted with no encryptor
 # configured) is skipped and counted as unreadable.
@@ -455,7 +459,7 @@ Every change takes effect on the next request rather than the next restart: the 
 
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a storage bar per backend with its health and drain state, the limit nearest full across every storage quota and usage limit with how long until it resets, the replication and verification backlogs, encryption and compression coverage, usage for the period, the cleanup queues, and then every backend's usage in each dimension (egress, ingress, and each request budget or its total requests), grouped by backend, with a bar against each limit, marked red and full once used up, and `no limit` where there is none; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status, with the highlighted one's configuration and usage limits below the table; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Config** shows the running configuration; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a storage bar per backend with its health and drain state, the limit nearest full across every storage quota and usage limit with how long until it resets, the replication and verification backlogs, encryption and compression coverage, usage for the period, the cleanup queues, and then every backend's usage in each dimension (egress, ingress, and each request budget or its total requests), grouped by backend, with a bar against each limit, marked red and full once used up, and `no limit` where there is none; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status, with the highlighted one's configuration and usage limits below the table; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Integrity** lists the unhashed and unreadable copies; **Cache** shows the object data cache's utilization and hit rate; **Config** shows the running configuration; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -509,13 +513,15 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `p` | Jump to the Replication section |
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |
+| `i` | Jump to the Integrity section |
 | `c` | Jump to the Cache section |
 | `n` | Jump to the Config section |
 | `l` | Jump to the Logs section |
 | `o` | Jump to the Ops section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
 | `F` | In Logs, follow new entries as they arrive |
-| `t` | In Cleanup, switch between the pending and dead-letter listings |
+| `t` | In Cleanup, switch between the pending and dead-letter listings; in Integrity, between the unhashed and unreadable listings |
+| `m` | In Integrity's unhashed listing, cycle all, managed and unmanaged copies |
 | `R` | In Cleanup's dead-letter listing, requeue the selected row's backend; in Backends, reconcile the selected backend (asks to confirm) |
 | `d` | In Backends, drain the selected backend (asks to confirm) |
 | `C` | In Backends, cordon the selected backend, or uncordon it when it is already cordoned (asks to confirm) |
@@ -533,7 +539,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `enter` / `right` | Open: a sidebar section, a prefix, or the inspector on an object; in Backends, the selected backend's action menu |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring; in Logs, filter the entries by text in the component or message |
-| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
+| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers, Cleanup and Integrity, sort by the next column, then back to the server's order |
 | `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Refresh the current view now |
@@ -542,7 +548,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 
 The footer lists only each pane's main keys; `?` shows the rest. The sorted column's header is marked `^` (ascending) or `v` (descending). An action's result appears in the footer until the next keypress, and every result from the session is also listed under **recent actions** at the bottom of the Dashboard.
 
-The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. The Dashboard reads those same snapshots and makes no requests of its own. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
+The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. The Dashboard reads those same snapshots and makes no requests of its own. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Integrity refreshes every 30 seconds, also only while it is showing. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
 
 The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 
@@ -571,6 +577,8 @@ The **Replication** section shows cluster-wide replication health, sourced from 
 The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. With Redis configured the list covers every running instance: each service shows the tick of whichever instance ran it last, so the answer does not depend on which instance the load balancer picked. Without Redis, an `api`-mode instance lists only the services it runs: the usage flush, fleet snapshot and circuit breaker watchdog.
 
 The **Cleanup** section shows the cleanup queue and its dead-letter table, sourced from `GET /admin/api/cleanup-queue` and `GET /admin/api/cleanup-dlq`. Both listings share the pane, toggled with `t`, and the title bar carries both depths so a backlog in the listing you are not looking at stays visible. The depth is the true total; the listing itself is one page of it. On the dead-letter listing, `R` requeues every dead-lettered row for the selected row's backend (`POST /admin/api/cleanup-dlq/requeue`) - a whole-backend operation, which is what the confirmation names, and the pane reloads afterwards so the depths stay honest.
+
+The **Integrity** section lists the copies the integrity passes act on, sourced from `GET /admin/api/unhashed` and `GET /admin/api/unreadable`: the copies with no content hash, and the copies encrypted with no key. Both listings share the pane, toggled with `t`, and the title bar carries both totals. `m` narrows the unhashed listing to the managed copies, which backfill hashes, or to the unmanaged ones, which it leaves alone; a page in key order can otherwise be all of one kind. The total is the true count under the filter; the listing itself is one page of it. The pane refreshes every 30 seconds, and only while it is showing, since each refresh reads a page of the ledger.
 
 The **Cache** section shows the object data cache, sourced from `GET /admin/api/cache` - entry count, bytes held against the configured maximum, and the lifetime hit rate. The hit rate is coloured for a cache doing its job rather than a full one: green at 60% and above, amber down to 25%, red below. A cache nothing has read yet says so instead of reporting 0%, which would read as a broken cache. When object caching is disabled the endpoint answers 503 and the pane reports that as configuration, not failure.
 

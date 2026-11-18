@@ -57,6 +57,13 @@ type RewriteStore interface {
 	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
 }
 
+// CopyStore is what the integrity listings read: a page of the copies a filter
+// selects, and the ledger figures that total them.
+type CopyStore interface {
+	core.CopyLister
+	LedgerStats(ctx context.Context) (core.LedgerStats, error)
+}
+
 // ProvisioningStore is the bucket and credential surface the provisioning
 // operations read and write.
 type ProvisioningStore interface {
@@ -135,7 +142,6 @@ type ScrubberOps interface {
 	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error)
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
 	Backfill(ctx context.Context, req worker.BackfillRequest, observer progress.Observer) (worker.BackfillResult, error)
-	ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error)
 	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error)
 }
 

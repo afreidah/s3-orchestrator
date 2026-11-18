@@ -106,6 +106,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Backlog:    store,
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
+		CopyStore:  store,
 		Declared:   declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 		Config:     st.Config,
 	})

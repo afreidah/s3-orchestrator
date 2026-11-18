@@ -107,6 +107,19 @@ func (m *model) cleanupKeys() []keyHint {
 	return append(keys, hintSort, hintReverse, hintReload, hintNavBack)
 }
 
+// integrityKeys is the integrity pane's keymap; the management filter applies
+// only to the unhashed listing.
+func (m *model) integrityKeys() []keyHint {
+	keys := []keyHint{hintMove}
+	if m.integrityOnUnreadable() {
+		keys = append(keys, keyHint{key: "t", desc: "show the unhashed copies", label: "unhashed"})
+	} else {
+		keys = append(keys, keyHint{key: "t", desc: "show the unreadable copies", label: "unreadable"},
+			keyHint{key: "m", desc: "cycle all, managed and unmanaged copies", label: "managed"})
+	}
+	return append(keys, hintSort, hintReverse, hintReload, hintNavBack)
+}
+
 // opsKeys is the ops menu's keymap.
 func (m *model) opsKeys() []keyHint {
 	return []keyHint{hintMove, {key: "enter", desc: "run the action", label: "run"}, hintNavBack}

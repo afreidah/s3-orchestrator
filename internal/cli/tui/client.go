@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
@@ -127,6 +128,23 @@ func (c *apiClient) GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueue
 // their retry budget.
 func (c *apiClient) GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error) {
 	return c.c.Get[adminapi.CleanupDLQResponse](ctx, adminapi.PathCleanupDLQ, nil)
+}
+
+// ListUnhashed fetches the first page of copies with no content hash and how
+// many there are, narrowed to the managed or the unmanaged ones when managed
+// is set.
+func (c *apiClient) ListUnhashed(ctx context.Context, managed *bool) (*adminapi.CopyListResponse, error) {
+	q := url.Values{}
+	if managed != nil {
+		q.Set(adminapi.ParamManaged, strconv.FormatBool(*managed))
+	}
+	return c.c.Get[adminapi.CopyListResponse](ctx, adminapi.PathUnhashed, q)
+}
+
+// ListUnreadable fetches the first page of copies encrypted with no key and how
+// many there are.
+func (c *apiClient) ListUnreadable(ctx context.Context) (*adminapi.CopyListResponse, error) {
+	return c.c.Get[adminapi.CopyListResponse](ctx, adminapi.PathUnreadable, nil)
 }
 
 // GetCacheStats fetches the object data cache's utilization. Returns an

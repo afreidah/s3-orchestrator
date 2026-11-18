@@ -18,6 +18,7 @@ A persistent left navigation bar switches between sections; the content area to 
 - **Replication** - the configured replication factor and the current under- and over-replicated object counts, refreshing on its own while the section is active.
 - **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
 - **Cleanup** - the cleanup queue and its dead-letter table, with the depth of each. The one write action here is requeueing a backend's dead-lettered rows.
+- **Integrity** - the copies with no content hash and the copies encrypted with no key, with the total of each. The unhashed listing narrows to the managed copies, which backfill hashes, or to the unmanaged ones it leaves alone.
 - **Cache** - the object data cache's entry count, bytes held against its maximum, and lifetime hit rate.
 - **Config** - the configuration the server is running, as YAML with secrets redacted, under the log level in effect and any file changes that wait on a restart.
 - **Logs** - recent structured log entries from the instance's in-memory log buffer (the same source the web dashboard's logs pane reads): time, level, component, and a human-readable message with its attributes appended as `key=value` pairs.
@@ -78,6 +79,7 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `p` | Jump to the Replication section |
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |
+| `i` | Jump to the Integrity section |
 | `c` | Jump to the Cache section |
 | `n` | Jump to the Config section |
 | `l` | Jump to the Logs section |
@@ -90,8 +92,8 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `U` | Upload a local file under a prompted key |
 | `X` | Delete the selected object, or everything under the selected directory (asks to confirm) |
 | `R` | In Workers, run the Ops action that does the selected worker's job, as if chosen from the Ops menu |
-| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
-| `S` | Reverse the sort in Backends, Buckets, Workers and Cleanup (in the inspector, `S` verifies the object instead) |
+| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers, Cleanup and Integrity, sort by the next column, then back to the server's order |
+| `S` | Reverse the sort in Backends, Buckets, Workers, Cleanup and Integrity (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Refresh the current view now |
 | `?` | Show every key the current pane answers; any key closes it |
@@ -149,7 +151,7 @@ minio-c    down       cordoned   0 B       -          -      0
 
 minio-b  DEGRADED GetObject  draining
 endpoint       http://minio-b:9000   region us-east-1   bucket data   max object 5.0 GiB
-holds          4,102 objects   12 unhashed   1 uploads in progress   2.8 GiB saved
+holds          4,102 objects   12 unhashed (+3 unmanaged)   1 uploads in progress   2.8 GiB saved
 instance       s3o-1-7f3a1b2c  v0.172.0  mode all  up 5h
 usage   Oct 1 - Nov 1 UTC
 storage         [###################-]  8.9 GiB / 10.0 GiB   89%
@@ -192,7 +194,7 @@ Press `w` (or select **Workers**) for each registered background service's last-
 
 ![The Workers section listing each background service's last-tick health](/docs/images/tui-workers.png?classes=lightbox)
 
-The neighbouring status sections read the same way: `p` for the replication factor and the under- and over-replicated counts, `u` for the cleanup queue and its dead-letter table, and `c` for the object cache's entry count, size, and hit rate.
+The neighbouring status sections read the same way: `p` for the replication factor and the under- and over-replicated counts, `u` for the cleanup queue and its dead-letter table, `i` for the unhashed and unreadable copies (`t` switches between them, `m` narrows the unhashed ones to managed or unmanaged), and `c` for the object cache's entry count, size, and hit rate.
 
 ## Step 7: Run an admin action
 

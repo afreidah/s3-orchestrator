@@ -73,7 +73,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 	p := db.ListCopiesByFormParams{
 		WithFlags:     int64(f.With),
 		WithoutFlags:  int64(f.Without),
-		ManagedOnly:   f.ManagedOnly,
+		Managed:       f.Managed,
 		BackendFilter: f.Backend,
 		KeyID:         f.KeyID,
 		ExceptKeyID:   f.ExceptKeyID,

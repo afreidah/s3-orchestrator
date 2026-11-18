@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -61,16 +62,16 @@ func newCoverageHandler(t *testing.T) *Handler {
 // -------------------------------------------------------------------------
 
 // TestHandleStatus_PopulatedDashboard drives the inner branches of
-// handleStatus that the empty-backends test never enters: QuotaStats,
-// ObjectCounts, and UsageStats lookups all succeeding for the same key, and
-// the answering instance's identity carried alongside them.
+// handleStatus that the empty-backends test never enters: QuotaStats, Ledger,
+// and UsageStats lookups all succeeding for the same key, and the answering
+// instance's identity carried alongside them.
 func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.d.Dashboard = newDashboardOps(t, &dashboard.Data{
 		BackendOrder: []string{"b1"},
 		QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
-		ObjectCounts: map[string]int64{"b1": 5},
+		Ledger:       core.LedgerStats{"b1": {Objects: 5}},
 		UsageStats:   map[string]core.Usage{"b1": {UsageStat: core.UsageStat{APIRequests: 3, IngressBytes: 50, EgressBytes: 25}}},
 		UsagePeriod:  "2026-05",
 	}, nil)
@@ -403,27 +404,77 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 }
 
 // TestHandleListUnreadable_ListsCopiesAndTotal verifies the list route reports
-// each unreadable copy by key and backend, plus the total.
+// each unreadable copy by key and backend, plus the ledger's total.
 func TestHandleListUnreadable_ListsCopiesAndTotal(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	integrityWith(t, h, backendOpsStub{}, &scrubberStub{unreadable: []core.ObjectLocation{
-		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508},
-	}})
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{
+		unreadable: []core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Unmanaged: true}},
+		ledger:     core.LedgerStats{"b1": {Unreadable: 3}},
+	})
 
+	resp := getCopyList(t, h.handleListUnreadable, "/admin/api/unreadable?limit=5")
+	if resp.Total != 3 || len(resp.Copies) != 1 {
+		t.Fatalf("resp = %+v, want 1 copy of 3", resp)
+	}
+	if c := resp.Copies[0]; c.Key != "bucket/a" || c.Backend != "b1" || c.SizeBytes != 508 || c.Managed {
+		t.Errorf("copy = %+v, want the unmanaged bucket/a on b1", c)
+	}
+}
+
+// TestHandleListUnhashed_PassesTheFilterAndTotal verifies the backend and the
+// managed flag reach the listing's filter, and the total counts only what
+// that filter selects.
+func TestHandleListUnhashed_PassesTheFilterAndTotal(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.d.Config = backendsConfig("b1")
+	sc := &scrubberStub{
+		unhashed: []core.ObjectLocation{{ObjectKey: "bucket/new", BackendName: "b1", SizeBytes: 10}},
+		ledger:   core.LedgerStats{"b1": {Unhashed: 2, UnmanagedUnhashed: 6}, "b2": {Unhashed: 9}},
+	}
+	integrityWith(t, h, backendOpsStub{}, sc)
+
+	resp := getCopyList(t, h.handleListUnhashed, "/admin/api/unhashed?backend=b1&managed=true")
+	if resp.Total != 2 || len(resp.Copies) != 1 || resp.Copies[0].Key != "bucket/new" || !resp.Copies[0].Managed {
+		t.Errorf("resp = %+v, want the managed bucket/new of 2", resp)
+	}
+	if want := core.UnhashedCopies("b1", new(true)); !reflect.DeepEqual(sc.listFilter, want) {
+		t.Errorf("filter = %+v, want %+v", sc.listFilter, want)
+	}
+}
+
+// TestHandleListUnhashed_RejectsMalformedFilters verifies a managed value that
+// is not a boolean, and a backend this instance does not serve, are refused
+// rather than answered with an empty listing.
+func TestHandleListUnhashed_RejectsMalformedFilters(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{})
+
+	for _, target := range []string{"/admin/api/unhashed?managed=sometimes", "/admin/api/unhashed?backend=typo"} {
+		w := httptest.NewRecorder()
+		h.handleListUnhashed(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", target, w.Code)
+		}
+	}
+}
+
+// getCopyList runs a copy listing handler against target and decodes its
+// answer, failing the test unless it is a 200.
+func getCopyList(t *testing.T, handler http.HandlerFunc, target string) adminapi.CopyListResponse {
+	t.Helper()
 	w := httptest.NewRecorder()
-	h.handleListUnreadable(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/unreadable?limit=5", nil))
-
+	handler(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp adminapi.UnreadableListResponse
+	var resp adminapi.CopyListResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Total != 1 || len(resp.Copies) != 1 || resp.Copies[0].Key != "bucket/a" || resp.Copies[0].Backend != "b1" {
-		t.Errorf("resp = %+v, want bucket/a on b1 of 1", resp)
-	}
+	return resp
 }
 
 // TestHandlePurgeUnreadable_ReportsPurged verifies the purge route reports
@@ -923,10 +974,10 @@ func TestHandleStatus_ReportsPlaintextCopies(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.d.Dashboard = newDashboardOps(t, &dashboard.Data{
-		BackendOrder:    []string{"b1"},
-		QuotaStats:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
-		UsagePeriod:     "2026-05",
-		PlaintextCopies: 42,
+		BackendOrder: []string{"b1"},
+		QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		UsagePeriod:  "2026-05",
+		Ledger:       core.LedgerStats{"b1": {Plaintext: 40}, "b2": {Plaintext: 2}},
 	}, nil)
 
 	w := httptest.NewRecorder()

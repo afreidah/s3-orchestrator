@@ -11,8 +11,6 @@
 
 package adminapi
 
-import "time"
-
 // ScrubKeyResponse reports an on-demand verification of one key, one entry per
 // copy, so a corrupt copy is attributed to its backend.
 type ScrubKeyResponse struct {
@@ -62,21 +60,6 @@ type BackfillChecksumsResponse struct {
 	Processed  int  `json:"processed"`
 	Unreadable int  `json:"unreadable"`
 	Done       bool `json:"done"`
-}
-
-// UnreadableCopy is one copy that is encrypted with no key.
-type UnreadableCopy struct {
-	Key       string    `json:"key"`
-	Backend   string    `json:"backend"`
-	SizeBytes int64     `json:"size_bytes"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// UnreadableListResponse lists copies that are encrypted with no key: up to
-// the requested limit of them, and how many exist in total.
-type UnreadableListResponse struct {
-	Total  int64            `json:"total"`
-	Copies []UnreadableCopy `json:"copies"`
 }
 
 // UnreadablePurgeResponse reports a purge of unreadable copies.

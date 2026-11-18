@@ -28,4 +28,5 @@ const (
 	ParamPurge        = "purge"
 	ParamConfirm      = "confirm"
 	ParamDelayMS      = "delay_ms"
+	ParamManaged      = "managed"
 )

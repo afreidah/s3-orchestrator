@@ -431,8 +431,7 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 }
 
 // TestPurgeUnreadable_DiscardsEachCopy verifies each unreadable copy has its
-// row removed and the cleanup its removal queued settled, and the list reports
-// the total.
+// row removed and the cleanup its removal queued settled.
 func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
 	t.Parallel()
 	s, _, pl, _, ms := setupScrubber(t)
@@ -440,14 +439,8 @@ func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
 		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true},
 		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 102, Encrypted: true},
 	}
-	ms.ledger = core.LedgerStats{"b1": {Objects: 2, Unreadable: 2}}
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/a", "unreadable_purged", int64(508)))
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/b", "unreadable_purged", int64(102)))
-
-	copies, total, err := s.ListUnreadable(context.Background(), 1)
-	if err != nil || len(copies) != 1 || total != 2 {
-		t.Fatalf("ListUnreadable = %d copies, total %d, err %v; want 1 of 2", len(copies), total, err)
-	}
 
 	sum := passOf(t)(s.PurgeUnreadable(context.Background(), 10, nil))
 	if sum.Succeeded != 2 || sum.Failed != 0 {

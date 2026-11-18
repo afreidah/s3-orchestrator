@@ -171,13 +171,14 @@ func TestBackendDetail_Contents(t *testing.T) {
 	m.width = 160
 	m.backends.instance = adminapi.InstanceStatus{ID: "host-1a2b3c4d", Version: "v1.2.3", Mode: "all"}
 	b := &adminapi.BackendStatus{
-		Name:                   "b1",
-		BytesUsed:              512,
-		BytesLimit:             1024,
-		ObjectCount:            1200,
-		UnhashedCopies:         4,
-		ActiveMultipartUploads: 2,
-		Profile:                adminapi.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "data", MaxObjectSize: 5 << 30},
+		Name:                    "b1",
+		BytesUsed:               512,
+		BytesLimit:              1024,
+		ObjectCount:             1200,
+		UnhashedCopies:          4,
+		UnmanagedUnhashedCopies: 7,
+		ActiveMultipartUploads:  2,
+		Profile:                 adminapi.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "data", MaxObjectSize: 5 << 30},
 		UsageLimits: []adminapi.UsageMeter{
 			{Kind: "egress", Used: 10, Limit: 100},
 			{Kind: "requests", Budget: "writes", Used: 5, Limit: 5, Operations: []s3op.Operation{s3op.PutObject, s3op.CopyObject}},
@@ -187,7 +188,7 @@ func TestBackendDetail_Contents(t *testing.T) {
 	got := m.backendDetail(b)
 	for _, want := range []string{
 		"https://s3.example.com", "region us-east-1", "bucket data", "max object 5.0 GiB",
-		"1,200 objects", "4 unhashed", "2 uploads in progress",
+		"1,200 objects", "4 unhashed (+7 unmanaged)", "2 uploads in progress",
 		"storage", "512 B / 1.0 KiB", "egress", "requests:writes", "PutObject, CopyObject",
 		"host-1a2b3c4d  v1.2.3  mode all",
 	} {

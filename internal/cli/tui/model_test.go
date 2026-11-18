@@ -91,6 +91,14 @@ func (errLister) GetCleanupDLQ(_ context.Context) (*adminapi.CleanupDLQResponse,
 	return nil, errors.New("nope")
 }
 
+func (errLister) ListUnhashed(_ context.Context, _ *bool) (*adminapi.CopyListResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) ListUnreadable(_ context.Context) (*adminapi.CopyListResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsResponse, error) {
 	return nil, errors.New("nope")
 }

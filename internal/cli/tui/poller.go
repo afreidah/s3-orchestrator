@@ -15,7 +15,9 @@
 // looks elsewhere. Targets whose data belongs to the instance that answered
 // (workers, cache, logs) are polled only while their pane is showing: behind a
 // load balancer, background polls would mix readings from different instances.
-// Logs are polled only while the operator follows them, since each poll
+// The integrity listings are fleet-wide but each reads a page of the ledger,
+// so they too are polled only while their pane is showing. Logs are polled
+// only while the operator follows them, since each poll
 // replaces what is being read. The file listing is never polled, because it is
 // being navigated.
 // -------------------------------------------------------------------------------
@@ -39,6 +41,7 @@ const (
 	pollBuckets
 	pollWorkers
 	pollCache
+	pollIntegrity
 	pollDrain
 	pollLogs
 	pollTargetCount
@@ -68,6 +71,7 @@ var pollSources = [pollTargetCount]pollSource{
 	pollBuckets:     {every: 30 * time.Second, load: (*model).loadBuckets},
 	pollWorkers:     {every: 5 * time.Second, wanted: showing(sectionWorkers), load: (*model).loadWorkers},
 	pollCache:       {every: 5 * time.Second, wanted: showing(sectionCache), load: (*model).loadCache},
+	pollIntegrity:   {every: 30 * time.Second, wanted: showing(sectionIntegrity), load: (*model).loadIntegrity},
 	pollDrain: {
 		every:  2 * time.Second,
 		wanted: func(m *model) bool { return m.backends.drain.following },

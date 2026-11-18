@@ -6,7 +6,9 @@
 // Verification passes over stored copies: a scrub that re-hashes a batch of
 // objects, an on-demand check of every copy of one key, and the backfill that
 // computes hashes for objects stored before integrity verification was turned
-// on. Each declines with ErrIntegrityDisabled when verification is off.
+// on. Each declines with ErrIntegrityDisabled when verification is off. The
+// listings of unhashed and unreadable copies read the ledger and run either
+// way.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -33,17 +35,21 @@ import (
 // the caller asks for no size.
 const defaultBackfillBatchSize = 100
 
-// defaultUnreadableBatchSize is how many unreadable copies one list or purge
-// pass reads when the caller asks for no size.
+// defaultUnreadableBatchSize is how many unreadable copies one purge pass
+// reads when the caller asks for no size.
 const defaultUnreadableBatchSize = 100
+
+// defaultCopyListLimit is how many copies a listing returns when the caller
+// asks for no limit.
+const defaultCopyListLimit = 100
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// UnreadableList reports copies that are encrypted with no key: up to the
-// requested number of them, and how many exist in total.
-type UnreadableList struct {
+// CopyList reports the copies a listing selects: up to the requested number
+// of them, and how many it selects in total.
+type CopyList struct {
 	Total  int64
 	Copies []core.ObjectLocation
 }
@@ -51,6 +57,7 @@ type UnreadableList struct {
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
 	Scrubber ScrubberOps
+	Store    CopyStore
 	Locker   core.AdvisoryLocker
 	Config   *config.Live
 }
@@ -65,6 +72,7 @@ type Integrity struct {
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
+	must.NotNil("d.Store", d.Store)
 	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
 	return &Integrity{d: d, log: logfmt.Logger(logComponent)}
@@ -143,15 +151,19 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 
 // ListUnreadable returns up to limit copies that are encrypted with no key, and
 // the total. limit <= 0 uses the default.
-func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableList, error) {
-	if limit <= 0 {
-		limit = defaultUnreadableBatchSize
-	}
-	copies, total, err := i.d.Scrubber.ListUnreadable(ctx, limit)
-	if err != nil {
-		return UnreadableList{}, err
-	}
-	return UnreadableList{Total: total, Copies: copies}, nil
+func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (CopyList, error) {
+	return i.listCopies(ctx, &core.UnreadableCopies, limit, core.LedgerStats.UnreadableCopies)
+}
+
+// ListUnhashed returns up to limit copies with no content hash on backend, or
+// on every backend when it is empty, and the total. A set managed keeps only
+// the managed copies, the ones backfill hashes, or only the unmanaged ones.
+// limit <= 0 uses the default.
+func (i *Integrity) ListUnhashed(ctx context.Context, backend string, managed *bool, limit int) (CopyList, error) {
+	filter := core.UnhashedCopies(backend, managed)
+	return i.listCopies(ctx, &filter, limit, func(s core.LedgerStats) int64 {
+		return s.UnhashedCount(backend, managed)
+	})
 }
 
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
@@ -162,4 +174,26 @@ func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer
 		batchSize = defaultUnreadableBatchSize
 	}
 	return i.d.Scrubber.PurgeUnreadable(ctx, batchSize, observer)
+}
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
+// listCopies returns the first limit copies f selects, with the total the
+// ledger counts for them, so the page and the figure beside it come from the
+// same definition.
+func (i *Integrity) listCopies(ctx context.Context, f *core.FormFilter, limit int, total func(core.LedgerStats) int64) (CopyList, error) {
+	if limit <= 0 {
+		limit = defaultCopyListLimit
+	}
+	copies, err := i.d.Store.ListCopiesByForm(ctx, f, limit, core.Cursor{})
+	if err != nil {
+		return CopyList{}, err
+	}
+	ledger, err := i.d.Store.LedgerStats(ctx)
+	if err != nil {
+		return CopyList{}, err
+	}
+	return CopyList{Total: total(ledger), Copies: copies}, nil
 }

@@ -93,7 +93,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 			OldestUnverifiedSeconds: int64(data.OldestUnverifiedAge.Seconds()),
 			NeverVerifiedCopies:     data.NeverVerifiedCopies,
 			DeferredCopies:          data.DeferredCopies,
-			PlaintextCopies:         data.PlaintextCopies,
+			PlaintextCopies:         data.Ledger.PlaintextCopies(),
 		},
 		Instance: h.d.Instance,
 	})
@@ -110,6 +110,7 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 		us := data.UsageStats[name]
 		cycle := data.UsageCycles[name]
 		meters := data.UsageLimits[name].Meters(us)
+		ledger := data.Ledger[name]
 		bs := adminapi.BackendStatus{
 			Name:         name,
 			Healthy:      refused == 0,
@@ -119,14 +120,15 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 			Unsupported:  data.Unsupported[name].Names(),
 			BytesUsed:    quota.BytesUsed,
 			BytesLimit:   quota.BytesLimit,
-			ObjectCount:  data.ObjectCounts[name],
+			ObjectCount:  ledger.Objects,
 			APIRequests:  us.APIRequests,
 			EgressBytes:  us.EgressBytes,
 			IngressBytes: us.IngressBytes,
 
-			CompressionSavedBytes:  data.CompressionSaved(name),
-			UnhashedCopies:         data.UnverifiedObjectCounts[name],
-			ActiveMultipartUploads: data.ActiveMultipartCounts[name],
+			CompressionSavedBytes:   data.CompressionSaved(name),
+			UnhashedCopies:          ledger.Unhashed,
+			UnmanagedUnhashedCopies: ledger.UnmanagedUnhashed,
+			ActiveMultipartUploads:  data.ActiveMultipartCounts[name],
 
 			UsageLimits: make([]adminapi.UsageMeter, len(meters)),
 			UsageCycle:  adminapi.UsageCycle{Start: cycle.Start, NextReset: cycle.Next, Timezone: cycle.Zone()},
@@ -155,26 +157,32 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 }
 
 // objectLocationsResponse maps the store's location ledger onto the shared wire
-// type, dropping the raw envelope encryption key so the secret never leaves the
-// process.
+// type.
 func objectLocationsResponse(key string, locations []core.ObjectLocation) adminapi.ObjectLocationsResponse {
 	resp := adminapi.ObjectLocationsResponse{Key: key}
 	for i := range locations {
-		resp.Locations = append(resp.Locations, adminapi.ObjectLocation{
-			Backend:        locations[i].BackendName,
-			SizeBytes:      locations[i].SizeBytes,
-			CreatedAt:      locations[i].CreatedAt,
-			Encrypted:      locations[i].Encrypted,
-			KeyID:          locations[i].KeyID,
-			PlaintextSize:  locations[i].PlaintextSize,
-			ContentHash:    locations[i].ContentHash,
-			LastScrubbedAt: locations[i].LastScrubbedAt,
-
-			CompressionAlgorithm: locations[i].CompressionAlgorithm,
-			LogicalSize:          locations[i].LogicalSize,
-		})
+		resp.Locations = append(resp.Locations, wireLocation(&locations[i]))
 	}
 	return resp
+}
+
+// wireLocation maps one ledger copy onto the wire type, dropping the raw
+// envelope encryption key so the secret never leaves the process.
+func wireLocation(l *core.ObjectLocation) adminapi.ObjectLocation {
+	return adminapi.ObjectLocation{
+		Backend:        l.BackendName,
+		SizeBytes:      l.SizeBytes,
+		CreatedAt:      l.CreatedAt,
+		Managed:        !l.Unmanaged,
+		Encrypted:      l.Encrypted,
+		KeyID:          l.KeyID,
+		PlaintextSize:  l.PlaintextSize,
+		ContentHash:    l.ContentHash,
+		LastScrubbedAt: l.LastScrubbedAt,
+
+		CompressionAlgorithm: l.CompressionAlgorithm,
+		LogicalSize:          l.LogicalSize,
+	}
 }
 
 // handleCleanupQueue returns the cleanup queue's depth and its first 50

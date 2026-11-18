@@ -286,8 +286,6 @@ type mockMetadataStore struct {
 	deletedLocations    []string
 	deleteReasons       []string
 	deleteLocationErr   error
-	ledgerErr           error
-	ledger              core.LedgerStats
 	lastUpdatedHash     string
 	lastRecordedETag    string
 	underReplicated     []core.ObjectLocation
@@ -451,11 +449,6 @@ func (m *mockMetadataStore) UpdateCopyMetadata(_ context.Context, loc *core.Obje
 	return m.markScrubbedErr
 }
 
-// LedgerStats returns the test-set ledger fixture.
-func (m *mockMetadataStore) LedgerStats(context.Context) (core.LedgerStats, error) {
-	return m.ledger, m.ledgerErr
-}
-
 // isUnreadableQuery reports whether a form query asks for the copies encrypted
 // with no key, the only population the fixture holds.
 func isUnreadableQuery(with, without core.StoredFlags) bool {
@@ -465,7 +458,7 @@ func isUnreadableQuery(with, without core.StoredFlags) bool {
 // isUnhashedQuery reports whether a form query asks for the managed copies a
 // backfill still has to hash.
 func isUnhashedQuery(f *core.FormFilter) bool {
-	return f.Without == core.StoredHashed && f.ManagedOnly
+	return f.Without == core.StoredHashed && f.Managed != nil && *f.Managed
 }
 
 // ListCopiesByForm returns up to limit rows of the unreadable or the unhashed
