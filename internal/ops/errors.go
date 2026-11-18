@@ -41,18 +41,23 @@ func SkipReason(err error) (string, bool) {
 	return "", false
 }
 
-// Skips for subsystems that are unavailable in the running configuration.
-// Each is a *SkipError, so a transport handles a fixed and a runtime skip
-// through the same errors.As branch. ErrCompressionUnavailable means no codec
-// was built, not that compression is disabled for writes.
+// Skips for subsystems that are unavailable in the running configuration, and
+// for passes declined because another run holds their lock. Each is a
+// *SkipError, so a transport handles a fixed and a runtime skip through the
+// same errors.As branch. ErrCompressionUnavailable means no codec was built,
+// not that compression is disabled for writes.
 var (
 	ErrIntegrityDisabled     = &SkipError{Reason: "integrity verification is not enabled"}
 	ErrReplicationDisabled   = &SkipError{Reason: "replication not configured or factor <= 1"}
 	ErrEncryptionDisabled    = &SkipError{Reason: "encryption not enabled"}
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
+	ErrReconcilerUnavailable = &SkipError{Reason: "reconciler not available"}
 	ErrLifecycleUnavailable  = &SkipError{Reason: "lifecycle manager not available"}
-	ErrScrubInProgress       = &SkipError{Reason: "another instance is already scrubbing"}
+	ErrScrubInProgress       = &SkipError{Reason: "a scrub pass is already running"}
 	ErrReplicationInProgress = &SkipError{Reason: "a replication pass is already running"}
+	ErrRebalanceInProgress   = &SkipError{Reason: "a rebalance pass is already running"}
+	ErrReconcileInProgress   = &SkipError{Reason: "a reconcile pass is already running"}
+	ErrBackfillInProgress    = &SkipError{Reason: "a backfill pass is already running"}
 
 	ErrCompressionUnavailable = &SkipError{Reason: "compression codec not available"}
 )
@@ -90,12 +95,15 @@ func reject(kind RejectionKind, msg string) *Rejection {
 }
 
 // Rejections an object operation raises before it reaches a backend.
+// ErrRewriteInProgress refuses a bulk rewrite or key rotation while another
+// one holds the rewrite lock.
 var (
-	ErrKeyRequired    = reject(RejectInvalid, "key is required")
-	ErrKeyIDRequired  = reject(RejectInvalid, "exactly one of old_key_id or all_stale is required")
-	ErrPrefixRequired = reject(RejectInvalid, "prefix is required")
-	ErrInvalidKey     = reject(RejectInvalid, "key must start with a configured bucket name")
-	ErrNotFound       = reject(RejectNotFound, "object not found")
+	ErrKeyRequired       = reject(RejectInvalid, "key is required")
+	ErrKeyIDRequired     = reject(RejectInvalid, "exactly one of old_key_id or all_stale is required")
+	ErrPrefixRequired    = reject(RejectInvalid, "prefix is required")
+	ErrInvalidKey        = reject(RejectInvalid, "key must start with a configured bucket name")
+	ErrNotFound          = reject(RejectNotFound, "object not found")
+	ErrRewriteInProgress = reject(RejectConflict, "a rewrite pass is already running")
 )
 
 // Rejections a provisioning operation raises. ErrConfigDeclared covers every

@@ -282,8 +282,15 @@ func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.
 
 	return NewRebalance(RebalanceDeps{
 		Rebalancer: m,
+		Locker:     testx.Locker{},
 		Config:     config.NewLive(&config.Config{Rebalance: configured}),
 	})
+}
+
+// encryptionOver builds an encryption service over enc and store that moves
+// nothing, under a lock it always takes.
+func encryptionOver(enc *encryption.Encryptor, store RewriteStore) *Encryption {
+	return NewEncryption(EncryptionDeps{Encryptor: enc, Store: store, Mover: &fakeMover{}, Locker: testx.Locker{}})
 }
 
 // TestRebalance_RunsTheRunningConfig asserts a manual cycle runs with the
@@ -308,7 +315,7 @@ func TestRebalance_RunsTheRunningConfig(t *testing.T) {
 // rebalancer as unavailable rather than panicking.
 func TestRebalance_NotWired(t *testing.T) {
 	t.Parallel()
-	svc := NewRebalance(RebalanceDeps{Config: config.NewLive(&config.Config{})})
+	svc := NewRebalance(RebalanceDeps{Locker: testx.Locker{}, Config: config.NewLive(&config.Config{})})
 
 	_, err := svc.Run(context.Background(), nil)
 	assertSkipped(t, err)
@@ -343,46 +350,74 @@ func TestScrub_EmptyStore(t *testing.T) {
 	}
 }
 
-// TestScrub_SkippedWhenLockHeldElsewhere asserts an operator-triggered pass
-// declines instead of reading the fleet a second time when the scheduled sweep
-// or another instance already holds the lock. Without this a second operator
-// run pays full egress for copies that are being verified right now.
-func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
+// TestManualPasses_DeclineWhileTheirLockIsHeld asserts every pass that holds an
+// advisory lock declines with its busy error while the lock is held, without
+// reaching its worker or store, and reports a lock call that failed as that
+// failure rather than as a skip.
+func TestManualPasses_DeclineWhileTheirLockIsHeld(t *testing.T) {
 	t.Parallel()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-	d := integrityDeps(t, scrubber)
-	d.Locker = testx.Locker{Busy: true}
-	svc := NewIntegrity(d)
-
-	res, err := svc.Scrub(context.Background(), 0, "", nil)
-	if !errors.Is(err, ErrScrubInProgress) {
-		t.Fatalf("Scrub error = %v, want ErrScrubInProgress", err)
+	ctx := context.Background()
+	lockErr := errors.New("lock store down")
+	cases := []struct {
+		name string
+		busy error
+		run  func(s *Services) error
+	}{
+		{"scrub", ErrScrubInProgress, func(s *Services) error { return errOf(s.Integrity.Scrub(ctx, 0, "", nil)) }},
+		{"backfill", ErrBackfillInProgress, func(s *Services) error { return errOf(s.Integrity.BackfillChecksums(ctx, 0, 0, 0, "", nil)) }},
+		{"reconcile", ErrReconcileInProgress, func(s *Services) error { return errOf(s.Integrity.Reconcile(ctx, "", nil)) }},
+		{"replicate", ErrReplicationInProgress, func(s *Services) error { return errOf(s.Replication.Replicate(ctx, nil)) }},
+		{"clean excess", ErrReplicationInProgress, func(s *Services) error { return errOf(s.Replication.CleanExcess(ctx, 0, nil)) }},
+		{"rebuild queue", ErrReplicationInProgress, func(s *Services) error { return errOf(s.Replication.RebuildQueue(ctx)) }},
+		{"rebalance", ErrRebalanceInProgress, func(s *Services) error { return errOf(s.Rebalance.Run(ctx, nil)) }},
+		{"encrypt existing", ErrRewriteInProgress, func(s *Services) error { return errOf(s.Encryption.EncryptExisting(ctx, nil, 0, "")) }},
+		{"decrypt existing", ErrRewriteInProgress, func(s *Services) error { return errOf(s.Encryption.DecryptExisting(ctx, nil, 0, "")) }},
+		{"rotate key", ErrRewriteInProgress, func(s *Services) error { return errOf(s.Encryption.RotateKey(ctx, nil, "old", false)) }},
+		{"compress existing", ErrRewriteInProgress, func(s *Services) error { return errOf(s.Compression.CompressExisting(ctx, nil, 0, "")) }},
+		{"decompress existing", ErrRewriteInProgress, func(s *Services) error { return errOf(s.Compression.DecompressExisting(ctx, nil, 0, "")) }},
 	}
-	assertSkipped(t, err)
-	if res.Attempted != 0 {
-		t.Errorf("Checked = %d, want 0 when the pass never ran", res.Attempted)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.run(servicesLockedBy(t, testx.Locker{Busy: true})); !errors.Is(err, tc.busy) {
+				t.Errorf("lock held: err = %v, want %v", err, tc.busy)
+			}
+			if err := tc.run(servicesLockedBy(t, testx.Locker{Err: lockErr})); !errors.Is(err, lockErr) {
+				t.Errorf("lock call failed: err = %v, want %v", err, lockErr)
+			}
+		})
 	}
 }
 
-// TestScrub_LockErrorSurfaces asserts a lock that fails outright is reported as
-// an error rather than as a skip: an operator retrying a declined pass is fine,
-// but a database that cannot answer is not the same answer.
-func TestScrub_LockErrorSurfaces(t *testing.T) {
-	t.Parallel()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-	wantErr := errors.New("lock unavailable")
-	d := integrityDeps(t, scrubber)
-	d.Locker = testx.Locker{Err: wantErr}
-	svc := NewIntegrity(d)
-
-	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
-		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
+// servicesLockedBy builds every service whose passes hold an advisory lock,
+// over l and over workers and stores that fail the test if a pass reaches them.
+func servicesLockedBy(t *testing.T, l testx.Locker) *Services {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	store := opstest.NewMockRewriteStore(ctrl)
+	return &Services{
+		Integrity: NewIntegrity(IntegrityDeps{
+			Scrubber:   opstest.NewMockScrubberOps(ctrl),
+			Reconciler: opstest.NewMockReconciler(ctrl),
+			Store:      opstest.NewMockCopyStore(ctrl),
+			Locker:     l,
+			Config:     integrityEnabled(),
+		}),
+		Replication: NewReplication(ReplicationDeps{
+			Replicator: opstest.NewMockReplicator(ctrl),
+			OverRep:    opstest.NewMockOverReplicationCleaner(ctrl),
+			Backlog:    emptyBacklog,
+			Locker:     l,
+			Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
+		}),
+		Rebalance:   NewRebalance(RebalanceDeps{Rebalancer: opstest.NewMockRebalancer(ctrl), Locker: l, Config: config.NewLive(&config.Config{})}),
+		Encryption:  NewEncryption(EncryptionDeps{Encryptor: testEncryptor(t), Store: store, Mover: &fakeMover{}, Locker: l}),
+		Compression: NewCompression(&CompressionDeps{Codec: testCodec(t), Store: store, Mover: &fakeMover{}, Locker: l}),
 	}
 }
+
+// errOf returns the error of a pass, dropping its tally.
+func errOf[T any](_ T, err error) error { return err }
 
 // TestScrub_RunsUnderTheLock asserts the pass happens inside the locked
 // section, so the lock actually covers the backend reads rather than being
@@ -683,11 +718,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 			return nil
 		}).Times(1)
 
-	svc := NewEncryption(EncryptionDeps{
-		Encryptor: enc,
-		Store:     store,
-		Mover:     &fakeMover{},
-	})
+	svc := encryptionOver(enc, store)
 
 	var steps []progress.Step
 	res, err := svc.RotateKey(context.Background(), func(s progress.Step) { steps = append(steps, s) }, keyID, false)
@@ -722,11 +753,7 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 	store.EXPECT().UpdateCopyMetadata(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(core.ErrCopyChanged).Times(1)
 
-	svc := NewEncryption(EncryptionDeps{
-		Encryptor: enc,
-		Store:     store,
-		Mover:     &fakeMover{},
-	})
+	svc := encryptionOver(enc, store)
 
 	res, err := svc.RotateKey(context.Background(), nil, keyID, false)
 	if err != nil {
@@ -829,11 +856,7 @@ func TestRotateKey_AllStaleSkipsCurrentKey(t *testing.T) {
 	store := opstest.NewMockRewriteStore(gomock.NewController(t))
 	store.EXPECT().ListCopiesByForm(gomock.Any(), want, rotateBatchSize, core.Cursor{}).Return(nil, nil).Times(1)
 
-	svc := NewEncryption(EncryptionDeps{
-		Encryptor: enc,
-		Store:     store,
-		Mover:     &fakeMover{},
-	})
+	svc := encryptionOver(enc, store)
 	res, err := svc.RotateKey(context.Background(), nil, "", true)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
@@ -1467,42 +1490,6 @@ func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
 	}
 }
 
-// TestReplication_PassesDeclineWhileADrainHoldsTheLock asserts a manual
-// replicate, clean-excess or rebuild reports ErrReplicationInProgress without
-// running while the replicator's lock is held, and surfaces a failed lock
-// call.
-func TestReplication_PassesDeclineWhileADrainHoldsTheLock(t *testing.T) {
-	t.Parallel()
-	lockErr := errors.New("lock store down")
-	for _, tc := range []struct {
-		name    string
-		locker  testx.Locker
-		wantErr error
-	}{
-		{"held", testx.Locker{Busy: true}, ErrReplicationInProgress},
-		{"lock call failed", testx.Locker{Err: lockErr}, lockErr},
-	} {
-		ctrl := gomock.NewController(t)
-		repl, over := opstest.NewMockReplicator(ctrl), opstest.NewMockOverReplicationCleaner(ctrl)
-		svc := NewReplication(ReplicationDeps{
-			Replicator: repl,
-			OverRep:    over,
-			Backlog:    emptyBacklog,
-			Locker:     tc.locker,
-			Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
-		})
-		if _, err := svc.Replicate(context.Background(), nil); !errors.Is(err, tc.wantErr) {
-			t.Errorf("%s: Replicate err = %v, want %v", tc.name, err, tc.wantErr)
-		}
-		if _, err := svc.CleanExcess(context.Background(), 0, nil); !errors.Is(err, tc.wantErr) {
-			t.Errorf("%s: CleanExcess err = %v, want %v", tc.name, err, tc.wantErr)
-		}
-		if _, err := svc.RebuildQueue(context.Background()); !errors.Is(err, tc.wantErr) {
-			t.Errorf("%s: RebuildQueue err = %v, want %v", tc.name, err, tc.wantErr)
-		}
-	}
-}
-
 // emptyBacklog reports an empty replication queue.
 var emptyBacklog = backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
 	return core.ReplicationBacklog{}, nil
@@ -1563,11 +1550,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter("old"), gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
 
-	svc := NewEncryption(EncryptionDeps{
-		Encryptor: testEncryptor(t),
-		Store:     store,
-		Mover:     &fakeMover{},
-	})
+	svc := encryptionOver(testEncryptor(t), store)
 
 	res, err := svc.RotateKey(context.Background(), nil, "old", false)
 	if err != nil {
@@ -1731,6 +1714,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 			Return(worker.RebalanceSummary{}, errBackend).Times(1)
 		svc := NewRebalance(RebalanceDeps{
 			Rebalancer: m,
+			Locker:     testx.Locker{},
 			Config:     config.NewLive(&config.Config{}),
 		})
 

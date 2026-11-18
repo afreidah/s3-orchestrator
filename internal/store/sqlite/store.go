@@ -37,7 +37,7 @@ type Store struct {
 	db         dbAPI
 	rawDB      *sql.DB
 	cb         *breaker.CircuitBreaker
-	mu         sync.Mutex // advisory lock emulation for single-instance
+	locks      sync.Map // lock ID -> *sync.Mutex, one emulated advisory lock per ID
 	instanceID string
 }
 
@@ -123,14 +123,16 @@ func withTxVal[T any](ctx context.Context, s *Store, fn func(a *sqliteTxAdapter)
 	})
 }
 
-// WithAdvisoryLock emulates PostgreSQL advisory locks using a process-local
-// mutex. For single-instance SQLite deployments, this is correct  -  there are
-// no competing instances. Returns (false, nil) if the lock is already held
-// by another goroutine.
-func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
-	if !s.mu.TryLock() {
+// WithAdvisoryLock emulates PostgreSQL advisory locks with one process-local
+// mutex per lock ID, which is enough for a single-instance deployment with no
+// competing instances. Returns (false, nil) if another goroutine holds lockID;
+// a lock held under another ID does not block it.
+func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error) {
+	held, _ := s.locks.LoadOrStore(lockID, new(sync.Mutex))
+	mu := held.(*sync.Mutex)
+	if !mu.TryLock() {
 		return false, nil
 	}
-	defer s.mu.Unlock()
+	defer mu.Unlock()
 	return true, fn(ctx)
 }

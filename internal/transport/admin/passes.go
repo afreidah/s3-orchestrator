@@ -276,6 +276,34 @@ func BackfillPass(svc *ops.Services, p BackfillParams) *Pass[worker.BackfillResu
 	}
 }
 
+// ReconcilePass diffs backend, or every scannable backend when it is empty,
+// against the ledger. Backends are scanned one at a time, so each streamed
+// line is a live prefix completed by its status.
+func ReconcilePass(svc *ops.Services, backend string) *Pass[worker.ReconcileResult] {
+	return &Pass[worker.ReconcileResult]{
+		op:         "reconcile",
+		verb:       "reconciling",
+		sequential: true,
+		failMsg:    "reconcile failed",
+		run: func(ctx context.Context, obs progress.Observer) (worker.ReconcileResult, error) {
+			return svc.Integrity.Reconcile(ctx, backend, obs)
+		},
+		body: func(o adminapi.Outcome, res worker.ReconcileResult) any {
+			return adminapi.ReconcileResponse{
+				Outcome:         o,
+				Imported:        res.Imported,
+				Removed:         res.Removed,
+				BackendsScanned: res.Attempted,
+				BackendsFailed:  res.Failed,
+			}
+		},
+		summary: func(res worker.ReconcileResult) (int, string) {
+			return res.Imported, fmt.Sprintf("imported %d, removed %d across %d backend(s), %d failed",
+				res.Imported, res.Removed, res.Attempted, res.Failed)
+		},
+	}
+}
+
 // RotatePass re-wraps sealed DEKs under the current primary key, those under
 // oldKeyID or with allStale every one under another ID. A skip means the
 // request or the encryption config is wrong, so it fails the pass.

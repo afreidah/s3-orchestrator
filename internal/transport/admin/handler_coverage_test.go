@@ -549,7 +549,7 @@ func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.d.Config = backendsConfig("b1")
-	h.d.Reconciler = newReconciler(t, reconciled(4, 1, 2, 1), nil)
+	reconcilerWith(t, h, reconciled(4, 1, 2, 1), nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
@@ -570,13 +570,30 @@ func TestHandleReconcile_Success(t *testing.T) {
 func TestHandleReconcile_Error(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.d.Reconciler = newReconciler(t, nil, errors.New("scan failed"))
+	reconcilerWith(t, h, nil, errors.New("scan failed"))
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile", nil))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleReconcile_UnavailableIsSkipped pins that an instance without a
+// reconciler, such as one in api mode, answers a skip rather than failing.
+func TestHandleReconcile_UnavailableIsSkipped(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	installIntegrity(t, h, &config.Config{}, &scrubberStub{}, nil)
+
+	w := httptest.NewRecorder()
+	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile", nil))
+
+	var resp adminapi.ReconcileResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if w.Code != http.StatusOK || resp.Status != adminstream.OutcomeSkipped || resp.Reason != ops.ErrReconcilerUnavailable.Reason {
+		t.Errorf("status = %d, outcome = %+v; want 200 skipped as unavailable", w.Code, resp.Outcome)
 	}
 }
 

@@ -6,7 +6,8 @@
 // One on-demand rebalance cycle, moving objects between backends until their
 // utilisation converges. An operator who asks for a cycle gets one under the
 // running config, whose defaults the config loader filled, so a manual run
-// works on a fleet that never enabled scheduled rebalancing.
+// works on a fleet that never enabled scheduled rebalancing. It takes the
+// scheduled rebalancer's lock, so the two never move the same objects.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -16,8 +17,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -27,6 +30,7 @@ import (
 // RebalanceDeps holds the collaborators Rebalance requires.
 type RebalanceDeps struct {
 	Rebalancer Rebalancer
+	Locker     core.AdvisoryLocker
 	Config     *config.Live
 }
 
@@ -39,6 +43,7 @@ type Rebalance struct {
 // NewRebalance is the explicit-deps constructor. Rebalancer is nil when the
 // worker pool is not wired, which Run reports as unavailable.
 func NewRebalance(d RebalanceDeps) *Rebalance {
+	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
 	return &Rebalance{d: d}
 }
@@ -46,13 +51,16 @@ func NewRebalance(d RebalanceDeps) *Rebalance {
 // Run executes one rebalance cycle and reports its tally; Succeeded counts the
 // objects moved. observer, when non-nil, receives a step per move. Reports a
 // skip when the rebalancer plans no moves, so a caller can tell that apart from
-// a cycle that ran and moved nothing.
+// a cycle that ran and moved nothing, and ErrRebalanceInProgress while another
+// cycle holds the lock.
 func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.Summary, error) {
 	if r.d.Rebalancer == nil {
 		return batch.Summary{}, ErrRebalancerUnavailable
 	}
 
-	sum, err := r.d.Rebalancer.Rebalance(ctx, r.d.Config.Load().Rebalance, observer)
+	sum, err := underLock(ctx, r.d.Locker, core.LockRebalancer, ErrRebalanceInProgress, func(lockCtx context.Context) (worker.RebalanceSummary, error) {
+		return r.d.Rebalancer.Rebalance(lockCtx, r.d.Config.Load().Rebalance, observer)
+	})
 	if err != nil {
 		return batch.Summary{}, err
 	}

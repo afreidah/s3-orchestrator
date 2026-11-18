@@ -18,7 +18,8 @@
 // egress in the system. Each copy is admitted against its backend's usage
 // limits as it is moved, because a run that fits the budget when it starts can
 // exhaust it halfway through. Paging is a batch.Pager cursor walk, shared with
-// the other paged passes.
+// the other paged passes. Every pass, and key rotation, holds the rewrite lock,
+// so two never move the same copies, in the same direction or opposite ones.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -94,6 +95,7 @@ type bulkRewriteEnv struct {
 	log    *slog.Logger
 	store  RewriteStore
 	mover  Mover
+	locker core.AdvisoryLocker
 	layers *storedform.Layers
 }
 
@@ -157,13 +159,21 @@ func (o rewriteOutcome) status() string {
 	}
 }
 
-// run is the shared driver for every bulk rewrite pass. A listing
-// failure stops the run and returns the counts gathered so far alongside the
-// error, so a caller can report partial progress.
+// run is the shared driver for every bulk rewrite pass, run under the rewrite
+// lock. A listing failure stops the run and returns the counts gathered so far
+// alongside the error, so a caller can report partial progress. Reports
+// ErrRewriteInProgress while another rewrite holds the lock.
 //
 // obs reports each object as it is processed and may be nil.
 func (op *bulkRewriteOp) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
-	ctx = audit.WithWorkload(ctx, audit.WorkloadRewrite)
+	return underLock(ctx, env.locker, core.LockRewrite, ErrRewriteInProgress, func(lockCtx context.Context) (BulkRewriteResult, error) {
+		return op.walk(audit.WithWorkload(lockCtx, audit.WorkloadRewrite), env, obs)
+	})
+}
+
+// walk rewrites every copy the listing selects, a page at a time, until the
+// listing is exhausted or the pass reaches its cap.
+func (op *bulkRewriteOp) walk(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		// A capped run's last page is asked for short, so the walk compares

@@ -7,8 +7,9 @@
 // objects, an on-demand check of every copy of one key, and the backfill that
 // computes hashes for objects stored before integrity verification was turned
 // on. Each declines with ErrIntegrityDisabled when verification is off. The
-// listings of unhashed and unreadable copies read the ledger and run either
-// way.
+// reconcile of backends against the ledger, the listings of unhashed and
+// unreadable copies, and the purge run either way. Scrub, backfill and
+// reconcile each hold an advisory lock, so two runs of one never overlap.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -54,12 +55,14 @@ type CopyList struct {
 	Copies []core.ObjectLocation
 }
 
-// IntegrityDeps holds the collaborators Integrity requires.
+// IntegrityDeps holds the collaborators Integrity requires. Reconciler is nil
+// outside worker mode, which Reconcile reports as unavailable.
 type IntegrityDeps struct {
-	Scrubber ScrubberOps
-	Store    CopyStore
-	Locker   core.AdvisoryLocker
-	Config   *config.Live
+	Scrubber   ScrubberOps
+	Reconciler Reconciler
+	Store      CopyStore
+	Locker     core.AdvisoryLocker
+	Config     *config.Live
 }
 
 // Integrity serves the verification operations shared by the admin API and
@@ -132,7 +135,8 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // rate-limit backend reads. maxObjects <= 0 drains the whole backlog;
 // batchSize <= 0 uses the default pass size. An empty backend hashes copies on
 // every backend. observer, when non-nil, receives a start and end step per
-// object hashed.
+// object hashed. Reports ErrBackfillInProgress while another backfill runs,
+// since a second one would read every copy again and undo the pause.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (worker.BackfillResult, error) {
 	if !i.d.Config.Load().Integrity.IsEnabled() {
 		return worker.BackfillResult{}, ErrIntegrityDisabled
@@ -141,12 +145,27 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 		batchSize = defaultBackfillBatchSize
 	}
 
-	i.log.InfoContext(ctx, "backfill-checksums started",
-		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
+	return underLock(ctx, i.d.Locker, core.LockBackfill, ErrBackfillInProgress, func(lockCtx context.Context) (worker.BackfillResult, error) {
+		i.log.InfoContext(lockCtx, "backfill-checksums started",
+			"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
+		return i.d.Scrubber.Backfill(lockCtx, worker.BackfillRequest{
+			BatchSize: batchSize, MaxObjects: maxObjects, Pause: pause, Backend: backend,
+		}, observer)
+	})
+}
 
-	return i.d.Scrubber.Backfill(ctx, worker.BackfillRequest{
-		BatchSize: batchSize, MaxObjects: maxObjects, Pause: pause, Backend: backend,
-	}, observer)
+// Reconcile diffs backendName, or every scannable backend when it is empty,
+// against the ledger: it imports the objects the ledger is missing and removes
+// the rows whose objects are gone. observer, when non-nil, receives a step per
+// backend. It holds the scheduled reconcile's lock, so the two never list a
+// backend twice over, and reports ErrReconcileInProgress while that is held.
+func (i *Integrity) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (worker.ReconcileResult, error) {
+	if i.d.Reconciler == nil {
+		return worker.ReconcileResult{}, ErrReconcilerUnavailable
+	}
+	return underLock(ctx, i.d.Locker, core.LockReconcile, ErrReconcileInProgress, func(lockCtx context.Context) (worker.ReconcileResult, error) {
+		return i.d.Reconciler.Reconcile(lockCtx, backendName, observer)
+	})
 }
 
 // ListUnreadable returns up to limit copies that are encrypted with no key, and

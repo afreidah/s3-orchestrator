@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -639,7 +640,8 @@ func TestProvideReconciler_HappyPath(t *testing.T) {
 }
 
 // TestNewInjector_ReconcilerNotRegisteredInAPIMode pins the mode-conditional
-// registration: api-mode binaries do not need the worker-side reconciler.
+// registration: api-mode binaries do not need the worker-side reconciler, and
+// an on-demand reconcile there reports it unavailable instead of calling it.
 func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
 	t.Parallel()
 	cfg := happyPathConfig(t.TempDir())
@@ -650,6 +652,13 @@ func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
 	t.Cleanup(func() { _ = inj.Shutdown() })
 	if _, err := do.Invoke[*worker.Reconciler](inj); !errors.Is(err, do.ErrServiceNotFound) {
 		t.Fatalf("expected ErrServiceNotFound in api mode, got %v", err)
+	}
+	svc, err := do.Invoke[*ops.Services](inj)
+	if err != nil {
+		t.Fatalf("ops: %v", err)
+	}
+	if _, err := svc.Integrity.Reconcile(t.Context(), "", nil); !errors.Is(err, ops.ErrReconcilerUnavailable) {
+		t.Errorf("api-mode reconcile err = %v, want ErrReconcilerUnavailable", err)
 	}
 }
 

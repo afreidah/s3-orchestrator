@@ -159,7 +159,7 @@ Over-replication occurs when an object has more copies than the target factor. T
 
 ### Cleanup process
 
-The over-replication cleaner runs on the same interval as the replicator, using its own advisory lock. It queries for objects exceeding the target factor and removes the least valuable copies.
+The over-replication cleaner runs in each replication tick, right after the replicator and under the same advisory lock. It works one batch of the queued keys with more copies than the target factor and removes the least valuable copies.
 
 ### Scoring
 

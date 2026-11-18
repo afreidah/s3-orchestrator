@@ -326,7 +326,7 @@ func TestManagerRouteOutcomes(t *testing.T) {
 		{"over-replication status with no backends", http.MethodGet, "/admin/api/over-replication", http.StatusOK},
 		{"over-replication clean with no backends", http.MethodPost, "/admin/api/over-replication", http.StatusOK},
 		{"backfill checksums with integrity disabled", http.MethodPost, "/admin/api/backfill-checksums", http.StatusOK},
-		{"reconcile with no reconciler", http.MethodPost, "/admin/api/reconcile", http.StatusServiceUnavailable},
+		{"reconcile with no reconciler", http.MethodPost, "/admin/api/reconcile", http.StatusOK},
 		{"drain an unknown backend", http.MethodPost, "/admin/api/backends/nope/drain", http.StatusBadRequest},
 		{"progress for an unknown backend", http.MethodGet, "/admin/api/backends/nope/drain", 0},
 		{"cancel a drain that never started", http.MethodDelete, "/admin/api/backends/nope/drain", http.StatusBadRequest},
@@ -599,30 +599,6 @@ func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
 }
 func (f *flushUsageFailingOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return f.inner.ReconcileUsage(ctx)
-}
-
-// TestHandleReconcile_UsesContext is a smoke test that the handler threads
-// the request context correctly (reconciler is nil, so we get 503, but the
-// path should not panic regardless of context state).
-// TestHandleReconcile_CancelledContext verifies handle reconcile_cancelled context.
-// TestHandleReconcile_CancelledContext verifies handle reconcile_cancelled context.
-func TestHandleReconcile_CancelledContext(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	req := doAuth(t, http.MethodPost, "/admin/api/reconcile", "")
-	req = req.WithContext(ctx)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
 }
 
 // TestHandleStatus_DashboardError covers the error branch where the

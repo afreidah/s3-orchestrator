@@ -29,9 +29,9 @@ const logComponent = "ops"
 
 // Deps holds every collaborator the operations layer needs. Encryptor and
 // EncStore are nil when the orchestrator runs without encryption, Codec and
-// CompStore when it runs without a compression codec, and Rebalancer when the
-// worker pool is not wired; the operations that depend on them report that
-// rather than failing.
+// CompStore when it runs without a compression codec, Rebalancer when the
+// worker pool is not wired, and Reconciler outside worker mode; the
+// operations that depend on them report that rather than failing.
 type Deps struct {
 	Objects      ObjectAPI
 	Store        ObjectStore
@@ -44,6 +44,7 @@ type Deps struct {
 	OverRep      OverReplicationCleaner
 	Backlog      BacklogCounter
 	Rebalancer   Rebalancer
+	Reconciler   Reconciler
 	Expiry       RuleProcessor
 	Scrubber     ScrubberOps
 	CopyStore    CopyStore
@@ -81,10 +82,11 @@ func New(d *Deps) *Services {
 			Buckets: d.Declared,
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
-			Scrubber: d.Scrubber,
-			Store:    d.CopyStore,
-			Locker:   d.Locker,
-			Config:   cfg,
+			Scrubber:   d.Scrubber,
+			Reconciler: d.Reconciler,
+			Store:      d.CopyStore,
+			Locker:     d.Locker,
+			Config:     cfg,
 		}),
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,
@@ -95,6 +97,7 @@ func New(d *Deps) *Services {
 		}),
 		Rebalance: NewRebalance(RebalanceDeps{
 			Rebalancer: d.Rebalancer,
+			Locker:     d.Locker,
 			Config:     cfg,
 		}),
 		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry, Config: cfg}),
@@ -102,6 +105,7 @@ func New(d *Deps) *Services {
 			Encryptor: d.Encryptor,
 			Store:     d.EncStore,
 			Mover:     d.Mover,
+			Locker:    d.Locker,
 		}),
 		Compression: NewCompression(&CompressionDeps{
 			Codec:     d.Codec,
@@ -109,6 +113,7 @@ func New(d *Deps) *Services {
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
 			Mover:     d.Mover,
+			Locker:    d.Locker,
 		}),
 		Provision: NewProvisioning(ProvisioningDeps{
 			Store:    d.Provisioning,
@@ -119,21 +124,19 @@ func New(d *Deps) *Services {
 	}
 }
 
-// underLock runs an operator's pass under the advisory lock its scheduled
-// service holds, so the two never overlap, or reports busy without waiting
-// while the lock is held.
+// underLock runs an operator's pass under its advisory lock, the one its
+// scheduled service holds when it has one, so two runs never overlap, or
+// reports busy without waiting while the lock is held. A pass that fails keeps
+// the tally it gathered.
 func underLock[S any](ctx context.Context, locker core.AdvisoryLocker, lockID int64, busy error, pass func(context.Context) (S, error)) (S, error) {
-	var sum, zero S
+	var sum S
 	acquired, err := locker.WithAdvisoryLock(ctx, lockID, func(lockCtx context.Context) error {
 		var err error
 		sum, err = pass(lockCtx)
 		return err
 	})
-	switch {
-	case err != nil:
-		return zero, err
-	case !acquired:
-		return zero, busy
+	if err == nil && !acquired {
+		return sum, busy
 	}
-	return sum, nil
+	return sum, err
 }

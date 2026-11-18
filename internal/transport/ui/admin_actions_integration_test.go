@@ -228,6 +228,7 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 			Encryptor: enc,
 			Store:     store,
 			Mover:     opstest.NewMockMover(gomock.NewController(t)),
+			Locker:    testx.Locker{},
 		})},
 	}}
 
@@ -424,6 +425,7 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 					Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 					Store:  store,
 					Mover:  opstest.NewMockMover(gomock.NewController(t)),
+					Locker: testx.Locker{},
 				})},
 			}}
 
