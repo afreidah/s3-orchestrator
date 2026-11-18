@@ -18,6 +18,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -36,3 +37,6 @@ type Copier interface {
 // by decorators like CircuitBreakerBackend when their wrapped backend does
 // not implement Copier.
 var ErrCopyNotSupported = fmt.Errorf("native copy: %w", ErrUnsupported)
+
+// errNoCopyResult marks a provider that answered CopyObject like a plain PUT.
+var errNoCopyResult = errors.New("CopyObject answered 200 without a CopyObjectResult")

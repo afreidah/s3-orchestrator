@@ -471,8 +471,7 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 			})
 			if err != nil {
 				if isBatchRejected(err) {
-					b.markUnsupported(ctx, core.FeatureBatchDelete, err)
-					return fmt.Errorf("%w: %w", ErrBatchDeleteNotSupported, err)
+					return b.refuse(ctx, core.FeatureBatchDelete, ErrBatchDeleteNotSupported, err)
 				}
 				return err
 			}
@@ -486,8 +485,8 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 // CopyObject performs a server-side copy from srcKey to dstKey within the
 // same backend bucket. When contentType or metadata is provided it sends
 // MetadataDirective=REPLACE; otherwise S3 preserves the source's content type
-// and user metadata. A provider that refuses server-side copy is answered
-// with ErrCopyNotSupported from then on, without a request.
+// and user metadata. A provider that refuses server-side copy, or answers it
+// without a CopyObjectResult, gets ErrCopyNotSupported from then on.
 func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
 	if b.lacks(core.FeatureNativeCopy) {
 		return "", ErrCopyNotSupported
@@ -510,13 +509,12 @@ func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType 
 			result, err := b.client.CopyObject(ctx, input)
 			if err != nil {
 				if isUnsupported(err) {
-					b.markUnsupported(ctx, core.FeatureNativeCopy, err)
-					return "", fmt.Errorf("%w: %w", ErrCopyNotSupported, err)
+					return "", b.refuse(ctx, core.FeatureNativeCopy, ErrCopyNotSupported, err)
 				}
 				return "", err
 			}
 			if result.CopyObjectResult == nil {
-				return "", nil
+				return "", b.refuse(ctx, core.FeatureNativeCopy, ErrCopyNotSupported, errNoCopyResult)
 			}
 			return aws.ToString(result.CopyObjectResult.ETag), nil
 		})
