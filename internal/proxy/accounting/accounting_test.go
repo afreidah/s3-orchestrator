@@ -15,10 +15,12 @@ package accounting
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/counter/countertest"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -35,7 +37,7 @@ func newTestRecorder(t *testing.T, names []string, limits map[string]core.UsageL
 	if limits != nil {
 		tracker.UpdateLimits(limits)
 	}
-	return New(tracker, func(string, string, time.Time, error) {}), tracker
+	return New(tracker, nil, func(string, string, time.Time, error) {}), tracker
 }
 
 // -------------------------------------------------------------------------
@@ -187,7 +189,7 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 	cb := counter.NewLocalCounterBackend([]string{"b1"})
 	tracker := counter.NewUsageTracker(cb, map[string]core.UsageLimits{"b1": lim})
 	var ops []string
-	rec := New(tracker, func(operation, _ string, _ time.Time, _ error) {
+	rec := New(tracker, nil, func(operation, _ string, _ time.Time, _ error) {
 		ops = append(ops, operation)
 	})
 
@@ -230,7 +232,7 @@ func TestOperation_EmitsTheMetricWithoutCharging(t *testing.T) {
 	cb := counter.NewLocalCounterBackend([]string{"b1"})
 	tracker := counter.NewUsageTracker(cb, nil)
 	var got string
-	rec := New(tracker, func(operation, _ string, _ time.Time, _ error) { got = operation })
+	rec := New(tracker, nil, func(operation, _ string, _ time.Time, _ error) { got = operation })
 
 	rec.Operation(s3op.HeadObject, "b1", time.Now(), nil)
 
@@ -256,5 +258,30 @@ func TestAllow_UnknownBackendAdmits(t *testing.T) {
 
 	if !rec.Allow("b-unknown", s3op.GetObject, 1<<30, 0) {
 		t.Error("a backend with no limits entry was refused")
+	}
+}
+
+// TestPressuredLast_MovesPressuredBackendsLast asserts a backend under pressure
+// goes to the end with the rest in their order, that an order with none under
+// pressure comes back as it was, and that a recorder judging nothing reorders
+// nothing.
+func TestPressuredLast_MovesPressuredBackendsLast(t *testing.T) {
+	t.Parallel()
+	names := []string{"a", "b", "c"}
+	same := func(s string) string { return s }
+	rec := New(nil, countertest.PressureTracker(t, names, "a"), func(string, string, time.Time, error) {})
+
+	if got := PressuredLast(rec, names, same); !slices.Equal(got, []string{"b", "c", "a"}) {
+		t.Errorf("order = %v, want b, c, a", got)
+	}
+	if !slices.Equal(names, []string{"a", "b", "c"}) {
+		t.Errorf("caller's slice was reordered to %v", names)
+	}
+	unpressured := []string{"b", "c"}
+	if got := PressuredLast(rec, unpressured, same); &got[0] != &unpressured[0] {
+		t.Error("an order with nothing under pressure was copied")
+	}
+	if got := PressuredLast(New(nil, nil, nil), names, same); !slices.Equal(got, names) {
+		t.Errorf("recorder with no tracker reordered to %v", got)
 	}
 }

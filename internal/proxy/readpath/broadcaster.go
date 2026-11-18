@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -64,7 +65,8 @@ func drainTimeoutOrDefault(backendTimeout time.Duration) time.Duration {
 }
 
 // broadcastRead tries all backends when the DB is unavailable. It checks the
-// location cache for a known-good backend first, then probes every backend.
+// location cache for a known-good backend first, unless that backend is under
+// pressure, then probes every backend.
 func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe Probe[T]) (value T, winner string, retErr error) {
 	bcStart := time.Now()
 	cacheHit := false
@@ -73,7 +75,7 @@ func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe
 			Observe(time.Since(bcStart).Seconds())
 	}()
 
-	if cachedBackend, ok := b.cache.Get(op.key); ok {
+	if cachedBackend, ok := b.cache.Get(op.key); ok && b.core.Acct().Pressure(cachedBackend) == 0 {
 		if be, err := b.core.GetBackend(cachedBackend); err == nil {
 			// Degraded mode: no DB row available, probe must handle nil loc.
 			res, err := probe(ctx, cachedBackend, nil, be)
@@ -179,10 +181,10 @@ func (b *Broadcaster) tryAllBackends[T any](ctx context.Context, op readOp, prob
 	return zero, "", broadcastAllFailed(op.span, errs)
 }
 
-// eligibleBackends returns the pending probes in BackendOrder, skipping
-// any name that does not resolve to a backend. The slice is the rolling-window
-// launcher's source of truth: launched indexes into it; on success the
-// remaining tail is simply never started.
+// eligibleBackends returns the pending probes in BackendOrder with the ones
+// under pressure last, skipping any name that does not resolve to a backend.
+// The slice is the rolling-window launcher's source of truth: launched indexes
+// into it; on success the remaining tail is simply never started.
 func (b *Broadcaster) eligibleBackends() []pendingProbe {
 	order := b.core.BackendOrder()
 	pending := make([]pendingProbe, 0, len(order))
@@ -191,7 +193,7 @@ func (b *Broadcaster) eligibleBackends() []pendingProbe {
 			pending = append(pending, pendingProbe{name: name, be: be})
 		}
 	}
-	return pending
+	return accounting.PressuredLast(b.core.Acct(), pending, func(p pendingProbe) string { return p.name })
 }
 
 // recordBroadcastWinner caches the winner's name for future degraded reads

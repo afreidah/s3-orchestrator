@@ -996,6 +996,7 @@ func TestNonReloadableFieldsChanged(t *testing.T) {
 		{"cleanup queue", nil, func(c *Config) { c.CleanupQueue.Concurrency = 3 }, []string{"cleanup_queue.concurrency"}},
 		{"circuit breaker", nil, func(c *Config) { c.CircuitBreaker.ParallelBroadcast = true }, []string{"circuit_breaker.parallel_broadcast"}},
 		{"backend circuit breaker", nil, func(c *Config) { c.BackendCircuitBreaker.Enabled = true }, []string{"backend_circuit_breaker.enabled"}},
+		{"backend pressure", nil, func(c *Config) { c.BackendPressure.SlowShare, c.BackendPressure.Enabled = 0.5, new(false) }, nil},
 		{"metrics listener requirement written in both", func(c *Config) { c.Telemetry.Metrics.RequireListener = new(true) },
 			func(*Config) {}, nil},
 		{"previous keys", nil, func(c *Config) { c.Encryption.PreviousKeys = []string{"b2xk"} }, []string{"encryption.previous_keys"}},
@@ -2085,6 +2086,48 @@ func TestLogLevel_InvalidValue(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "log_level") {
 		t.Errorf("error should mention log_level: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// BackendPressureConfig
+// -------------------------------------------------------------------------
+
+// TestBackendPressureDefaults verifies an unset section is switched on with the
+// default policy.
+func TestBackendPressureDefaults(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.BackendPressure.IsEnabled() || cfg.BackendPressure.PressurePolicy != DefaultPressurePolicy() {
+		t.Errorf("backend_pressure = %+v, want on with the default policy", cfg.BackendPressure)
+	}
+}
+
+// TestBackendPressure_RefusesBadValues verifies a share outside 0 to 1, a
+// factor that is not above 1 and a negative minimum are each refused.
+func TestBackendPressure_RefusesBadValues(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		edit func(*PressurePolicy)
+		want error
+	}{
+		{"slow factor of 1", func(p *PressurePolicy) { p.SlowFactor = 1 }, ErrPressureSlowFactor},
+		{"slow share over 1", func(p *PressurePolicy) { p.SlowShare = 1.5 }, ErrOutOfRange},
+		{"negative timeout share", func(p *PressurePolicy) { p.TimeoutShare = -0.1 }, ErrOutOfRange},
+		{"negative min calls", func(p *PressurePolicy) { p.MinCalls = -1 }, ErrNotPositive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			tc.edit(&cfg.BackendPressure.PressurePolicy)
+			if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 

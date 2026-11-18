@@ -220,7 +220,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.UpdateLimits(map[string]core.UsageLimits{"b2": {EgressByteLimit: 100}})
 	tracker.SetBaselines(map[string]core.Usage{"b2": {UsageStat: core.UsageStat{EgressBytes: 99}}})
-	ops.EXPECT().Acct().Return(accounting.New(tracker, func(string, string, time.Time, error) {})).AnyTimes()
+	ops.EXPECT().Acct().Return(accounting.New(tracker, nil, func(string, string, time.Time, error) {})).AnyTimes()
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
 	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 

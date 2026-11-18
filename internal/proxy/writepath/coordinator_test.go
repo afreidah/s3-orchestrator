@@ -30,6 +30,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/counter/countertest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
@@ -61,10 +62,17 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 // can be exercised in isolation without dragging real backends into
 // every test.
 func newCoordinatorWithStore(store CoordinatorStores) *Coordinator {
+	return newCoordinatorUnderPressure(store, nil)
+}
+
+// newCoordinatorUnderPressure is newCoordinatorWithStore with the backends'
+// pressure judged by pressure, or by nothing when it is nil.
+func newCoordinatorUnderPressure(store CoordinatorStores, pressure *counter.PressureTracker) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
 		Usage:    counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil),
 		Quota:    counter.NewQuotaTracker(),
+		Pressure: pressure,
 	})
 	return New(c, store)
 }
@@ -819,6 +827,31 @@ func TestClaimWriteTarget_TriesTheNextCandidateWhenOneIsFull(t *testing.T) {
 	}
 	if want := []string{"b1", "b2"}; !slices.Equal(claimed, want) {
 		t.Errorf("tried %v, want %v in order", claimed, want)
+	}
+}
+
+// TestClaimWriteTarget_TriesAPressuredBackendLast asserts a backend under
+// pressure is tried after the others and still takes the write when none of
+// them has room.
+func TestClaimWriteTarget_TriesAPressuredBackendLast(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+
+	var claimed []string
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
+			claimed = append(claimed, p.BackendName)
+			return p.BackendName == "b1", nil
+		}).Times(2)
+
+	coord := newCoordinatorUnderPressure(store, countertest.PressureTracker(t, []string{"b1", "b2"}, "b1"))
+	intent := NewPendingIntent("k", 4096, nil, nil, nil)
+	if err := coord.ClaimWriteTarget(context.Background(), testSpan(t), s3op.PutObject, intent, []string{"b1", "b2"}); err != nil {
+		t.Fatalf("ClaimWriteTarget: %v", err)
+	}
+	if want := []string{"b2", "b1"}; !slices.Equal(claimed, want) || intent.BackendName != "b1" {
+		t.Errorf("tried %v and claimed %q, want %v ending on b1", claimed, intent.BackendName, want)
 	}
 }
 

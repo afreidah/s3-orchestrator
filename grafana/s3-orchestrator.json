@@ -6193,6 +6193,133 @@
           }
         }
       }
+    },
+    {
+      "type": "row",
+      "id": 160,
+      "title": "Backend Pressure",
+      "gridPos": {
+        "x": 0,
+        "y": 405,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 161,
+      "title": "Slow and Timed-Out Calls (60s)",
+      "description": "Share of each backend's timed calls over the last minute that ran over its slow factor times its baseline, or hit the backend timeout, as the worst instance sees it. A backend reaching slow_share or timeout_share is tried after the others.",
+      "gridPos": {
+        "x": 0,
+        "y": 406,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend, signal) (s3o_backend_pressure{window=\"60s\"})",
+          "legendFormat": "{{backend}} {{signal}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 162,
+      "title": "Under Pressure Now",
+      "description": "Backends an instance is trying after the others, and why: slow (calls over their baseline) or timeouts (calls hitting the backend timeout).",
+      "gridPos": {
+        "x": 12,
+        "y": 406,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend, reason) (s3o_backend_pressured) == 1",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "backend",
+            "desc": false
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "None"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 163,
+      "title": "Latency Baseline",
+      "description": "Each backend's typical call time, which a call is judged slow against. It holds still while the backend is under pressure.",
+      "gridPos": {
+        "x": 18,
+        "y": 406,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend) (s3o_backend_latency_baseline_seconds)",
+          "legendFormat": "{{backend}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
     }
   ]
 }

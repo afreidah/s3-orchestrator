@@ -245,5 +245,9 @@ var (
 	ErrUsageFlushThresholdRange = errors.New("usage_flush.adaptive_threshold must be between 0 and 1")
 )
 
+// Backend pressure errors. A factor of 1 or less would call half of every
+// backend's calls slow.
+var ErrPressureSlowFactor = errors.New("backend_pressure.slow_factor must be above 1")
+
 // Cache errors.
 var ErrCacheMaxObjectExceedsMaxSize = errors.New("cache.max_object_size cannot exceed cache.max_size")

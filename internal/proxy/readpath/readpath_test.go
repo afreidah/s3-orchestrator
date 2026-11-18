@@ -22,6 +22,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/counter/countertest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -74,10 +76,16 @@ func (c mapLocationCache) Set(key, backendName string) { c[key] = backendName }
 // newReadTestFailover builds a Failover over in-memory backends named a and b,
 // returning the location cache so degraded-mode tests can inspect the winner.
 func newReadTestFailover(degraded bool) (*Failover, mapLocationCache) {
+	return newReadTestFailoverOver(degraded, nil)
+}
+
+// newReadTestFailoverOver is newReadTestFailover with the backends' pressure
+// judged by pressure, or by nothing when it is nil.
+func newReadTestFailoverOver(degraded bool, pressure *counter.PressureTracker) (*Failover, mapLocationCache) {
 	rt := &readTestRuntime{
 		backends: map[string]backend.ObjectBackend{"a": backendtest.NewInMemory(), "b": backendtest.NewInMemory()},
 		order:    []string{"a", "b"},
-		acct:     accounting.New(nil, func(_, _ string, _ time.Time, _ error) {}),
+		acct:     accounting.New(nil, pressure, func(_, _ string, _ time.Time, _ error) {}),
 	}
 	cache := mapLocationCache{}
 	return New(&FailoverDeps{Core: rt, Cache: cache, DegradedReadsEnabled: degraded}), cache
@@ -117,6 +125,33 @@ func TestRead_WalksTheCallersLocations(t *testing.T) {
 	}
 	if len(seen) != 2 || seen[0] != &locs[0] || seen[1] != &locs[1] {
 		t.Errorf("probes saw %v, want each caller row in order", seen)
+	}
+}
+
+// TestRead_PressuredBackendIsTriedLast verifies a copy on a backend under
+// pressure is tried after the others, both when walking the caller's rows and
+// when broadcasting, even past a cached winner on that backend.
+func TestRead_PressuredBackendIsTriedLast(t *testing.T) {
+	t.Parallel()
+	f, cache := newReadTestFailoverOver(true, countertest.PressureTracker(t, []string{"a", "b"}, "a"))
+	cache["k"] = "a"
+	locs := []core.ObjectLocation{{ObjectKey: readTestKey, BackendName: "a"}, {ObjectKey: readTestKey, BackendName: "b"}}
+	tried := func(names *[]string) Probe[string] {
+		return func(_ context.Context, name string, _ *core.ObjectLocation, _ backend.ObjectBackend) (ProbeResult[string], error) {
+			*names = append(*names, name)
+			return ProbeResult[string]{Value: name, Cleanup: NoopCleanup}, nil
+		}
+	}
+
+	var walked, broadcast []string
+	if _, name, err := f.Read(context.Background(), "GetObject", readTestKey, locs, nil, tried(&walked)); err != nil || name != "b" {
+		t.Errorf("walk won on %q, %v; want b", name, err)
+	}
+	if _, name, err := f.Read(context.Background(), "GetObject", readTestKey, nil, core.ErrDBUnavailable, tried(&broadcast)); err != nil || name != "b" {
+		t.Errorf("broadcast won on %q, %v; want b", name, err)
+	}
+	if len(walked) != 1 || len(broadcast) != 1 {
+		t.Errorf("tried %v walking and %v broadcasting, want only b each time", walked, broadcast)
 	}
 }
 

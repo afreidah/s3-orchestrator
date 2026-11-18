@@ -33,14 +33,15 @@ type StateChecker interface {
 
 // Config bundles every input *BackendRuntime needs at construction. Exposed so
 // callers (root proxy package, tests) can build a *BackendRuntime directly. A
-// nil AdmissionSem means unbounded admission, and a zero BackendTimeout
-// disables the per-call timeout.
+// nil AdmissionSem means unbounded admission, a zero BackendTimeout disables
+// the per-call timeout, and a nil Pressure judges no backend under pressure.
 type Config struct {
 	Backends        map[string]backend.ObjectBackend
 	Order           []string
 	BackendTimeout  time.Duration
 	Usage           *counter.UsageTracker
 	Quota           *counter.QuotaTracker
+	Pressure        *counter.PressureTracker
 	RoutingStrategy config.RoutingStrategy
 	Profiles        map[string]core.BackendProfile
 	AdmissionSem    chan struct{}
@@ -62,7 +63,7 @@ type BackendRuntime struct {
 func New(cfg *Config) *BackendRuntime {
 	return &BackendRuntime{
 		cfg:        *cfg,
-		recorder:   accounting.New(cfg.Usage, telemetry.ManagerOps.Record),
+		recorder:   accounting.New(cfg.Usage, cfg.Pressure, telemetry.ManagerOps.Record),
 		workerTurn: make(chan struct{}, 1),
 	}
 }
@@ -87,4 +88,18 @@ func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 // insert that claims the space.
 func (c *BackendRuntime) Quota() *counter.QuotaTracker {
 	return c.cfg.Quota
+}
+
+// Pressure returns the tracker judging which backends are under pressure, nil
+// when nothing judges it.
+func (c *BackendRuntime) Pressure() *counter.PressureTracker {
+	return c.cfg.Pressure
+}
+
+// PressureState returns the named backend's pressure as last judged.
+func (c *BackendRuntime) PressureState(name string) counter.PressureState {
+	if c.cfg.Pressure == nil {
+		return counter.PressureState{}
+	}
+	return c.cfg.Pressure.State(name)
 }

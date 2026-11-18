@@ -262,6 +262,9 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_backend_duration_seconds` | Histogram | operation, backend | Backend latency |
 | `s3o_backend_range_ignored_total` | Counter | backend | Ranged GETs the backend answered with the whole object; the orchestrator cut the range itself |
 | `s3o_backend_unsupported` | Gauge | backend, feature | 1 for each optional feature (`range`, `batch-delete`, `native-copy`) the backend has refused since the instance started; it takes the fallback from then on |
+| `s3o_backend_pressure` | Gauge | backend, signal, window | Share of the backend's timed calls in the window (`10s`, `60s`, `300s`) that were slow (`signal="slow"`) or hit the backend timeout (`signal="timeouts"`); the 60s window decides [pressure](configuration.md#backend_pressure) |
+| `s3o_backend_pressured` | Gauge | backend, reason | 1 while the backend holds the reason (`slow`, `timeouts`), which tries it after the other backends |
+| `s3o_backend_latency_baseline_seconds` | Gauge | backend | The backend's typical call time, which a call is judged slow against; it stops moving while the backend is under pressure |
 | `s3o_manager_requests_total` | Counter | operation, backend, status | Manager-level operations |
 | `s3o_manager_duration_seconds` | Histogram | operation, backend | Manager latency |
 | `s3o_quota_bytes_used` | Gauge | backend | Current bytes used |

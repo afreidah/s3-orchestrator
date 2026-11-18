@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -132,6 +133,7 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 
 			UsageLimits: make([]adminapi.UsageMeter, len(meters)),
 			UsageCycle:  adminapi.UsageCycle{Start: cycle.Start, NextReset: cycle.Next, Timezone: cycle.Zone()},
+			Pressure:    wirePressure(data.Pressure[name]),
 			Profile:     adminapi.BackendProfile(data.Profiles[name]),
 		}
 		for i, m := range meters {
@@ -140,6 +142,18 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 		backends = append(backends, bs)
 	}
 	return backends
+}
+
+// wirePressure renders a backend's pressure with the shares of the window it is
+// judged on.
+func wirePressure(st counter.PressureState) adminapi.BackendPressure {
+	d := st.Deciding()
+	return adminapi.BackendPressure{
+		Reasons:         st.Reasons.Names(),
+		SlowShare:       d.Slow,
+		TimeoutShare:    d.Timeouts,
+		BaselineSeconds: st.Baseline.Seconds(),
+	}
 }
 
 // handleObjectLocations returns every recorded copy of the object named by

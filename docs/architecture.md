@@ -128,6 +128,6 @@ Long-running workers keep the metadata layer consistent with the backends:
 | **Reconciler** | Detects orphans (backend objects with no DB record) and stale DB rows |
 | **Usage flush** | Periodically writes unflushed usage counters to the DB and republishes the fleet-wide gauges |
 
-Every worker except the usage flush, which every instance runs for its own counters, and the circuit breaker watchdog holds an advisory lock, so a multi-instance deployment runs each one on one instance at a time.
+Every worker except the usage flush, which every instance runs for its own counters, the backend pressure tick, which judges from its own calls, and the circuit breaker watchdog holds an advisory lock, so a multi-instance deployment runs each one on one instance at a time.
 
 See [docs/background-services.md](background-services.md) for the full table with intervals and lock IDs.

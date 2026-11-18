@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
@@ -181,13 +182,15 @@ func (w *Coordinator) ClaimWriteCopies(ctx context.Context, span trace.Span, op 
 
 // rankForWrite orders the candidates the way the configured strategy wants them
 // tried: pack keeps the configured order so writes fill one backend before
-// moving on, spread puts the least utilized first. The slice is copied before
-// sorting so the caller's eligibility list is left alone.
+// moving on, spread puts the least utilized first. Either way a backend under
+// pressure goes last. The slice is copied before sorting so the caller's
+// eligibility list is left alone.
 func (w *Coordinator) rankForWrite(eligible []string) []string {
-	if w.core.RoutingStrategy() != config.RoutingSpread {
-		return eligible
+	ranked := eligible
+	if w.core.RoutingStrategy() == config.RoutingSpread {
+		ranked = w.core.Quota().RankByUtilization(eligible)
 	}
-	return w.core.Quota().RankByUtilization(eligible)
+	return accounting.PressuredLast(w.core.Acct(), ranked, func(name string) string { return name })
 }
 
 // SelectWriteTarget picks a backend for a write and claims it with the pending

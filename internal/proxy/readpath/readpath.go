@@ -37,6 +37,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -146,8 +147,9 @@ func (op readOp) won(rt ReadRuntime, name string, size int64) {
 }
 
 // Read runs the read-with-failover protocol over the caller's location lookup:
-// it starts the span and tries each backend in turn. The caller looks the key
-// up so it can answer from the rows before any backend is touched. On
+// it starts the span and tries each backend in turn, those under pressure
+// last. The caller looks the key up so it can answer from the rows before any
+// backend is touched. On
 // core.ErrDBUnavailable it enters degraded mode and delegates to the
 // broadcaster (unless degraded reads are disabled). Returns the winning
 // backend name and any error.
@@ -179,8 +181,12 @@ func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, ke
 		return zero, "", fmt.Errorf("failed to find object location: %w", err)
 	}
 
-	return f.tryEachLocation(ctx, op, locations, probe)
+	return f.tryEachLocation(ctx, op, accounting.PressuredLast(f.d.Core.Acct(), locations, locationBackend), probe)
 }
+
+// locationBackend names the backend a location row is on. PressuredLast hands
+// each row by value, which is why this takes the copy whole.
+var locationBackend = func(loc core.ObjectLocation) string { return loc.BackendName }
 
 // tryEachLocation walks the resolved location list and runs the probe
 // against each, returning on the first success. Records lastErr and a

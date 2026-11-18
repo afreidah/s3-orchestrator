@@ -297,6 +297,14 @@ config:
     failure_threshold: 5
     open_timeout: "5m"
 
+  # --- Tries a backend whose calls slowed against its own baseline after the others ---
+  backend_pressure:
+    enabled: true
+    slow_factor: 3
+    slow_share: 0.25
+    timeout_share: 0.05
+    min_calls: 20
+
   # --- Per client IP ---
   rate_limit:
     enabled: true

@@ -172,6 +172,8 @@ The strategy decides the order candidates are tried, not which one accepts. A ba
 
 Usage limits are separate and are applied when building the candidate list, so a backend over its monthly API or bandwidth allowance is never ranked in the first place.
 
+A backend under [pressure](configuration.md#backend_pressure) - its calls slowed against its own baseline, or hitting the backend timeout - goes to the end of the order under either strategy, and reads try its copy last. It still takes a write when no other candidate has room.
+
 
 ## Multi-backend configurations
 

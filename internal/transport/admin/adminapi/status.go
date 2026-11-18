@@ -90,6 +90,7 @@ type IntegrityStatus struct {
 // Unsupported names the optional features (range, batch-delete, native-copy)
 // the backend has refused since this instance started. Each has a fallback the
 // instance uses instead, and the list is empty for a backend that refused none.
+// Pressure is how this instance last judged the backend's calls.
 //
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
@@ -121,9 +122,21 @@ type BackendStatus struct {
 	UnmanagedUnhashedCopies int64 `json:"unmanaged_unhashed_copies"`
 	ActiveMultipartUploads  int64 `json:"active_multipart_uploads"`
 
-	UsageLimits []UsageMeter   `json:"usage_limits"`
-	UsageCycle  UsageCycle     `json:"usage_cycle"`
-	Profile     BackendProfile `json:"profile"`
+	UsageLimits []UsageMeter    `json:"usage_limits"`
+	UsageCycle  UsageCycle      `json:"usage_cycle"`
+	Pressure    BackendPressure `json:"pressure"`
+	Profile     BackendProfile  `json:"profile"`
+}
+
+// BackendPressure is a backend's pressure as last judged. Reasons names why it
+// is tried after the others (slow, timeouts) and is empty when it is not. The
+// shares are of its calls over the last minute, and BaselineSeconds is the
+// typical call time a call is judged slow against, zero until it has one.
+type BackendPressure struct {
+	Reasons         []string `json:"reasons"`
+	SlowShare       float64  `json:"slow_share"`
+	TimeoutShare    float64  `json:"timeout_share"`
+	BaselineSeconds float64  `json:"baseline_seconds"`
 }
 
 // BackendProfile is a backend as configured: its endpoint, region and bucket,

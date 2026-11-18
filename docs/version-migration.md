@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.183.x (current)
+### v0.184.x (current)
+
+**A slow backend is tried after the others ([#1431](https://github.com/afreidah/s3-orchestrator/issues/1431), v0.184.0)**
+
+A backend that was up but slow never tripped its breaker, since nothing failed, and kept taking its share of reads and writes at full timeout cost. Each instance now times the calls whose length does not depend on object size and puts a backend under [pressure](configuration.md#backend_pressure) once too many of them run over three times its own baseline or hit the backend timeout. A backend under pressure is tried last for reads and writes and is still served.
+
+**Operator action items after upgrade:**
+
+- **On by default.** A backend under pressure takes writes only when the others have no room, and reads try its copy last. Set `backend_pressure.enabled: false` to keep the order unchanged.
+- **New status field:** each backend in `/admin/api/status` carries `pressure` with its `reasons`, the last minute's `slow_share` and `timeout_share`, and `baseline_seconds`. The TUI backend detail shows it while a backend is under pressure.
+- **New metrics and events:** `s3o_backend_pressure`, `s3o_backend_pressured` and `s3o_backend_latency_baseline_seconds`, and the `backend.pressure.demoted` and `backend.pressure.restored` notifications.
+- **New service:** `backend_pressure` appears in `/admin/api/workers` and the worker metrics, ticking every 2 seconds on every instance.
+
+### v0.183.x
 
 **Manual passes take their advisory lock ([#1795](https://github.com/afreidah/s3-orchestrator/issues/1795), v0.183.3)**
 

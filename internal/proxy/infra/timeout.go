@@ -7,12 +7,15 @@
 // (honouring a tighter parent deadline) and hosts the GET, HEAD, PUT and
 // stream copy that pair it with a backend RPC. Each charges the call where it
 // is sent, so no call site carries the timeout plumbing or the accounting rule.
+// GET and HEAD are also timed for the backend's pressure; a PUT's time depends
+// on its size, so it is not.
 // -------------------------------------------------------------------------------
 
 package infra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -21,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// errBackendTimeout is the cause the configured backend timeout ends a call
+// with, which tells it apart from the caller's own deadline or cancellation.
+var errBackendTimeout = errors.New("backend timeout")
 
 // WithTimeout returns a context with the configured backend timeout
 // applied. Honours a tighter parent deadline. Returns context.WithCancel
@@ -35,7 +42,23 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 			return context.WithTimeout(ctx, remaining)
 		}
 	}
-	return context.WithTimeout(ctx, c.cfg.BackendTimeout)
+	return context.WithTimeoutCause(ctx, c.cfg.BackendTimeout, errBackendTimeout)
+}
+
+// timed records, for the backend's pressure, how long a call to name that
+// began at start took on ctx, with timedOut set when the backend timeout ended
+// it. A call the caller ended says nothing about the backend and is left out.
+func (c *BackendRuntime) timed(ctx context.Context, name string, start time.Time, timedOut bool) {
+	if ctx.Err() != nil && !timedOut {
+		return
+	}
+	c.Acct().Latency(name, time.Since(start), timedOut)
+}
+
+// endedByTimeout reports whether WithTimeout's backend timeout, rather than
+// the caller, ended ctx.
+func endedByTimeout(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errBackendTimeout)
 }
 
 // Get issues a GET against the named backend under the configured timeout and
@@ -46,7 +69,9 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 // streaming. On error the context is already released.
 func (c *BackendRuntime) Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
 	gctx, gcancel := c.WithTimeout(ctx)
+	start := time.Now()
 	result, err := be.GetObject(gctx, key, rangeHeader)
+	c.timed(gctx, name, start, endedByTimeout(gctx))
 	if err != nil {
 		gcancel()
 		c.Acct().APICall(ctx, s3op.GetObject, name)
@@ -57,37 +82,35 @@ func (c *BackendRuntime) Get(ctx context.Context, name string, be backend.Object
 
 // OpenGet issues a GET for a body the caller reads later. The timeout covers
 // the wait for the response, and start gives the body a full timeout from when
-// the caller begins reading it. release frees the call as Get's cancel does.
+// the caller begins reading it. release frees the call as Get's cancel does,
+// and the timer stops with the call however it ends. Only the caller and the
+// timer end the call's context, so a call ended while the caller's context is
+// still live was ended by the timeout.
 func (c *BackendRuntime) OpenGet(ctx context.Context, name string, be backend.ObjectBackend, key string) (result *backend.GetObjectResult, start func(), release context.CancelFunc, err error) {
 	gctx, gcancel := context.WithCancel(ctx)
 	timeout := c.cfg.BackendTimeout
 	var timer *time.Timer
 	if timeout > 0 {
 		timer = time.AfterFunc(timeout, gcancel)
+		context.AfterFunc(gctx, func() { timer.Stop() })
 	}
-	stop := func() {
-		if timer != nil {
-			timer.Stop()
-		}
-	}
+	began := time.Now()
 	result, err = be.GetObject(gctx, key, "")
+	c.timed(gctx, name, began, gctx.Err() != nil && ctx.Err() == nil)
 	if err != nil {
-		stop()
 		gcancel()
 		c.Acct().APICall(ctx, s3op.GetObject, name)
 		return nil, nil, nil, err
 	}
-	stop()
+	if timer != nil {
+		timer.Stop()
+	}
 	start = func() {
 		if timer != nil {
 			timer.Reset(timeout)
 		}
 	}
-	release = func() {
-		stop()
-		gcancel()
-	}
-	return result, start, release, nil
+	return result, start, gcancel, nil
 }
 
 // Head issues a HEAD against the named backend under the configured timeout
@@ -96,7 +119,9 @@ func (c *BackendRuntime) OpenGet(ctx context.Context, name string, be backend.Ob
 func (c *BackendRuntime) Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
 	hctx, hcancel := c.WithTimeout(ctx)
 	defer hcancel()
+	start := time.Now()
 	result, err := be.HeadObject(hctx, key)
+	c.timed(hctx, name, start, endedByTimeout(hctx))
 	c.Acct().APICall(ctx, s3op.HeadObject, name)
 	return result, err
 }

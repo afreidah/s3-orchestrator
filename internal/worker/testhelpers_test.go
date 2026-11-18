@@ -512,7 +512,7 @@ func newTestUsageTracker() *counter.UsageTracker {
 // no-limits usage tracker and a no-op operation-metric callback. Use
 // from mock setups: ops.EXPECT().Acct().Return(newTestRecorder()).
 func newTestRecorder() *accounting.Recorder {
-	return accounting.New(newTestUsageTracker(), func(string, string, time.Time, error) {})
+	return accounting.New(newTestUsageTracker(), nil, func(string, string, time.Time, error) {})
 }
 
 // expectUsage has ops report tracker both as the usage counters and as the
@@ -520,7 +520,7 @@ func newTestRecorder() *accounting.Recorder {
 // the limit every admission check sees.
 func expectUsage(ops *MockOps, tracker *counter.UsageTracker) {
 	ops.EXPECT().Usage().Return(tracker).AnyTimes()
-	ops.EXPECT().Acct().Return(accounting.New(tracker, func(string, string, time.Time, error) {})).AnyTimes()
+	ops.EXPECT().Acct().Return(accounting.New(tracker, nil, func(string, string, time.Time, error) {})).AnyTimes()
 }
 
 // -------------------------------------------------------------------------
