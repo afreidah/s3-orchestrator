@@ -19,6 +19,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/aws/smithy-go"
@@ -68,6 +69,14 @@ func (b *S3Backend) markUnsupported(ctx context.Context, feature core.BackendFea
 	logfmt.Logger("backend").WarnContext(ctx,
 		"backend does not support a feature; using the fallback until restart",
 		"backend", b.name, "feature", feature.String(), logfmt.Err(err))
+}
+
+// refuse records that the backend refused feature and returns sentinel wrapping
+// cause, the error a refusal answers with. Later calls of the feature answer
+// with sentinel alone, without a request.
+func (b *S3Backend) refuse(ctx context.Context, feature core.BackendFeatures, sentinel, cause error) error {
+	b.markUnsupported(ctx, feature, cause)
+	return fmt.Errorf("%w: %w", sentinel, cause)
 }
 
 // isUnsupported reports whether err is a provider refusing the request itself

@@ -64,6 +64,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.183.x (current)
 
+**A server-side copy answered with no result falls back instead of recording an empty object ([#1824](https://github.com/afreidah/s3-orchestrator/issues/1824), v0.183.2)**
+
+A backend that handles `CopyObject` as a plain PUT stores the empty request body and answers `200` with no `CopyObjectResult`. That was taken as a completed copy, so the destination was recorded with the source's size while the backend held 0 bytes, and every read of it failed. It is now a refusal: the copy falls back to reading the source and writing the destination, and the backend lists `native-copy` as unsupported from then on.
+
+**Operator action items after upgrade:**
+
+- **A backend that answered this way shows `native-copy` under `unsupported`** in `/admin/api/status`, the TUI backend detail and the Unsupported Features panel, with `s3o_backend_unsupported{feature="native-copy"}` at 1. Copies to it go through the orchestrator from then on.
+- **Objects already recorded this way stay broken until they are written again.** Their rows claim bytes the backend does not hold.
+
 **Unhashed copies are listed, and counted apart from the unmanaged ones ([#1684](https://github.com/afreidah/s3-orchestrator/issues/1684), v0.183.0)**
 
 The unhashed count used to include unmanaged copies, which `backfill-checksums` never hashes, so it could stay above zero after a backfill finished. It now counts only the managed copies, and the unmanaged ones are reported beside it. `GET /admin/api/unhashed`, `admin unhashed` and the TUI's Integrity pane list the copies themselves, narrowed by backend and by whether the orchestrator manages them.

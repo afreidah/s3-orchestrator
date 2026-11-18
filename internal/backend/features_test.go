@@ -37,13 +37,39 @@ func copyServer(status int, code string, requests *atomic.Int32) http.HandlerFun
 }
 
 // TestCopyObject_RefusalIsRemembered verifies a provider refusing server-side
-// copy is reported as ErrCopyNotSupported, recorded with its gauge, and not
-// asked again, and that the circuit breaker does not count the refusal.
+// copy, or answering it 200 with no CopyObjectResult the way a plain PUT does,
+// is reported as ErrCopyNotSupported, recorded with its gauge, and not asked
+// again, and that the circuit breaker does not count the refusal.
 func TestCopyObject_RefusalIsRemembered(t *testing.T) {
 	t.Parallel()
-	var requests atomic.Int32
-	be := newTestBackend(t, copyServer(http.StatusNotImplemented, "NotImplemented", &requests))
+	cases := []struct {
+		name   string
+		answer func(requests *atomic.Int32) http.HandlerFunc
+	}{
+		{"not implemented", func(requests *atomic.Int32) http.HandlerFunc {
+			return copyServer(http.StatusNotImplemented, "NotImplemented", requests)
+		}},
+		{"200 without a copy result", func(requests *atomic.Int32) http.HandlerFunc {
+			return func(http.ResponseWriter, *http.Request) { requests.Add(1) }
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			assertCopyRefusedOnce(t, newTestBackend(t, tc.answer(&requests)), &requests)
+		})
+	}
+	if classifyFailure(ErrCopyNotSupported) != scopeNone {
+		t.Error("a refused copy counts against the breaker")
+	}
+}
 
+// assertCopyRefusedOnce copies twice through be and fails unless both copies
+// report ErrCopyNotSupported, only the first reached the server, and the
+// refusal is recorded with its gauge.
+func assertCopyRefusedOnce(t *testing.T, be *S3Backend, requests *atomic.Int32) {
+	t.Helper()
 	for range 2 {
 		if _, err := be.CopyObject(t.Context(), "src", "dst", "", nil); !errors.Is(err, ErrCopyNotSupported) {
 			t.Errorf("err = %v, want ErrCopyNotSupported", err)
@@ -55,9 +81,6 @@ func TestCopyObject_RefusalIsRemembered(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(telemetry.BackendUnsupported.WithLabelValues(be.name, "native-copy")); got != 1 {
 		t.Errorf("unsupported gauge = %v, want 1", got)
-	}
-	if classifyFailure(ErrCopyNotSupported) != scopeNone {
-		t.Error("a refused copy counts against the breaker")
 	}
 }
 
