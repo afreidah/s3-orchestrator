@@ -176,7 +176,7 @@ func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
 func TestHandleReconcile_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.d.Reconciler = newReconciler(t, reconciled(4, 1, 2, 0), nil)
+	reconcilerWith(t, h, reconciled(4, 1, 2, 0), nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, streamReq("/admin/api/reconcile"))
@@ -200,7 +200,7 @@ func TestHandleReconcile_StreamsProgressAndResult(t *testing.T) {
 func TestHandleReconcile_StreamsFailure(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.d.Reconciler = newReconciler(t, nil, errors.New("scan failed"))
+	reconcilerWith(t, h, nil, errors.New("scan failed"))
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, streamReq("/admin/api/reconcile"))

@@ -37,6 +37,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // -------------------------------------------------------------------------
@@ -212,6 +213,7 @@ func newCompressionWith(t *testing.T, store RewriteStore, cfg config.Compression
 		Encryptor: enc,
 		Store:     store,
 		Mover:     mover,
+		Locker:    testx.Locker{},
 	}), be, mover
 }
 
@@ -697,8 +699,9 @@ func TestDecompressExisting_KeepsTheEnvelope(t *testing.T) {
 func TestCompressExisting_WithoutCodec(t *testing.T) {
 	t.Parallel()
 	svc := NewCompression(&CompressionDeps{
-		Store: &oneRowStore{},
-		Mover: &fakeMover{},
+		Store:  &oneRowStore{},
+		Mover:  &fakeMover{},
+		Locker: testx.Locker{},
 	})
 
 	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, ErrCompressionUnavailable) {

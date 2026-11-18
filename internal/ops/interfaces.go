@@ -118,6 +118,12 @@ type Rebalancer interface {
 	Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (worker.RebalanceSummary, error)
 }
 
+// Reconciler is the slice of *worker.Reconciler the on-demand reconcile uses.
+// Reconcile diffs one backend, or every scannable one, against the ledger.
+type Reconciler interface {
+	Reconcile(ctx context.Context, backendName string, observer progress.Observer) (worker.ReconcileResult, error)
+}
+
 // RuleProcessor is the slice of *expiry.Manager the on-demand expiration sweep
 // uses. ProcessRules applies every rule once and reports what it deleted
 // against what it could not.
@@ -155,6 +161,7 @@ var (
 	_ Mover                  = (*writepath.Coordinator)(nil)
 	_ Replicator             = (*worker.Replicator)(nil)
 	_ Rebalancer             = (*worker.Rebalancer)(nil)
+	_ Reconciler             = (*worker.Reconciler)(nil)
 	_ OverReplicationCleaner = (*worker.OverReplicationCleaner)(nil)
 	_ ScrubberOps            = (*worker.Scrubber)(nil)
 )

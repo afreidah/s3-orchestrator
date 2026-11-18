@@ -42,6 +42,7 @@ type CompressionDeps struct {
 	Encryptor *encryption.Encryptor
 	Store     RewriteStore
 	Mover     Mover
+	Locker    core.AdvisoryLocker
 }
 
 // Compression serves the fleet-wide compression operations. Codec and Store are
@@ -58,6 +59,7 @@ type Compression struct {
 // NewCompression is the explicit-deps constructor.
 func NewCompression(d *CompressionDeps) *Compression {
 	must.NotNil("d.Mover", d.Mover)
+	must.NotNil("d.Locker", d.Locker)
 	return &Compression{
 		d:      *d,
 		log:    logfmt.Logger(logComponent),
@@ -67,7 +69,7 @@ func NewCompression(d *CompressionDeps) *Compression {
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, store: c.d.Store, mover: c.d.Mover, layers: c.layers}
+	return bulkRewriteEnv{log: c.log, store: c.d.Store, mover: c.d.Mover, locker: c.d.Locker, layers: c.layers}
 }
 
 // unavailable reports whether the orchestrator runs without a codec or a

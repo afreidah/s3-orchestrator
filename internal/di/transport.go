@@ -166,6 +166,12 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Assigned only when registered: a nil *worker.Reconciler held in the
+	// interface would not compare equal to nil, and reconcile would call it.
+	var reconciler ops.Reconciler
+	if rec := Optional[*worker.Reconciler](i).Get(context.Background()); rec != nil {
+		reconciler = rec
+	}
 
 	return ops.New(&ops.Deps{
 		Objects:      objectManager,
@@ -179,6 +185,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		OverRep:      overRep,
 		Backlog:      stores,
 		Rebalancer:   rebalancer,
+		Reconciler:   reconciler,
 		Scrubber:     scrubber,
 		CopyStore:    stores,
 		Locker:       stores,
@@ -282,7 +289,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Cleanup:      stores,
 		ObjectCache:  Optional[objcache.ObjectCache](i).Get(ctx),
 		FlightRec:    Optional[*debug.FlightRecorderService](i).Get(ctx).Recorder(),
-		Reconciler:   Optional[*worker.Reconciler](i).Get(ctx),
 		Registry:     registry.Load,
 		Config:       live,
 		LogLevel:     logLevel,

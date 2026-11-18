@@ -5,22 +5,20 @@
 //
 // What the admin transport still reaches for directly, once the operations
 // themselves live in internal/ops: the usage counters behind the flush and
-// reconcile endpoints, the dashboard snapshot behind the status endpoint, and
-// the reconciler. Each is a narrow consumer-side interface satisfied
-// implicitly by the production type named in its comment.
+// usage-reconcile endpoints, and the dashboard snapshot behind the status
+// endpoint. Each is a narrow consumer-side interface satisfied implicitly by
+// the production type named in its comment.
 // -------------------------------------------------------------------------------
 
 package admin
 
-//go:generate mockgen -destination=mock_deps_test.go -package=admin github.com/afreidah/s3-orchestrator/internal/transport/admin BackendOps,DashboardReader,Reconciler
+//go:generate mockgen -destination=mock_deps_test.go -package=admin github.com/afreidah/s3-orchestrator/internal/transport/admin BackendOps,DashboardReader
 
 import (
 	"context"
 
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // BackendOps is the usage-accounting surface behind the flush and reconcile
@@ -36,15 +34,8 @@ type DashboardReader interface {
 	GetStatus(ctx context.Context) (*dashboard.Data, error)
 }
 
-// Reconciler is the slice of *worker.Reconciler the admin handler uses for the
-// on-demand reconciliation endpoint.
-type Reconciler interface {
-	Reconcile(ctx context.Context, backendName string, observer progress.Observer) (worker.ReconcileResult, error)
-}
-
 // Compile-time assertions.
 var (
 	_ BackendOps      = (*usage.Service)(nil)
 	_ DashboardReader = (*dashboard.Aggregator)(nil)
-	_ Reconciler      = (*worker.Reconciler)(nil)
 )

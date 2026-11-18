@@ -218,33 +218,6 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if h.d.Reconciler == nil {
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "reconciler not configured")
-		return
-	}
-
 	h.log.InfoContext(r.Context(), "reconcile triggered", "backend", backendName)
-
-	h.servePass(w, r, &Pass[worker.ReconcileResult]{
-		op:         "reconcile",
-		verb:       "reconciling",
-		sequential: true,
-		failMsg:    "reconcile failed",
-		run: func(ctx context.Context, obs progress.Observer) (worker.ReconcileResult, error) {
-			return h.d.Reconciler.Reconcile(ctx, backendName, obs)
-		},
-		body: func(o adminapi.Outcome, res worker.ReconcileResult) any {
-			return adminapi.ReconcileResponse{
-				Outcome:         o,
-				Imported:        res.Imported,
-				Removed:         res.Removed,
-				BackendsScanned: res.Attempted,
-				BackendsFailed:  res.Failed,
-			}
-		},
-		summary: func(res worker.ReconcileResult) (int, string) {
-			return res.Imported, fmt.Sprintf("imported %d, removed %d across %d backend(s), %d failed",
-				res.Imported, res.Removed, res.Attempted, res.Failed)
-		},
-	})
+	h.servePass(w, r, ReconcilePass(h.d.Ops, backendName))
 }

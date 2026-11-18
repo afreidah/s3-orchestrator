@@ -27,7 +27,9 @@ The orchestrator runs a set of long-running background workers that keep the met
 
 Every worker above can be run on demand rather than waited for, from the admin API, `adminctl` and the TUI: rebalance, replicate, over-replication, scrub, backfill-checksums, reconcile, usage-flush and lifecycle. The dashboard offers all of them except reconcile and usage-flush.
 
-A manual pass does not take the advisory lock the scheduled tick holds, so it can overlap a scheduled one. Scrub, replicate and over-replication are the exceptions: each shares its scheduled service's lock and is refused while that service runs, as is a rebuild of the replication queue. Every pass is idempotent - a repeated delete of the same key is a no-op - so the overlap costs a little duplicated work rather than correctness.
+A manual pass takes the advisory lock its scheduled service holds, so it never overlaps a scheduled one: rebalance, replicate, over-replication, a rebuild of the replication queue, scrub and reconcile are each skipped with `a <name> pass is already running` while the lock is held, without waiting for it. Lifecycle is the exception. Its sweep is idempotent - a repeated delete of the same key is a no-op - so a manual sweep may overlap a scheduled one and costs a little duplicated work rather than correctness.
+
+The passes with no scheduled service hold locks of their own, so two manual runs - from two instances, or from the admin API and the dashboard at once - cannot overlap either. The four conversion passes and key rotation share lock `1015`, so a conversion never moves a copy another one is rewriting, and a run that finds it held is refused with `409`. Backfill-checksums holds lock `1016` and is skipped while another backfill runs, since a second one would read every unhashed copy again. The unreadable-copy purge reads no bytes and dropping an already-dropped copy changes nothing, so it takes no lock.
 
 Lifecycle is the one where this matters most in practice. Its tick is hourly and a restart adds up to half that again as jitter, so a rule you have just written can take 90 minutes to prove itself. Until it runs, a rule that matches nothing looks exactly like a rule that ran and found nothing expired; the trigger reports deleted and failed counts separately so you can tell those apart immediately.
 
@@ -37,6 +39,6 @@ Background services (rebalancer, replicator, over-replication cleaner, cleanup q
 
 ## Multi-instance behavior
 
-The advisory locks are PostgreSQL session-scoped - if one instance holds the lock for a task, other instances skip that tick silently. Each task runs on exactly one instance at any moment. The usage flush is not locked, since each instance flushes its own counters, and neither is the CB watchdog, which acts on each instance's own breaker state.
+The advisory locks are PostgreSQL session-scoped - if one instance holds the lock for a task, other instances skip that tick silently. Each task runs on exactly one instance at any moment. SQLite runs a single instance and holds one in-process lock per ID, so a long pass of one worker never delays another's tick. The usage flush is not locked, since each instance flushes its own counters, and neither is the CB watchdog, which acts on each instance's own breaker state.
 
 See [docs/deployment.md](deployment.md) for the multi-instance deployment model.

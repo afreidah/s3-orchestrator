@@ -4,11 +4,10 @@
 // Author: Alex Freidah
 //
 // Stable lock IDs for multi-instance coordination via the AdvisoryLocker
-// role. Each background service acquires its lock before running to
-// prevent concurrent execution across instances. The IDs are engine-
-// agnostic; the Postgres engine maps them to pg_try_advisory_lock and
-// the SQLite engine no-ops since single-instance deployments do not need
-// cross-process coordination.
+// role. Each background service, and an operator's run of the same pass,
+// acquires its lock before running to prevent concurrent execution across
+// instances. The IDs are engine-agnostic; the Postgres engine maps them to
+// pg_try_advisory_lock and the SQLite engine to one in-process lock per ID.
 //
 // IDs are arbitrary but must be unique and stable across releases - a
 // rotating ID would break in-flight leader election during a rolling
@@ -17,9 +16,9 @@
 
 package core
 
-// LockRebalancer and the other advisory lock IDs, one per background service.
-// The value is the contract: it appears in operator runbooks and in
-// pg_locks output, so an ID is never reassigned or reordered.
+// LockRebalancer and the other advisory lock IDs, one per background service
+// or manual pass. The value is the contract: it appears in operator runbooks
+// and in pg_locks output, so an ID is never reassigned or reordered.
 const (
 	LockRebalancer       int64 = 1001 // periodic object distribution across backends
 	LockReplicator       int64 = 1002 // background replica creation
@@ -33,6 +32,8 @@ const (
 	LockMigrations       int64 = 1012 // schema migrations at startup
 	LockCapacityWarning  int64 = 1013 // one instance raising capacity warnings
 	LockNotifier         int64 = 1014 // webhook outbox delivery
+	LockRewrite          int64 = 1015 // bulk stored-form rewrites and key rotation
+	LockBackfill         int64 = 1016 // content hash backfill
 )
 
 // LockSpaceBackendClaim is the namespace of the transaction-scoped lock a claim

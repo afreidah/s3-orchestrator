@@ -64,6 +64,16 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.183.x (current)
 
+**Manual passes take their advisory lock ([#1795](https://github.com/afreidah/s3-orchestrator/issues/1795), v0.183.3)**
+
+A manual rebalance or reconcile ran without the lock its scheduled service holds, so an overlap moved the same objects twice or listed every backend twice. Both now take that lock. The conversion passes, key rotation and backfill-checksums, which have no scheduled service, take locks of their own, so two manual runs cannot overlap. On SQLite, one worker's lock no longer blocks every other worker.
+
+**Operator action items after upgrade:**
+
+- **A rebalance, reconcile or backfill that finds its lock held answers `skipped`** with the reason `a <name> pass is already running`, as scrub and replicate already did. The scrub reason changes from `another instance is already scrubbing` to `a scrub pass is already running`.
+- **A conversion pass or key rotation answers `409` while another one runs.** The four conversion passes and rotation share lock `1015`; backfill holds `1016`.
+- **`POST /admin/api/reconcile` on an instance with no reconciler answers `200` skipped**, with the reason `reconciler not available`, instead of `503`.
+
 **A server-side copy answered with no result falls back instead of recording an empty object ([#1824](https://github.com/afreidah/s3-orchestrator/issues/1824), v0.183.2)**
 
 A backend that handles `CopyObject` as a plain PUT stores the empty request body and answers `200` with no `CopyObjectResult`. That was taken as a completed copy, so the destination was recorded with the source's size while the backend held 0 bytes, and every read of it failed. It is now a refusal: the copy falls back to reading the source and writing the destination, and the backend lists `native-copy` as unsupported from then on.

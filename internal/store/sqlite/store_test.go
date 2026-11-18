@@ -2675,27 +2675,11 @@ func pendingOutboxIndexSQL(t *testing.T, s *Store) string {
 // ADVISORY LOCK
 // -------------------------------------------------------------------------
 
-// TestWithAdvisoryLock verifies the with advisory lock contract.
-// Asserts that WithAdvisoryLock:.
+// TestWithAdvisoryLock runs the shared advisory lock cases, so a rebalance
+// holding its lock refuses a second rebalance and leaves reconcile free.
 func TestWithAdvisoryLock(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	called := false
-	acquired, err := s.WithAdvisoryLock(ctx, 1001, func(ctx context.Context) error {
-		called = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("WithAdvisoryLock: %v", err)
-	}
-	if !acquired {
-		t.Error("expected lock to be acquired")
-	}
-	if !called {
-		t.Error("callback was not called")
-	}
+	storetest.CheckAdvisoryLock(t, newTestStore(t), core.LockRebalancer, core.LockReconcile)
 }
 
 // TestWithAdvisoryLock_PropagatesContext verifies that the caller's context

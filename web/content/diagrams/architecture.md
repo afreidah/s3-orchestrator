@@ -196,7 +196,7 @@ window.s3oDiagram = {
     WORKERS: {
       title: 'Background Workers',
       badge: 'background', badgeText: 'background workers',
-      body: '<p>The replicator, rebalancer, drainer, over-replication cleaner, cleanup queue, pending reaper, scrubber, reconciler, lifecycle expiration and multipart cleanup. Each runs on its own interval under an advisory lock, so only one instance works a given task at a time.</p><p>They read and write the metadata store, and move or delete bytes through backend selection and the per-backend circuit breakers. Most run only in <code>worker</code> or <code>all</code> mode.</p><p><a href="../background-services/">Background services diagram &rarr;</a></p>'
+      body: '<p>The replicator, rebalancer, drainer, over-replication cleaner, cleanup queue, pending reaper, scrubber, reconciler, lifecycle expiration and multipart cleanup. Each runs on its own interval under an advisory lock, so only one instance works a given task at a time, and an operator\'s on-demand run of one takes the same lock.</p><p>They read and write the metadata store, and move or delete bytes through backend selection and the per-backend circuit breakers. Most run only in <code>worker</code> or <code>all</code> mode.</p><p><a href="../background-services/">Background services diagram &rarr;</a></p>'
     },
     PROM: {
       title: 'Prometheus Metrics',

@@ -90,11 +90,36 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	if be.integrity != nil {
 		running.Integrity = *be.integrity
 	}
+	installIntegrity(t, h, running, sc, nil)
+}
+
+// reconcilerWith installs integrity operations whose reconciler returns
+// result or err, reporting one backend step to an observer when the caller
+// streams. result is nil when the reconciler fails.
+func reconcilerWith(t *testing.T, h *Handler, result *worker.ReconcileResult, err error) {
+	t.Helper()
+	m := opstest.NewMockReconciler(gomock.NewController(t))
+	m.EXPECT().Reconcile(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, observer progress.Observer) (worker.ReconcileResult, error) {
+			if err != nil {
+				return worker.ReconcileResult{}, err
+			}
+			progress.Track(observer, "fake-backend", func() string { return progress.StatusOK })
+			return *result, nil
+		}).AnyTimes()
+	installIntegrity(t, h, &config.Config{}, &scrubberStub{}, m)
+}
+
+// installIntegrity installs integrity operations over the scrubber stub and
+// reconciler, nil for none, under the running config and a lock always taken.
+func installIntegrity(t *testing.T, h *Handler, running *config.Config, sc *scrubberStub, rec ops.Reconciler) {
+	t.Helper()
 	h.d.Ops.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
-		Scrubber: newScrubber(t, sc),
-		Store:    newCopyStore(t, sc),
-		Locker:   testx.Locker{},
-		Config:   config.NewLive(running),
+		Scrubber:   newScrubber(t, sc),
+		Reconciler: rec,
+		Store:      newCopyStore(t, sc),
+		Locker:     testx.Locker{},
+		Config:     config.NewLive(running),
 	})
 }
 
@@ -143,7 +168,7 @@ func (b backlogStub) CountReplicationQueue(context.Context) (core.ReplicationBac
 // deployment whose worker pool was never wired.
 func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 	t.Helper()
-	deps := ops.RebalanceDeps{Config: config.NewLive(&config.Config{})}
+	deps := ops.RebalanceDeps{Locker: testx.Locker{}, Config: config.NewLive(&config.Config{})}
 	if cfg != nil {
 		deps.Rebalancer = newRebalancer(t, cfg)
 	}
@@ -158,6 +183,7 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 		Encryptor: enc,
 		Store:     store,
 		Mover:     newOpsMover(t),
+		Locker:    testx.Locker{},
 	})
 }
 
@@ -171,6 +197,7 @@ func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store o
 		Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:  store,
 		Mover:  newOpsMover(t),
+		Locker: testx.Locker{},
 	})
 }
 
@@ -352,23 +379,6 @@ func reconciled(imported, removed, scanned, failed int) *worker.ReconcileResult 
 		Imported: imported,
 		Removed:  removed,
 	}
-}
-
-// newReconciler builds a Reconciler mock returning result or err, reporting one
-// backend step to an observer when the caller streams. result is nil when the
-// mock fails.
-func newReconciler(t *testing.T, result *worker.ReconcileResult, err error) *MockReconciler {
-	t.Helper()
-	m := NewMockReconciler(gomock.NewController(t))
-	m.EXPECT().Reconcile(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, observer progress.Observer) (worker.ReconcileResult, error) {
-			if err != nil {
-				return worker.ReconcileResult{}, err
-			}
-			progress.Track(observer, "fake-backend", func() string { return progress.StatusOK })
-			return *result, nil
-		}).AnyTimes()
-	return m
 }
 
 // declaredBuckets builds the live bucket set the object operations resolve a

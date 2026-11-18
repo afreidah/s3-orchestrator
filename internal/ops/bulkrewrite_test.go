@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // -------------------------------------------------------------------------
@@ -178,6 +179,7 @@ func pagingEnv(t *testing.T, set *shrinkingSet, move moverFunc) bulkRewriteEnv {
 		log:    slog.New(slog.DiscardHandler),
 		store:  set,
 		mover:  move,
+		locker: testx.Locker{},
 		layers: &storedform.Layers{},
 	}
 }
@@ -546,6 +548,7 @@ func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
 		log:    slog.New(slog.DiscardHandler),
 		store:  set,
 		mover:  mover,
+		locker: testx.Locker{},
 		layers: &storedform.Layers{Encryptor: enc},
 	}
 	op := pagingOp(0)

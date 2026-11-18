@@ -76,11 +76,7 @@ func keyedEncryptor(t *testing.T, primary string, previous ...string) *encryptio
 // is empty, of every stale key.
 func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, oldKeyID string) batch.Summary {
 	t.Helper()
-	svc := NewEncryption(EncryptionDeps{
-		Encryptor: enc,
-		Store:     store,
-		Mover:     &fakeMover{},
-	})
+	svc := encryptionOver(enc, store)
 	res, err := svc.RotateKey(context.Background(), nil, oldKeyID, oldKeyID == "")
 	if err != nil {
 		t.Fatalf("RotateKey(%q): %v", oldKeyID, err)

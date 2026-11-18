@@ -62,9 +62,8 @@ type Deps struct {
 	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
 	LogBuffer    LogReader                      // nil when the log buffer is not wired
 	Cleanup      core.CleanupStore
-	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
-	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
-	Reconciler   Reconciler
+	ObjectCache  cache.ObjectCache           // nil when object data caching is disabled
+	FlightRec    io.WriterTo                 // nil when debug.flight_recorder.enabled is false
 	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
 	Config       *config.Live
 	LogLevel     *slog.LevelVar
