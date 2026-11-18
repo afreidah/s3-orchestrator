@@ -580,6 +580,8 @@ The **Cleanup** section shows the cleanup queue and its dead-letter table, sourc
 
 The **Integrity** section lists the copies the integrity passes act on, sourced from `GET /admin/api/unhashed` and `GET /admin/api/unreadable`: the copies with no content hash, and the copies encrypted with no key. Both listings share the pane, toggled with `t`, and the title bar carries both totals. `m` narrows the unhashed listing to the managed copies, which backfill hashes, or to the unmanaged ones, which it leaves alone; a page in key order can otherwise be all of one kind. The total is the true count under the filter; the listing itself is one page of it. The pane refreshes every 30 seconds, and only while it is showing, since each refresh reads a page of the ledger.
 
+![The TUI Integrity section listing managed and unmanaged unhashed copies](/docs/images/tui-integrity.png)
+
 The **Cache** section shows the object data cache, sourced from `GET /admin/api/cache` - entry count, bytes held against the configured maximum, and the lifetime hit rate. The hit rate is coloured for a cache doing its job rather than a full one: green at 60% and above, amber down to 25%, red below. A cache nothing has read yet says so instead of reporting 0%, which would read as a broken cache. When object caching is disabled the endpoint answers 503 and the pane reports that as configuration, not failure.
 
 The **Config** section shows the configuration the server is running, sourced from `GET /admin/api/config`: the YAML a config file would hold, with defaults filled in and secrets shown as `(redacted)`. The title carries the log level in effect, which `PUT /admin/api/log-level` can change until the next restart. Fields edited in the file and reloaded with `SIGHUP` that only apply on a restart are listed above the YAML. Press `r` to refresh.
@@ -602,7 +604,7 @@ An entry ending in `...` asks for a value first: the key or prefix to invalidate
 
 The long-running operations render the same live progress stream `admin` shows on the command line, one line per item - a rebalance names each object and the backends it travelled between. The rest finish in a single round trip and report what changed in the operation's own terms: `dropped 1,204 cache entries`, `corrected 2 backends: e2 -162.1 MiB, oci +4.1 MiB`, `encrypted 1,200 objects, 3 failed`. An operation that did not run - a rebalance already within threshold, a feature not configured - says so instead of reporting a false zero. Press `esc` to step back to the menu, then to the nav.
 
-![The TUI Logs section filtered to warnings and above, showing recent structured log entries](/docs/images/tui-logs.png)
+![The TUI Logs section at INFO and above, showing recent structured log entries](/docs/images/tui-logs.png)
 
 ![The TUI Backends section showing per-backend status](/docs/images/tui-backends.png)
 
