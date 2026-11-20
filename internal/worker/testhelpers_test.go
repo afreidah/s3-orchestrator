@@ -265,8 +265,6 @@ type mockMetadataStore struct {
 	completedItems      []core.CleanupItem
 	dlqMoves            []dlqMoveCall
 	moveDLQErr          error
-	dlqDepthVal         int64
-	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	unreadable          []core.ObjectLocation
 	unhashed            []core.ObjectLocation
@@ -292,7 +290,6 @@ type mockMetadataStore struct {
 	underReplicatedErr  error
 	overReplicated      []core.ObjectLocation
 	overReplicatedErr   error
-	overReplicatedCount int64
 	replicationFactor   int
 	queueMu             sync.Mutex
 	settledKeys         []string
@@ -322,8 +319,6 @@ type mockMetadataStore struct {
 	promoteResult     core.PendingPromoteResult
 	promoteCleanup    []core.CleanupItem
 	promoteErr        error
-	pendingDepthVal   int64
-	pendingDepthErr   error
 }
 
 // -------------------------------------------------------------------------
@@ -362,12 +357,6 @@ func (m *mockMetadataStore) RetryCleanupItem(_ context.Context, _ *core.CleanupI
 	return true, nil
 }
 
-// CleanupQueueDepth is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) CleanupQueueDepth(_ context.Context) (int64, error) {
-	return 0, nil
-}
-
 // dlqMoveCall records a MoveCleanupToDLQ invocation so cleanup-worker
 // tests can assert which (id, last_error) tuples were graduated.
 type dlqMoveCall struct {
@@ -403,12 +392,6 @@ func settlesCleanups(store *storetest.MockMetadataStore) {
 		}).AnyTimes()
 	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 	store.EXPECT().MoveCleanupToDLQ(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
-}
-
-// CleanupDLQDepth is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) CleanupDLQDepth(_ context.Context) (int64, error) {
-	return m.dlqDepthVal, m.dlqDepthErr
 }
 
 // GetLeastRecentlyScrubbedObjects is a stub on mockMetadataStore; returns either the test-set
@@ -641,12 +624,6 @@ func (m *mockMetadataStore) PlaceCopy(_ context.Context, p *core.Placement) (int
 	return m.placeCopySize, nil, nil
 }
 
-// CountReplicationQueue is a stub on mockMetadataStore; reports the test-set
-// over-replicated count.
-func (m *mockMetadataStore) CountReplicationQueue(context.Context) (core.ReplicationBacklog, error) {
-	return core.ReplicationBacklog{Over: m.overReplicatedCount}, nil
-}
-
 // ListObjectsByBackend returns up to limit of the backend's fixture objects
 // after the cursor, in (size_bytes, object_key) order as the stores do.
 func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
@@ -762,9 +739,4 @@ func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObj
 		m.promotedPending = append(m.promotedPending, *p)
 	}
 	return m.promoteResult, m.promoteCleanup, m.promoteErr
-}
-
-// PendingDepth returns the configured depth value (defaults to 0).
-func (m *mockMetadataStore) PendingDepth(_ context.Context) (int64, error) {
-	return m.pendingDepthVal, m.pendingDepthErr
 }

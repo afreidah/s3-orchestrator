@@ -162,9 +162,9 @@ func newCleanupFor(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) (*CleanupWorker, *infra.BackendRuntime) {
 	t.Helper()
-	rt, f := newFleet(t, store, backends, opts)
+	rt, _ := newFleet(t, store, backends, opts)
 	return NewCleanupWorker(CleanupWorkerDeps{
-		Ops: rt, Metrics: f.Metrics, Store: store, Concurrency: 10,
+		Ops: rt, Store: store, Concurrency: 10,
 		InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute,
 	}), rt
 }

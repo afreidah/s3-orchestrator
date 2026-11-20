@@ -114,16 +114,22 @@ func (d *Manager) Refresh(ctx context.Context) error {
 }
 
 // SetStates replaces the cached states with the given records and republishes
-// the state gauge from them. The drainer hands it the records each pass reads.
+// the state and drain gauges from them. The drainer hands it the records each
+// pass reads.
 func (d *Manager) SetStates(records []core.BackendStateRecord) {
 	states := make(map[string]core.BackendFlags, len(records))
 	telemetry.BackendState.Reset()
+	draining := 0
 	for i := range records {
 		states[records[i].BackendName] = records[i].Flags
 		for _, name := range records[i].Flags.Names() {
 			telemetry.BackendState.WithLabelValues(records[i].BackendName, name).Set(1)
 		}
+		if records[i].Flags.Any(core.FlagDraining) {
+			draining++
+		}
 	}
+	telemetry.DrainActive.Set(float64(draining))
 	d.states.Store(&states)
 }
 

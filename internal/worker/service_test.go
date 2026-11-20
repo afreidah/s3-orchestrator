@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -25,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
@@ -74,7 +72,6 @@ func TestReplicationService_TickWorksOneBatchOfEachSide(t *testing.T) {
 			}
 			return []core.QueuedReplication{{Key: "at-factor", Direction: side, Live: 2, Held: 2}}, nil
 		}).AnyTimes()
-	store.EXPECT().CountReplicationQueue(gomock.Any()).Return(core.ReplicationBacklog{Under: 41, Over: 43}, nil)
 	storetest.Permissive(store)
 
 	_, f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
@@ -86,9 +83,6 @@ func TestReplicationService_TickWorksOneBatchOfEachSide(t *testing.T) {
 	NewReplicationService(rep, cleaner, testx.Locker{}).(*tickrunner.Service).Tick(t.Context())
 	if reads[core.ReplicationShort] != 1 || reads[core.ReplicationOver] != 1 {
 		t.Errorf("reads = %v, want one batch of each side", reads)
-	}
-	if under, over := promtest.ToFloat64(telemetry.ReplicationPending), promtest.ToFloat64(telemetry.OverReplicationPending); under != 41 || over != 43 {
-		t.Errorf("published depths = %v under, %v over; want the queue's 41 and 43", under, over)
 	}
 }
 

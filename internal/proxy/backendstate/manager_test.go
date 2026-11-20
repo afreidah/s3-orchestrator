@@ -230,8 +230,9 @@ func TestCordon_RefusesNoOpsAndUnknownBackends(t *testing.T) {
 }
 
 // TestSetStates_PublishesTheStateGauge verifies the gauge carries one series per
-// flag a backend holds and drops a backend whose flags are gone. Not parallel:
-// the gauge is shared by every manager in the package.
+// flag a backend holds and drops a backend whose flags are gone, and the drain
+// gauge counts the backends draining. Not parallel: the gauges are shared by
+// every manager in the package.
 func TestSetStates_PublishesTheStateGauge(t *testing.T) {
 	ctx := context.Background()
 	mgr, _ := newRecordFleet(t)
@@ -247,6 +248,10 @@ func TestSetStates_PublishesTheStateGauge(t *testing.T) {
 	}
 	if n := testutil.CollectAndCount(telemetry.BackendState); n != 0 {
 		t.Errorf("gauge series after uncordon = %d, want none", n)
+	}
+	mgr.SetStates([]core.BackendStateRecord{{BackendName: "b1", Flags: core.FlagDraining}, {BackendName: "b2", Flags: core.FlagCordoned}})
+	if got := testutil.ToFloat64(telemetry.DrainActive); got != 1 {
+		t.Errorf("drain gauge = %v, want the one draining backend", got)
 	}
 }
 

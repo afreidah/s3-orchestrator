@@ -42,9 +42,9 @@ func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Con
 // NewReplicationService constructs the replication service, which runs while
 // the replication factor is above one. Each tick works one batch of the
 // queue's short side and then one of its over side, so batch_size per
-// worker_interval paces the copies made and removed, and then publishes the
-// queue's depths. It also runs as it starts, so a restart does not leave
-// objects off the factor for a whole interval.
+// worker_interval paces the copies made and removed. It also runs as it
+// starts, so a restart does not leave objects off the factor for a whole
+// interval.
 func NewReplicationService(rep *Replicator, c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:       locker,
@@ -56,7 +56,6 @@ func NewReplicationService(rep *Replicator, c *OverReplicationCleaner, locker co
 		Work: func(ctx context.Context) error {
 			_, replicateErr := rep.Replicate(ctx, *rep.Config(), nil)
 			_, cleanErr := c.Clean(ctx, *c.Config(), nil)
-			rep.d.Queue.publishDepths(ctx, rep.d.Metrics)
 			return errors.Join(replicateErr, cleanErr)
 		},
 	})

@@ -183,7 +183,7 @@ type CleanupStore interface {
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error)
 
 	MoveCleanupToDLQ(ctx context.Context, item *CleanupItem, lastError string) (bool, error)
-	CleanupDLQDepth(ctx context.Context) (int64, error)                                      // also refreshes the cleanup_dlq_depth gauge
+	CleanupDLQDepth(ctx context.Context) (int64, error)
 	ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]CleanupDLQItem, error) // newest graduation first
 	RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error)
 }

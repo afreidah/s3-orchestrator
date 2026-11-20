@@ -90,24 +90,21 @@ type Notifier struct {
 	log       *slog.Logger
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
-	gauges    telemetry.GaugePublisher
 	client    *http.Client
 	dampener  *syncutil.TTLCache[string, struct{}]
 }
 
-// NewNotifier creates a notifier backed by the given outbox store, sharing its
-// queue depth through gauges. Registers itself as the process-wide event
-// emitter so every package can publish notifications through the same
-// mechanism. Endpoints carry the defaults config validation fills in.
-func NewNotifier(cfg *config.NotificationConfig, store OutboxStore, gauges telemetry.GaugePublisher) *Notifier {
+// NewNotifier creates a notifier backed by the given outbox store. Registers
+// itself as the process-wide event emitter so every package can publish
+// notifications through the same mechanism. Endpoints carry the defaults
+// config validation fills in.
+func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 	must.NotNil("store", store)
-	must.NotNil("gauges", gauges)
 	slug := string(audit.WorkloadNotifier)
 	n := &Notifier{
 		log:       logfmt.Logger(slug),
 		endpoints: cfg.Endpoints,
 		store:     store,
-		gauges:    gauges,
 		// The timeout is each endpoint's own, set per delivery; deliveries
 		// run one at a time.
 		client:   &http.Client{},
@@ -230,9 +227,7 @@ func (n *Notifier) Close() {
 }
 
 // drain delivers one batch of pending notifications, one at a time, as one
-// notifier pass, and shares how many are still to be delivered: the whole
-// outbox backlog, not the batch just processed. A failed count leaves the
-// gauge as it was.
+// notifier pass.
 func (n *Notifier) drain(ctx context.Context) (batch.Summary, error) {
 	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadNotifier}, func(ctx context.Context) (batch.Summary, error) {
 		rows, err := n.store.GetPendingNotifications(ctx, pendingBatchSize)
@@ -240,14 +235,7 @@ func (n *Notifier) drain(ctx context.Context) (batch.Summary, error) {
 			return batch.Summary{}, fmt.Errorf("fetch pending notifications: %w", err)
 		}
 		runner := batch.Runner[core.NotificationRow]{Concurrency: 1}
-		sum := runner.Run(ctx, rows, n.processPendingRow)
-
-		if depth, err := n.store.NotificationQueueDepth(ctx); err != nil {
-			n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
-		} else {
-			n.gauges.PublishWorkerGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
-		}
-		return sum, nil
+		return runner.Run(ctx, rows, n.processPendingRow), nil
 	})
 }
 
