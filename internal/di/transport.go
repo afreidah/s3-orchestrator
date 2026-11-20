@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -303,15 +302,14 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	}), nil
 }
 
-// ProvideNotifier creates the webhook notification system, sharing its queue
-// depth through the metrics collector.
+// ProvideNotifier creates the webhook notification system over the outbox the
+// metadata store keeps.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	stores := r.Resolve[metadataStore]()
-	collector := r.Resolve[*metrics.Collector]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return notify.NewNotifier(&cfg.Notifications, stores, collector), nil
+	return notify.NewNotifier(&cfg.Notifications, stores), nil
 }

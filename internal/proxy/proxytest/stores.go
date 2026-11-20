@@ -321,7 +321,7 @@ func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features Work
 			Fleet: f, Store: m, Queue: queue, Config: live.Replication(),
 		}),
 		CleanupWorker: worker.NewCleanupWorker(worker.CleanupWorkerDeps{
-			Ops: s.Runtime, Metrics: s.Metrics, Store: m, Concurrency: cleanupConcurrency,
+			Ops: s.Runtime, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,
 		}),
 		PendingReaper: worker.NewPendingReaper(worker.PendingReaperDeps{

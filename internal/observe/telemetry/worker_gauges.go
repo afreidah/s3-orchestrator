@@ -3,59 +3,34 @@
 //
 // Author: Alex Freidah
 //
-// Some gauges describe state every instance shares - a queue's depth - but
-// only the instance holding the worker's advisory lock on a tick computes
-// them. WorkerGauges carries one worker's figures so
-// that instance can publish them and every instance serve the same values,
-// instead of each one exporting whatever it last computed before the lock
-// moved elsewhere.
+// Some gauges describe a pass in progress, such as how many moves a rebalance
+// has planned, which only the instance holding the worker's advisory lock
+// knows. WorkerGauges carries one worker's figures so that instance can
+// publish them and every instance serve the same values. A figure the store
+// can count is read by every instance itself, with the fleet figures.
 // -------------------------------------------------------------------------------
 
 package telemetry
 
 import "context"
 
-// The workers that publish gauges, one shared-state key each. Each key has a
+// GaugeSourceRebalancer is the rebalancer's shared-state key. Each key has a
 // single writer at a time: the instance holding that worker's lock.
-const (
-	GaugeSourceCleanup       = "cleanup"
-	GaugeSourcePendingReaper = "pending_reaper"
-	GaugeSourceReplication   = "replication"
-	GaugeSourceRebalancer    = "rebalancer"
-	GaugeSourceNotifier      = "notifier"
-)
+const GaugeSourceRebalancer = "rebalancer"
 
 // GaugeSources lists every worker that publishes gauges, for the loader that
 // reads them all back.
-var GaugeSources = []string{
-	GaugeSourceCleanup,
-	GaugeSourcePendingReaper,
-	GaugeSourceReplication,
-	GaugeSourceRebalancer,
-	GaugeSourceNotifier,
-}
+var GaugeSources = []string{GaugeSourceRebalancer}
 
 // WorkerGauges is one worker's published figures. A nil field is one that
 // worker does not own, and applying the value leaves that gauge untouched.
 type WorkerGauges struct {
-	CleanupQueueDepth      *int64 `json:"cleanup_queue_depth,omitempty"`
-	CleanupDLQDepth        *int64 `json:"cleanup_dlq_depth,omitempty"`
-	PendingIntentsDepth    *int64 `json:"pending_intents_depth,omitempty"`
-	ReplicationPending     *int64 `json:"replication_pending,omitempty"`
-	OverReplicationPending *int64 `json:"over_replication_pending,omitempty"`
-	RebalancePending       *int64 `json:"rebalance_pending,omitempty"`
-	NotificationQueueDepth *int64 `json:"notification_queue_depth,omitempty"`
+	RebalancePending *int64 `json:"rebalance_pending,omitempty"`
 }
 
 // Apply sets every gauge the value carries.
 func (g *WorkerGauges) Apply() {
-	setIf(CleanupQueueDepth.Set, g.CleanupQueueDepth)
-	setIf(CleanupDLQDepth.Set, g.CleanupDLQDepth)
-	setIf(PendingIntentsDepth.Set, g.PendingIntentsDepth)
-	setIf(ReplicationPending.Set, g.ReplicationPending)
-	setIf(OverReplicationPending.Set, g.OverReplicationPending)
 	setIf(RebalancePending.Set, g.RebalancePending)
-	setIf(NotificationQueueDepth.Set, g.NotificationQueueDepth)
 }
 
 // GaugePublisher shares a worker's fleet-wide gauges with every instance.

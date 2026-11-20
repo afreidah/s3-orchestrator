@@ -43,7 +43,7 @@ import (
 // and allows them after the TTL expires.
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
-	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{}, &recordingGauges{})
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
 	t.Cleanup(n.Close)
 
 	dampenKey := event.BackendCapacityWarning + ":oci"
@@ -64,7 +64,7 @@ func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
 // that will eventually evict entries, preventing unbounded memory growth.
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_TTLCacheEvicts(t *testing.T) {
-	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{}, &recordingGauges{})
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
 	defer n.Close()
 
 	// The cache exists and is functional.
@@ -316,7 +316,7 @@ func TestNewNotifier_RegistersAndDeregisters(t *testing.T) {
 		Endpoints: []config.NotificationEndpoint{{URL: "https://example.com", Events: []string{"*"}}},
 	}
 	ms := &mockOutboxStore{}
-	n := NewNotifier(cfg, ms, &recordingGauges{})
+	n := NewNotifier(cfg, ms)
 
 	event.Publish(event.ServiceStarted, "", nil)
 	if got := ms.inserts(); got != 1 {
@@ -339,6 +339,7 @@ func TestNewNotifier_RegistersAndDeregisters(t *testing.T) {
 // at construction time (pending) is safe because no goroutine has
 // observed the store yet.
 type mockOutboxStore struct {
+	core.NotificationOutbox
 	mu           sync.Mutex
 	insertCount  int
 	lastPayload  string
@@ -347,14 +348,6 @@ type mockOutboxStore struct {
 	retriedIDs   []int64
 	backoffs     []time.Duration
 	lockIDs      []int64
-	depth        int64
-}
-
-// NotificationQueueDepth returns the configured outbox backlog.
-func (m *mockOutboxStore) NotificationQueueDepth(_ context.Context) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.depth, nil
 }
 
 // InsertNotification inserts notification.
@@ -569,7 +562,6 @@ func drainNotifier(store OutboxStore, endpoints ...config.NotificationEndpoint) 
 		log:       slog.Default(),
 		endpoints: endpoints,
 		store:     store,
-		gauges:    &recordingGauges{},
 		client:    &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -589,42 +581,6 @@ func TestDrain_DeliversAndCompletes(t *testing.T) {
 	}
 	if len(ms.completed()) != 1 || ms.completed()[0] != 1 {
 		t.Errorf("expected ID 1 completed, got %v", ms.completed())
-	}
-}
-
-// recordingGauges captures what the notifier publishes.
-type recordingGauges struct {
-	mu     sync.Mutex
-	source string
-	g      telemetry.WorkerGauges
-}
-
-// PublishWorkerGauges records the published gauges.
-func (r *recordingGauges) PublishWorkerGauges(_ context.Context, source string, g telemetry.WorkerGauges) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.source, r.g = source, g
-}
-
-// TestDrain_PublishesOutboxBacklog verifies the queue depth is the whole
-// outbox backlog the store counts, not the size of the batch just drained.
-func TestDrain_PublishesOutboxBacklog(t *testing.T) {
-	t.Parallel()
-	srv := statusServer(t, http.StatusOK)
-	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}, depth: 42}
-	pub := &recordingGauges{}
-	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
-	n.gauges = pub
-
-	_, _ = n.drain(context.Background())
-
-	pub.mu.Lock()
-	defer pub.mu.Unlock()
-	if pub.source != telemetry.GaugeSourceNotifier {
-		t.Errorf("published under %q, want %q", pub.source, telemetry.GaugeSourceNotifier)
-	}
-	if pub.g.NotificationQueueDepth == nil || *pub.g.NotificationQueueDepth != 42 {
-		t.Errorf("published depth %v, want 42", pub.g.NotificationQueueDepth)
 	}
 }
 
@@ -717,7 +673,7 @@ func TestDrain_UnknownEndpointCompleted(t *testing.T) {
 func TestTick_DrainsUnderNotifierLock(t *testing.T) {
 	srv := statusServer(t, http.StatusOK)
 	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}}
-	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint(srv.URL, 3)}}, ms, &recordingGauges{})
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint(srv.URL, 3)}}, ms)
 	t.Cleanup(n.Close)
 
 	n.Tick(context.Background())
@@ -741,7 +697,7 @@ func TestRun_ClosesOnShutdown(t *testing.T) {
 	event.SetEmitter(nil)
 	t.Cleanup(func() { event.SetEmitter(nil) })
 	ms := &mockOutboxStore{}
-	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint("https://example.com", 3)}}, ms, &recordingGauges{})
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint("https://example.com", 3)}}, ms)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -760,16 +716,11 @@ func TestRun_ClosesOnShutdown(t *testing.T) {
 // with a configured error so we can assert the metric counter bumps and
 // the worker doesn't panic or double-deliver.
 type failingOutboxStore struct {
+	core.NotificationOutbox
 	pending     []core.NotificationRow
 	pendingErr  error
 	completeErr error
 	retryErr    error
-}
-
-// NotificationQueueDepth fails, so the drain's depth publish takes its
-// error path.
-func (m *failingOutboxStore) NotificationQueueDepth(_ context.Context) (int64, error) {
-	return 0, errors.New("count failed")
 }
 
 // InsertNotification inserts notification.

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 
@@ -29,11 +30,17 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// stubFleetReads answers every fleet read on store with stats and ledger and
-// empty results otherwise, with the capacity lock free. Expectations a test
-// set first take precedence, so it stubs only the reads it cares about.
+// stubFleetReads answers every fleet read on store with stats and ledger, each
+// queue count with its own depth from 1 to 6, and empty results otherwise, with
+// the capacity lock free. Expectations a test set first take precedence, so it
+// stubs only the reads it cares about.
 func stubFleetReads(store *MockDeps, stats map[string]core.QuotaStat, ledger core.LedgerStats) {
 	a := gomock.Any()
+	store.EXPECT().PendingDepth(a).Return(int64(1), nil).AnyTimes()
+	store.EXPECT().CleanupQueueDepth(a).Return(int64(2), nil).AnyTimes()
+	store.EXPECT().CleanupDLQDepth(a).Return(int64(3), nil).AnyTimes()
+	store.EXPECT().NotificationQueueDepth(a).Return(int64(4), nil).AnyTimes()
+	store.EXPECT().CountReplicationQueue(a).Return(core.ReplicationBacklog{Under: 5, Over: 6}, nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(a).Return(stats, nil).AnyTimes()
 	store.EXPECT().LedgerStats(a).Return(ledger, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(a).Return(map[string]int64{}, nil).AnyTimes()
@@ -51,7 +58,7 @@ func stubFleetReads(store *MockDeps, stats map[string]core.QuotaStat, ledger cor
 
 // TestRefreshGauges_PublishesTheFleet verifies a refresh with no quota read of
 // its own reads one and publishes the per-backend figures, zeroing a backend
-// the ledger no longer lists.
+// the ledger no longer lists, and each queue's depth to its own gauge.
 func TestRefreshGauges_PublishesTheFleet(t *testing.T) {
 	store := NewMockDeps(gomock.NewController(t))
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 3}, nil).AnyTimes()
@@ -74,6 +81,14 @@ func TestRefreshGauges_PublishesTheFleet(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(telemetry.ActiveMultipartUploads.WithLabelValues("b1")); got != 3 {
 		t.Errorf("b1 multipart gauge = %v, want 3", got)
+	}
+	for gauge, want := range map[prometheus.Gauge]float64{
+		telemetry.PendingIntentsDepth: 1, telemetry.CleanupQueueDepth: 2, telemetry.CleanupDLQDepth: 3,
+		telemetry.NotificationQueueDepth: 4, telemetry.ReplicationPending: 5, telemetry.OverReplicationPending: 6,
+	} {
+		if got := testutil.ToFloat64(gauge); got != want {
+			t.Errorf("%s = %v, want %v", gauge.Desc(), got, want)
+		}
 	}
 }
 
@@ -196,6 +211,7 @@ func TestRefreshGauges_FleetReadErrors(t *testing.T) {
 		{"ledger", func(m *MockDeps) { m.EXPECT().LedgerStats(a).Return(nil, boom).AnyTimes() }},
 		{"multipart", func(m *MockDeps) { m.EXPECT().GetActiveMultipartCounts(a).Return(nil, boom).AnyTimes() }},
 		{"scrub head", func(m *MockDeps) { m.EXPECT().GetLeastRecentlyScrubbedObjects(a, a, a, a).Return(nil, boom).AnyTimes() }},
+		{"queue depth", func(m *MockDeps) { m.EXPECT().PendingDepth(a).Return(int64(0), boom).AnyTimes() }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
