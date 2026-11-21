@@ -97,6 +97,15 @@ func (m *model) askForValue(question, value string, build func(string) adminActi
 	return m.arm(question, &in, build)
 }
 
+// ask arms the prompt req describes: pre-filled when it carries a starting
+// answer, otherwise empty with its hint.
+func (m *model) ask(req inputRequest, build func(string) adminAction) (tea.Model, tea.Cmd) {
+	if req.value != "" {
+		return m.askForValue(req.question, req.value, build)
+	}
+	return m.askFor(req.question, req.placeholder, build)
+}
+
 // arm installs a prepared prompt and gives it focus.
 func (m *model) arm(question string, in *textinput.Model, build func(string) adminAction) (tea.Model, tea.Cmd) {
 	in.Prompt = ""

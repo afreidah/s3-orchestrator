@@ -11,6 +11,8 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,14 +27,22 @@ func TestOpsMenu_TraceSnapshotSavesFile(t *testing.T) {
 	m := initialModel(f)
 	m.section = sectionOps
 	m.ops.actions = opsActions()
-	m.ops.cursor = len(m.ops.actions) - 1
+	m.ops.cursor = slices.IndexFunc(m.ops.actions, func(a opsAction) bool {
+		return a.label == "Download trace snapshot"
+	})
+	if m.ops.cursor < 0 {
+		t.Fatal("the fleet menu does not offer the trace snapshot")
+	}
+	if view := m.opsMenuView(); !strings.Contains(view, "Download trace snapshot...") {
+		t.Errorf("the entry asks for a file but is not marked with an ellipsis:\n%s", view)
+	}
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.prompt == nil {
 		t.Fatal("selecting the trace snapshot should ask for a file")
 	}
-	if got := m.prompt.input.Placeholder; got != "trace.bin" {
-		t.Errorf("prompt placeholder = %q, want %q", got, "trace.bin")
+	if got := m.prompt.input.Value(); got != "trace.bin" {
+		t.Errorf("prompt value = %q, want %q", got, "trace.bin")
 	}
 
 	dest := filepath.Join(t.TempDir(), "snap.bin")

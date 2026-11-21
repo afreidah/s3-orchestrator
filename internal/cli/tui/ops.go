@@ -37,7 +37,7 @@ type opsAction struct {
 	body    []byte
 	ask     inputRequest
 	resolve func(value string) opsRequest
-	save    func(dest string) adminAction
+	save    func(c adminClient, dest string) *transfer
 }
 
 // inputRequest is the question an action asks before it can run, and the hint
@@ -45,6 +45,7 @@ type opsAction struct {
 type inputRequest struct {
 	question    string
 	placeholder string
+	value       string
 }
 
 // opsRequest is where an action sends and what it carries: the path (which a
@@ -56,8 +57,9 @@ type opsRequest struct {
 }
 
 // opsActions lists the instance actions in menu order: the maintenance passes
-// first, then cache control, then the encryption and compression transitions.
-// Drain is intentionally excluded; it is a per-backend flow handled elsewhere.
+// first, then cache control, then the encryption and compression transitions,
+// and finally the trace snapshot download. Drain is intentionally excluded; it
+// is a per-backend flow handled elsewhere.
 func opsActions() []opsAction {
 	actions := maintenanceActions()
 	actions = append(actions, cacheActions()...)
@@ -75,14 +77,9 @@ const traceSnapshotFile = "trace.bin"
 func traceSnapshotAction() opsAction {
 	return opsAction{
 		label: "Download trace snapshot",
-		ask:   inputRequest{question: "Save the trace snapshot to which file?", placeholder: traceSnapshotFile},
-		save: func(dest string) adminAction {
-			return adminAction{
-				before: func(m *model) {
-					m.transfer = startDownload(traceSnapshotLabel, dest, m.client.DownloadTraceSnapshot)
-				},
-				run: transferTick(),
-			}
+		ask:   inputRequest{question: "Save the trace snapshot to which file?", value: traceSnapshotFile},
+		save: func(c adminClient, dest string) *transfer {
+			return startDownload(traceSnapshotLabel, dest, c.DownloadTraceSnapshot)
 		},
 	}
 }
@@ -297,16 +294,27 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.runBusy() || (a.save != nil && m.transferBusy()) {
 				return m, nil
 			}
-			return m.askFor(a.ask.question, a.ask.placeholder, func(value string) adminAction {
-				if a.save != nil {
-					return a.save(value)
-				}
-				return m.runAction(a, scopeToBackend(a.resolve(value), backend))
-			})
+			return m.ask(a.ask, m.answer(a, backend))
 		}
 		return m.startRun(a, scopeToBackend(opsRequest{path: a.path, body: a.body}, backend))
 	}
 	return m, nil
+}
+
+// answer builds what a prompting action does with the typed value: a download
+// for an action that saves a file, a run against backend for the rest.
+func (m *model) answer(a *opsAction, backend string) func(string) adminAction {
+	if a.save != nil {
+		return func(dest string) adminAction {
+			return adminAction{
+				before: func(m *model) { m.transfer = a.save(m.client, dest) },
+				run:    transferTick(),
+			}
+		}
+	}
+	return func(value string) adminAction {
+		return m.runAction(a, scopeToBackend(a.resolve(value), backend))
+	}
 }
 
 // scopeToBackend names the backend a request runs against, leaving a fleet-wide
