@@ -26,8 +26,8 @@ import (
 // opsAction is one selectable admin operation. result decodes the single JSON
 // summary a short action answers with; the long-running actions leave it nil
 // and stream NDJSON progress instead. An action that needs a value from the
-// operator sets ask, and resolve turns the typed value into the request that
-// carries it.
+// operator sets ask; resolve turns the typed value into the request that
+// carries it, or save downloads to the local file it names.
 type opsAction struct {
 	label   string
 	method  string
@@ -37,9 +37,7 @@ type opsAction struct {
 	body    []byte
 	ask     inputRequest
 	resolve func(value string) opsRequest
-	// saves marks an action that downloads the trace snapshot to a file the
-	// operator names, instead of running a request.
-	saves bool
+	save    func(dest string) adminAction
 }
 
 // inputRequest is the question an action asks before it can run, and the hint
@@ -75,7 +73,18 @@ const traceSnapshotFile = "trace.bin"
 // traceSnapshotAction saves the flight-recorder ring buffer to a file, for
 // `go tool trace`. It asks for the destination rather than streaming progress.
 func traceSnapshotAction() opsAction {
-	return opsAction{label: "Download trace snapshot", saves: true}
+	return opsAction{
+		label: "Download trace snapshot",
+		ask:   inputRequest{question: "Save the trace snapshot to which file?", placeholder: traceSnapshotFile},
+		save: func(dest string) adminAction {
+			return adminAction{
+				before: func(m *model) {
+					m.transfer = startDownload(traceSnapshotLabel, dest, m.client.DownloadTraceSnapshot)
+				},
+				run: transferTick(),
+			}
+		},
+	}
 }
 
 // backendActions lists what one backend can be asked to do on its own. Drain
@@ -284,22 +293,14 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		a := &m.ops.actions[m.ops.cursor]
 		backend := m.ops.backend
-		if a.saves {
-			if m.runBusy() || m.transferBusy() {
-				return m, nil
-			}
-			return m.askForValue("Save the trace snapshot to which file?", traceSnapshotFile, func(dest string) adminAction {
-				return adminAction{
-					before: func(m *model) { m.transfer = startTraceSnapshot(m.client, dest) },
-					run:    transferTick(),
-				}
-			})
-		}
 		if a.ask.question != "" {
-			if m.runBusy() {
+			if m.runBusy() || (a.save != nil && m.transferBusy()) {
 				return m, nil
 			}
 			return m.askFor(a.ask.question, a.ask.placeholder, func(value string) adminAction {
+				if a.save != nil {
+					return a.save(value)
+				}
 				return m.runAction(a, scopeToBackend(a.resolve(value), backend))
 			})
 		}

@@ -31,8 +31,8 @@ func TestOpsMenu_TraceSnapshotSavesFile(t *testing.T) {
 	if m.prompt == nil {
 		t.Fatal("selecting the trace snapshot should ask for a file")
 	}
-	if got := m.prompt.input.Value(); got != "trace.bin" {
-		t.Errorf("prompt default = %q, want %q", got, "trace.bin")
+	if got := m.prompt.input.Placeholder; got != "trace.bin" {
+		t.Errorf("prompt placeholder = %q, want %q", got, "trace.bin")
 	}
 
 	dest := filepath.Join(t.TempDir(), "snap.bin")

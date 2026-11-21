@@ -168,18 +168,21 @@ func (c *apiClient) ListObjectsFlat(ctx context.Context, prefix, continuation st
 // size, so a caller can report progress against a total. The caller closes the
 // body.
 func (c *apiClient) DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, error) {
-	resp, err := c.c.Do(ctx, http.MethodGet, adminapi.Path(adminapi.PathObjects, key), nil, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	return resp.Body, resp.ContentLength, nil
+	return c.download(ctx, http.MethodGet, adminapi.Path(adminapi.PathObjects, key))
 }
 
-// DownloadTraceSnapshot fetches the flight-recorder ring buffer and returns the
-// open body alongside its size, as DownloadObject does. The caller closes the
-// body. Returns an unavailable adminclient.Error when the recorder is off.
+// DownloadTraceSnapshot fetches the flight-recorder ring buffer the way
+// DownloadObject fetches an object. Returns an unavailable adminclient.Error
+// when the recorder is off.
 func (c *apiClient) DownloadTraceSnapshot(ctx context.Context) (io.ReadCloser, int64, error) {
-	resp, err := c.c.Do(ctx, http.MethodPost, adminapi.PathTraceSnap, nil, nil)
+	return c.download(ctx, http.MethodPost, adminapi.PathTraceSnap)
+}
+
+// download issues method against path and returns the open body alongside its
+// size, so a caller can report progress against a total. The caller closes the
+// body.
+func (c *apiClient) download(ctx context.Context, method, path string) (io.ReadCloser, int64, error) {
+	resp, err := c.c.Do(ctx, method, path, nil, nil)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -128,24 +128,14 @@ func startTransfer(kind transferKind, key, local string, work func(*transfer) er
 	return t
 }
 
-// startDownload begins writing one object to a local path.
-func startDownload(client adminClient, key, local string) *transfer {
-	return startTransfer(transferDownload, key, local, func(t *transfer) error {
-		body, size, err := client.DownloadObject(context.Background(), key)
-		if err != nil {
-			return err
-		}
-		defer body.Close()
-		t.total.Store(size)
-		return writeToFile(local, body, &t.moved)
-	})
-}
+// fetchFunc opens the body a download writes, alongside its size.
+type fetchFunc func(ctx context.Context) (io.ReadCloser, int64, error)
 
-// startTraceSnapshot begins writing the flight-recorder snapshot to a local
-// path. It is a download like any other: the file lands whole or not at all.
-func startTraceSnapshot(client adminClient, local string) *transfer {
-	return startTransfer(transferDownload, traceSnapshotLabel, local, func(t *transfer) error {
-		body, size, err := client.DownloadTraceSnapshot(context.Background())
+// startDownload begins writing the body fetch opens to a local path. label
+// names the download in its progress and result lines.
+func startDownload(label, local string, fetch fetchFunc) *transfer {
+	return startTransfer(transferDownload, label, local, func(t *transfer) error {
+		body, size, err := fetch(context.Background())
 		if err != nil {
 			return err
 		}

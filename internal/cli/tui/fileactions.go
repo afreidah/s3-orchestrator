@@ -16,6 +16,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -140,7 +141,11 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 
 	model, cmd := m.askForValue("Download "+key+" to?", filepath.Base(key), func(dest string) adminAction {
 		return adminAction{
-			before: func(m *model) { m.transfer = startDownload(m.client, key, dest) },
+			before: func(m *model) {
+				m.transfer = startDownload(key, dest, func(ctx context.Context) (io.ReadCloser, int64, error) {
+					return m.client.DownloadObject(ctx, key)
+				})
+			},
 			run:    transferTick(),
 		}
 	})
