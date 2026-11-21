@@ -171,6 +171,12 @@ s3-orchestrator admin object-locations -key "my-bucket/path/to/file.txt"
 # Read, replace, or clear an object's tag set
 s3-orchestrator admin object-tags -key "my-bucket/path/to/file.txt"
 
+# Delete one object and every copy of it
+s3-orchestrator admin object-delete -key "my-bucket/path/to/file.txt"
+
+# Delete every object under a prefix (refused without -confirm)
+s3-orchestrator admin object-delete -prefix "my-bucket/path/" -confirm
+
 # Show cleanup queue depth and pending items
 s3-orchestrator admin cleanup-queue
 
