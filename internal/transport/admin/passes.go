@@ -205,20 +205,39 @@ func CleanExcessPass(svc *ops.Services, batchSize int) *Pass[worker.OverReplicat
 	}
 }
 
-// LifecyclePass applies every lifecycle rule once. Objects are deleted one at
-// a time, so each streamed line is a live prefix completed by its status.
+// LifecyclePass applies every lifecycle rule once. Objects are deleted a page
+// at a time in one batch, so each streamed line is emitted on completion.
 func LifecyclePass(svc *ops.Services) *Pass[batch.Summary] {
 	return &Pass[batch.Summary]{
-		op:         "lifecycle",
-		verb:       "expiring",
-		sequential: true,
-		failMsg:    "lifecycle sweep failed",
-		run:        svc.Lifecycle.Run,
+		op:      "lifecycle",
+		verb:    "expiring",
+		failMsg: "lifecycle sweep failed",
+		run:     svc.Lifecycle.Run,
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.LifecycleResponse{Outcome: o, Deleted: res.Succeeded, Failed: res.Failed}
 		},
 		summary: func(res batch.Summary) (int, string) {
 			return res.Succeeded, fmt.Sprintf("expired %d objects", res.Succeeded)
+		},
+	}
+}
+
+// DeletePrefixPass removes every object under prefix. Objects are deleted a
+// page at a time in one batch, so each streamed line is emitted on completion.
+// A prefix that is not allowed fails with its reason.
+func DeletePrefixPass(svc *ops.Services, prefix string) *Pass[batch.Summary] {
+	return &Pass[batch.Summary]{
+		op:      "delete-prefix",
+		verb:    "deleting",
+		failMsg: "failed to delete prefix",
+		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
+			return svc.Objects.DeletePrefix(ctx, prefix, obs)
+		},
+		body: func(o adminapi.Outcome, res batch.Summary) any {
+			return adminapi.PrefixDeleteResponse{Outcome: o, Deleted: res.Succeeded, Failed: res.Failed, Total: res.Attempted}
+		},
+		summary: func(res batch.Summary) (int, string) {
+			return res.Succeeded, fmt.Sprintf("deleted %d, failed %d", res.Succeeded, res.Failed)
 		},
 	}
 }

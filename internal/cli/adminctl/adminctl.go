@@ -78,7 +78,7 @@ var adminCommands = []verb{
 	{"status", "Show backend health and circuit breaker state", cmdStatus},
 	{"object-locations", "List all copies of an object (requires -key)", cmdObjectLocations},
 	{"object-tags", "Read, replace or clear an object's tags (requires -key)", cmdObjectTags},
-	{"object-delete", "Delete one object and every copy (-key), or every object under a prefix (-prefix with -confirm)", cmdObjectDelete},
+	{"object-delete", "Delete one object and every copy (-key), or every object under a prefix (-prefix previews, -confirm runs it)", cmdObjectDelete},
 	{"cleanup-queue", "Show cleanup queue depth and pending items", cmdCleanupQueue},
 	{"cleanup-dlq", verbList(cleanupDLQVerbs) + " dead-lettered cleanups", nounCommand("cleanup-dlq", cleanupDLQVerbs)},
 	{"usage-flush", "Force flush usage counters to database", cmdUsageFlush},

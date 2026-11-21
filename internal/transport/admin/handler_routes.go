@@ -263,7 +263,8 @@ func (h *Handler) routes() []route {
 		{
 			Method: http.MethodDelete, Pattern: adminapi.PathObjects, Handler: h.handleDeletePrefix,
 			Summary:  "Delete every object under a prefix",
-			Response: adminapi.ObjectDeleteResponse{},
+			Response: adminapi.PrefixDeleteResponse{},
+			Stream:   adminstream.Event{},
 			Params: []param{
 				{Name: adminapi.ParamPrefix, In: inQuery, Required: true, Type: typeString, Description: "Prefix whose objects are removed"},
 			},

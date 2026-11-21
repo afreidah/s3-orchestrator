@@ -544,34 +544,26 @@ func TestAPIClient_UploadObject_ErrorStatus(t *testing.T) {
 	}
 }
 
-// TestAPIClient_Deletes asserts both delete shapes address their endpoint and
-// decode the count that comes back.
-func TestAPIClient_Deletes(t *testing.T) {
+// TestAPIClient_DeleteObject asserts a single delete addresses the key's
+// endpoint and decodes the count that comes back.
+func TestAPIClient_DeleteObject(t *testing.T) {
 	t.Parallel()
-	var gotMethod, gotPath, gotQuery string
+	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"deleted":7}`))
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"deleted":1}`))
 	}))
 	defer srv.Close()
-	client := newAPIClient(testTarget(srv.URL))
 
-	one, err := client.DeleteObject(context.Background(), "bucket/file.txt")
+	one, err := newAPIClient(testTarget(srv.URL)).DeleteObject(context.Background(), "bucket/file.txt")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/admin/api/objects/bucket/file.txt" {
 		t.Errorf("request = %s %s, want DELETE on the key", gotMethod, gotPath)
 	}
-	if one.Deleted != 7 {
+	if one.Deleted != 1 {
 		t.Errorf("deleted = %d, want the served count", one.Deleted)
-	}
-
-	if _, err := client.DeletePrefix(context.Background(), "bucket/dir/"); err != nil {
-		t.Fatalf("DeletePrefix: %v", err)
-	}
-	if gotPath != "/admin/api/objects" || gotQuery != "prefix=bucket%2Fdir%2F" {
-		t.Errorf("request = %s?%s, want the prefix as a query parameter", gotPath, gotQuery)
 	}
 }
 
@@ -611,11 +603,11 @@ func TestAPIClient_DeleteErrorStatus(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"deleted":1,"failed":1}`))
+		_, _ = w.Write([]byte(`{"deleted":0}`))
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(testTarget(srv.URL)).DeletePrefix(context.Background(), "bucket/"); err == nil ||
+	if _, err := newAPIClient(testTarget(srv.URL)).DeleteObject(context.Background(), "bucket/k"); err == nil ||
 		!strings.Contains(err.Error(), "500") {
 		t.Errorf("err = %v, want the 500 surfaced", err)
 	}

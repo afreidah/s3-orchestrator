@@ -6,9 +6,10 @@
 // Write actions on the highlighted row of the object browser: download an
 // object, or everything under a directory, to a prompted local path; upload a
 // local file under a prompted key; remove one object, or remove everything
-// under a directory. Every destructive action
-// confirms first and names what it will affect, and a prefix delete counts the
-// keys first so the operator is not agreeing to a number they cannot see.
+// under a directory. Every destructive action confirms first and names what it
+// will affect, and a prefix delete counts the keys first so the operator is not
+// agreeing to a number they cannot see. A prefix delete then streams into the
+// pane's output like an Ops action, so it runs to the end however large it is.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -16,11 +17,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
@@ -74,19 +78,6 @@ func (m *model) deleteObject(key string) tea.Cmd {
 		},
 		func(m *model, _ *adminapi.ObjectDeleteResponse) (string, tea.Cmd) {
 			return "deleted " + key, m.reloadListing()
-		})
-}
-
-// deletePrefix returns a command that removes everything under prefix and
-// reports how many objects went with it.
-func (m *model) deletePrefix(prefix string) tea.Cmd {
-	client := m.client
-	return runAction("delete "+prefix,
-		func(ctx context.Context) (*adminapi.ObjectDeleteResponse, error) {
-			return client.DeletePrefix(ctx, prefix)
-		},
-		func(m *model, resp *adminapi.ObjectDeleteResponse) (string, tea.Cmd) {
-			return fmt.Sprintf("deleted %s under %s", humanize.Count(int64(resp.Deleted), "object", "objects"), prefix), m.reloadListing()
 		})
 }
 
@@ -230,6 +221,8 @@ func (m *model) updateFileActions(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 
 // applyPrefixCounted arms the prefix-delete confirmation now that the scale is
 // known, so the operator agrees to a number rather than to a directory name.
+// The delete streams a line per key into the pane's output, which reloads the
+// listing once it ends.
 func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.report(false, "count "+msg.prefix+": "+msg.err.Error())
@@ -240,15 +233,14 @@ func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	scale := humanize.Comma(int64(msg.count))
-	if msg.atLeast {
-		scale = "at least " + scale
-	}
 	m.status = nil
-	return m.startAction(adminAction{
-		text: fmt.Sprintf("Delete %s objects under %s?", scale, msg.prefix),
-		run:  m.deletePrefix(msg.prefix),
-	})
+	act := &opsAction{
+		label:   "delete " + msg.prefix,
+		method:  http.MethodDelete,
+		path:    adminapi.PathObjects,
+		confirm: fmt.Sprintf("Delete %s objects under %s?", output.PageCount(msg.count, msg.atLeast), msg.prefix),
+	}
+	return m.startRun(act, opsRequest{path: act.path, query: url.Values{adminapi.ParamPrefix: {msg.prefix}}})
 }
 
 // reloadListing refetches the current prefix, so a listing cannot keep showing

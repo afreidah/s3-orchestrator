@@ -233,7 +233,8 @@ func TestDeleteObject_ConfirmsByKey(t *testing.T) {
 }
 
 // TestDeletePrefix_CountsBeforeConfirming asserts the operator is told how many
-// objects a collapsed directory holds before agreeing to remove it.
+// objects a collapsed directory holds before agreeing to remove it, and that
+// the removal then streams into the pane rather than waiting on one request.
 func TestDeletePrefix_CountsBeforeConfirming(t *testing.T) {
 	t.Parallel()
 	f := &fakeLister{flatPages: map[string]*adminapi.ObjectListResponse{
@@ -258,12 +259,14 @@ func TestDeletePrefix_CountsBeforeConfirming(t *testing.T) {
 		t.Fatalf("confirm = %+v, want the count in the question", m.confirm)
 	}
 
-	status, _ := finish(t, m, accept(t, m))
-	if f.deletedPrefix != "bucket/photos/" {
-		t.Errorf("deleted prefix %q, want bucket/photos/", f.deletedPrefix)
+	if _, ok := accept(t, m).(runStreamMsg); !ok {
+		t.Fatal("accepting should open the delete's progress stream")
 	}
-	if !status.ok {
-		t.Errorf("status = %+v, want the removal reported", status)
+	if !m.showingRun() {
+		t.Error("the pane should show the delete's output")
+	}
+	if f.opRequest.path != adminapi.PathObjects || f.opRequest.query.Get(adminapi.ParamPrefix) != "bucket/photos/" {
+		t.Errorf("request = %+v, want the prefix delete for bucket/photos/", f.opRequest)
 	}
 }
 

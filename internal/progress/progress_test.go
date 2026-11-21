@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Covers Track's start/end bracketing, status propagation, and the nil-observer
-// path that must still run the work.
+// path that must still run the work, and End's single finished step.
 // -------------------------------------------------------------------------------
 
 package progress
@@ -61,4 +61,17 @@ func TestTrack_NilObserverStillRuns(t *testing.T) {
 	if !ran {
 		t.Error("work fn did not run with a nil observer")
 	}
+}
+
+// TestEnd_EmitsOnlyTheEnd asserts End reports one finished unit with its
+// status and no start, and that a nil observer is safe.
+func TestEnd_EmitsOnlyTheEnd(t *testing.T) {
+	t.Parallel()
+	var steps []Step
+	End(func(s Step) { steps = append(steps, s) }, "item-1", StatusFailed)
+
+	if len(steps) != 1 || steps[0] != (Step{Label: "item-1", Phase: PhaseEnd, Status: StatusFailed}) {
+		t.Errorf("steps = %+v, want one end/failed/item-1", steps)
+	}
+	End(nil, "item-1", StatusOK)
 }

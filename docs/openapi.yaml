@@ -603,7 +603,11 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ObjectDeleteResponse'
+                                $ref: '#/components/schemas/PrefixDeleteResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid SigV4 credentials
         get:
@@ -2171,12 +2175,6 @@ components:
                 deleted:
                     format: int64
                     type: integer
-                failed:
-                    format: int64
-                    type: integer
-                total:
-                    format: int64
-                    type: integer
             required:
                 - deleted
             type: object
@@ -2326,6 +2324,27 @@ components:
                 - status
                 - factor
                 - pending
+            type: object
+        PrefixDeleteResponse:
+            properties:
+                deleted:
+                    format: int64
+                    type: integer
+                failed:
+                    format: int64
+                    type: integer
+                reason:
+                    type: string
+                status:
+                    type: string
+                total:
+                    format: int64
+                    type: integer
+            required:
+                - status
+                - deleted
+                - failed
+                - total
             type: object
         ProvisioningOperationResponse:
             properties:

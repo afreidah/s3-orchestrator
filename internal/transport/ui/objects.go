@@ -4,10 +4,11 @@
 // Author: Alex Freidah
 //
 // JSON handlers for direct object-management actions: lazy-loaded directory
-// tree, per-key delete and per-prefix bulk delete, multipart upload, and
-// streaming download. Each parses the dashboard's request shape, authorizes the
-// key, and hands off to the admin API's own object functions, so the browser
-// and a terminal client get the same responses.
+// tree, per-key delete, multipart upload, and streaming download. Each parses
+// the dashboard's request shape, authorizes the key, and hands off to the admin
+// API's own object functions, so the browser and a terminal client get the same
+// responses. A prefix delete runs in the background like the dashboard's other
+// passes (admin_actions.go).
 // -------------------------------------------------------------------------------
 
 package ui
@@ -78,21 +79,6 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer observeDuration("DELETE", time.Now())
 	admin.DeleteObject(w, r, h.log, h.d.Ops.Objects, req.Key)
-}
-
-// handleAPIDeletePrefix deletes all objects under a given key prefix.
-func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Prefix string `json:"prefix"`
-	}
-	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
-		return
-	}
-	if !h.authorizeKey(w, r, req.Prefix, core.PermDelete) {
-		return
-	}
-	defer observeDuration("DELETE", time.Now())
-	admin.DeletePrefix(w, r, h.log, h.d.Ops.Objects, req.Prefix)
 }
 
 // -------------------------------------------------------------------------

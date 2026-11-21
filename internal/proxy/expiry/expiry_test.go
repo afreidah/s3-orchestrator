@@ -346,9 +346,9 @@ func TestProcessRules_EmptyRules(t *testing.T) {
 	}
 }
 
-// TestProcessRules_ReportsProgress covers the observer path: every object in a
-// page starts before the batch goes out, and each ends with its own outcome so
-// a watching caller can tell a deleted object from a failed one.
+// TestProcessRules_ReportsProgress covers the observer path: each object in a
+// page ends with its own outcome once the batch settles, so a watching caller
+// can tell a deleted object from a failed one.
 func TestProcessRules_ReportsProgress(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -363,8 +363,6 @@ func TestProcessRules_ReportsProgress(t *testing.T) {
 		func(s progress.Step) { steps = append(steps, s) })
 
 	want := []progress.Step{
-		{Label: "good", Phase: progress.PhaseStart},
-		{Label: "bad", Phase: progress.PhaseStart},
 		{Label: "good", Phase: progress.PhaseEnd, Status: progress.StatusOK},
 		{Label: "bad", Phase: progress.PhaseEnd, Status: progress.StatusFailed},
 	}

@@ -18,6 +18,8 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
@@ -63,7 +65,9 @@ type actionStatus struct {
 
 // startAction refuses malformed parameters, ensures the action under key
 // isn't already running, then runs p in a goroutine and answers 202 Accepted.
-func (h *Handler) startAction(w http.ResponseWriter, key string, p pass, invalid error) {
+// The run keeps r's values, so its audit entries name the user who asked, but
+// not its cancellation, which ends with the response.
+func (h *Handler) startAction(w http.ResponseWriter, r *http.Request, key string, p pass, invalid error) {
 	if invalid != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, invalid.Error())
 		return
@@ -74,7 +78,7 @@ func (h *Handler) startAction(w http.ResponseWriter, key string, p pass, invalid
 	}
 
 	go func() {
-		ctx := audit.WithWorkload(context.Background(), audit.WorkloadAdmin)
+		ctx := audit.WithWorkload(context.WithoutCancel(r.Context()), audit.WorkloadAdmin)
 		rep := p.Run(ctx, h.log)
 		h.log.InfoContext(ctx, "dashboard action finished", "action", p.Name(), "outcome", rep.Result)
 		h.asyncOps.Complete(key, &rep)
@@ -105,6 +109,22 @@ func (h *Handler) writeActionStatus(w http.ResponseWriter, key string) {
 // -------------------------------------------------------------------------
 // ACTIONS
 // -------------------------------------------------------------------------
+
+// handleAPIDeletePrefix starts removing every object under the request's
+// prefix once the signed-in user may delete in its bucket. The prefix arrives
+// in the body, so the handler authorizes it rather than the route table.
+func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prefix string `json:"prefix"`
+	}
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
+		return
+	}
+	if !h.authorizeKey(w, r, req.Prefix, core.PermDelete) {
+		return
+	}
+	h.startAction(w, r, routeDeletePrefix, admin.DeletePrefixPass(h.d.Ops, req.Prefix), ops.CheckPrefix(req.Prefix))
+}
 
 // rebalanceAction runs one rebalance cycle.
 func rebalanceAction(h *Handler, _ *http.Request) (pass, error) {

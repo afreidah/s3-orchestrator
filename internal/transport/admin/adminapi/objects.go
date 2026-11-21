@@ -31,11 +31,17 @@ type ObjectUploadResponse struct {
 	ETag string `json:"etag"`
 }
 
-// ObjectDeleteResponse reports how many objects a delete removed. A single-key
-// delete reports one; a prefix delete reports the whole count, with Failed and
-// Total present when some copies could not be removed.
+// ObjectDeleteResponse reports a single-key delete, which removes one object.
 type ObjectDeleteResponse struct {
 	Deleted int `json:"deleted"`
-	Failed  int `json:"failed,omitempty"`
-	Total   int `json:"total,omitempty"`
+}
+
+// PrefixDeleteResponse reports a prefix delete: the objects it removed, the
+// ones it could not, and every key it attempted. A partial removal still ran,
+// so it reports ok with Failed set rather than failing the request.
+type PrefixDeleteResponse struct {
+	Outcome
+	Deleted int `json:"deleted"`
+	Failed  int `json:"failed"`
+	Total   int `json:"total"`
 }

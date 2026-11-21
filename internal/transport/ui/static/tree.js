@@ -205,16 +205,15 @@
     deleteOkBtn.addEventListener('click', function () {
       deleteOkBtn.disabled = true;
       deleteOkBtn.textContent = 'Deleting\u2026';
+      if (pendingDeleteIsDir) {
+        deletePrefix(pendingDeleteKey);
+        return;
+      }
 
-      let endpoint = pendingDeleteIsDir ? 'api/delete-prefix' : 'api/delete';
-      let payload = pendingDeleteIsDir
-        ? JSON.stringify({ prefix: pendingDeleteKey })
-        : JSON.stringify({ key: pendingDeleteKey });
-
-      fetchWithTimeout(endpoint, {
+      fetchWithTimeout('api/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: payload
+        body: JSON.stringify({ key: pendingDeleteKey })
       }, 30000)
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
@@ -225,16 +224,55 @@
           if (res.ok) {
             dialog.close();
             location.reload();
-          } else if (res.data.failed) {
-            deleteOkBtn.textContent = res.data.failed + ' of ' + res.data.total + ' deletes failed';
           } else {
             deleteOkBtn.textContent = res.data.error || 'Failed';
           }
         })
-        .catch(function (err) {
-          deleteOkBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
-        });
+        .catch(showDeleteError);
     });
+
+    // deletePrefix starts the background delete under prefix and polls it to
+    // the end, since a large prefix outlives any one request.
+    function deletePrefix(prefix) {
+      fetchWithTimeout('api/delete-prefix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefix: prefix })
+      }, 10000)
+        .then(function (resp) {
+          if (resp.status === 401) { location.href = 'login'; return null; }
+          if (resp.status === 409) { deleteOkBtn.textContent = 'Another prefix delete is running'; return null; }
+          if (!resp.ok) return resp.json();
+          pollUntilDone('api/delete-prefix/status', applyPrefixDeleted, function () {
+            deleteOkBtn.textContent = 'Poll error';
+          });
+          return null;
+        })
+        .then(function (refusal) {
+          if (refusal) deleteOkBtn.textContent = refusal.error || 'Failed';
+        })
+        .catch(showDeleteError);
+    }
+
+    // applyPrefixDeleted reports a finished prefix delete in the dialog, or
+    // closes it and reloads once everything under the prefix is gone.
+    function applyPrefixDeleted(data) {
+      let result = data.result || {};
+      if (data.status === 'ok' && !result.failed) {
+        dialog.close();
+        location.reload();
+      } else if (data.status === 'ok') {
+        deleteOkBtn.textContent = result.failed + ' of ' + result.total + ' deletes failed';
+      } else {
+        deleteOkBtn.textContent = data.error || 'Failed';
+      }
+    }
+
+    // showDeleteError names a delete request that got no answer, telling a
+    // timeout from a lost connection.
+    function showDeleteError(err) {
+      deleteOkBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
+    }
   }
 
   // --- Download ---
@@ -494,6 +532,16 @@
       countKey: countKey,
       suffix: noun ? ' ' + noun : '',
     };
+    pollUntilDone(statusUrl, function (data) { applyPollResult(data, ctx); }, function () {
+      btn.textContent = 'Poll error';
+      resetButton(btn, label, 3000);
+    });
+  }
+
+  // pollUntilDone polls a background run's status every two seconds until the
+  // run has ended, then hands the final payload to onDone. A failed poll stops
+  // polling and calls onError.
+  function pollUntilDone(statusUrl, onDone, onError) {
     let poll = setInterval(function () {
       fetchWithTimeout(statusUrl, null, 10000)
         .then(function (resp) {
@@ -504,12 +552,11 @@
           if (!data) { clearInterval(poll); return; }
           if (data.status === 'running') return;
           clearInterval(poll);
-          applyPollResult(data, ctx);
+          onDone(data);
         })
         .catch(function () {
           clearInterval(poll);
-          btn.textContent = 'Poll error';
-          resetButton(btn, label, 3000);
+          onError();
         });
     }, 2000);
   }

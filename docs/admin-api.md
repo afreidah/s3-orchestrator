@@ -114,7 +114,7 @@ Every key must name a configured virtual bucket, the same requirement the dashbo
 
 Deletes report how many objects they removed in a `{"deleted":48}` body, so a caller can tell a no-op from a mass removal.
 
-A prefix delete that removes some objects and fails on others answers `500` carrying the counts it did achieve (`deleted`, `failed`, `total`), because the prefix is left half removed and the caller needs to know that rather than to retry blind.
+A prefix delete is a pass like the others: send `Accept: application/x-ndjson` and it streams a line per key as each listing page settles, which is how `admin object-delete -prefix -confirm` and the TUI run it. Without the header it answers once at the end, so a large prefix can outlast a client's request timeout. Its response carries `deleted`, `failed` and `total`. Objects it could not remove do not fail the request: it answers `200` with them counted in `failed`, so the caller knows the prefix is only partly removed. Only a listing failure answers `500`.
 
 ## Object tags
 

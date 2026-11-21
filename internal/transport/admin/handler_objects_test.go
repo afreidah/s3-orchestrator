@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -36,6 +37,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
@@ -410,12 +412,12 @@ func TestHandleDeletePrefix_ReportsCount(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp adminapi.ObjectDeleteResponse
+	var resp adminapi.PrefixDeleteResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Deleted != 2 {
-		t.Errorf("deleted = %d, want 2", resp.Deleted)
+	if resp.Deleted != 2 || resp.Total != 2 {
+		t.Errorf("resp = %+v, want deleted=2 total=2", resp)
 	}
 }
 
@@ -434,7 +436,7 @@ func TestHandleDeletePrefix_RequiresPrefix(t *testing.T) {
 }
 
 // TestHandleDeletePrefix_PartialFailureIsReported asserts a prefix left half
-// deleted is a failure carrying what it did remove, not a success.
+// deleted reports what it removed and what it could not, since the pass ran.
 func TestHandleDeletePrefix_PartialFailureIsReported(t *testing.T) {
 	t.Parallel()
 	_, api, mux := objectsAPIHandler(t)
@@ -452,15 +454,48 @@ func TestHandleDeletePrefix_PartialFailureIsReported(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp adminapi.ObjectDeleteResponse
+	var resp adminapi.PrefixDeleteResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Deleted != 1 || resp.Failed != 1 || resp.Total != 2 {
 		t.Errorf("resp = %+v, want deleted=1 failed=1 total=2", resp)
+	}
+}
+
+// TestHandleDeletePrefix_Streams asserts a caller that asks for the stream gets
+// a finished line per key and a result carrying the counts, so a large prefix
+// reports as it goes instead of holding one request open until it ends.
+func TestHandleDeletePrefix_Streams(t *testing.T) {
+	t.Parallel()
+	_, api, mux := objectsAPIHandler(t)
+	keys := []string{"bucket/dir/a", "bucket/dir/b"}
+	api.EXPECT().ListObjects(gomock.Any(), "bucket/dir/", "", "", gomock.Any()).
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
+			{ObjectKey: keys[0]}, {ObjectKey: keys[1]},
+		}}, nil).Times(1)
+	api.EXPECT().DeleteObjects(gomock.Any(), keys).
+		Return([]object.DeleteObjectResult{{Key: keys[0]}, {Key: keys[1], Err: errors.New("backend refused")}}).Times(1)
+
+	req := doAuth(t, http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", "")
+	req.Header.Set("Accept", adminstream.ContentType)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	events := decodeEvents(t, w.Body.Bytes())
+	if len(events) != 4 {
+		t.Fatalf("got %d events, want start + 2 steps + result:\n%s", len(events), w.Body.String())
+	}
+	if events[1].Kind != adminstream.KindStepEnd || events[1].Message != "deleting "+keys[0] || events[2].Outcome != progress.StatusFailed {
+		t.Errorf("steps = %+v / %+v, want a finished line per key with its outcome", events[1], events[2])
+	}
+	last := events[3]
+	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK || last.Processed != 1 ||
+		last.Fields["failed"] != float64(1) || last.Fields["total"] != float64(2) {
+		t.Errorf("result = %+v, want ok with 1 deleted of 2", last)
 	}
 }
 

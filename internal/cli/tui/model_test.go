@@ -127,10 +127,6 @@ func (errLister) DeleteObject(_ context.Context, _ string) (*adminapi.ObjectDele
 	return nil, errors.New("nope")
 }
 
-func (errLister) DeletePrefix(_ context.Context, _ string) (*adminapi.ObjectDeleteResponse, error) {
-	return nil, errors.New("nope")
-}
-
 func (errLister) StartDrain(_ context.Context, _ string) (*adminapi.BackendOperationResponse, error) {
 	return nil, errors.New("nope")
 }
