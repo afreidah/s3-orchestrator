@@ -161,7 +161,6 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	r := NewResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	rt := r.Resolve[*infra.BackendRuntime]()
-	collector := r.Resolve[*metrics.Collector]()
 	stores := r.Resolve[metadataStore]()
 	id := r.Resolve[instanceid.ID]()
 	if r.err != nil {
@@ -169,7 +168,6 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	}
 	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 		Ops:              rt,
-		Metrics:          collector,
 		Store:            stores,
 		Concurrency:      cfg.CleanupQueue.Concurrency,
 		InstanceID:       id.String(),

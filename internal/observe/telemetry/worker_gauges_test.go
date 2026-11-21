@@ -18,14 +18,14 @@ import (
 // TestWorkerGauges_ApplySetsOnlyWhatItCarries verifies a carried figure sets
 // its gauge and a nil one leaves its gauge as it was.
 func TestWorkerGauges_ApplySetsOnlyWhatItCarries(t *testing.T) {
-	CleanupDLQDepth.Set(9)
-	n := int64(6)
-	g := WorkerGauges{PendingIntentsDepth: &n}
-	g.Apply()
-	if v := promtest.ToFloat64(PendingIntentsDepth); v != 6 {
-		t.Errorf("pending intents = %v, want 6", v)
+	RebalancePending.Set(9)
+	(&WorkerGauges{}).Apply()
+	if v := promtest.ToFloat64(RebalancePending); v != 9 {
+		t.Errorf("rebalance pending = %v, want 9 left alone", v)
 	}
-	if v := promtest.ToFloat64(CleanupDLQDepth); v != 9 {
-		t.Errorf("cleanup DLQ = %v, want 9 left alone", v)
+	n := int64(6)
+	(&WorkerGauges{RebalancePending: &n}).Apply()
+	if v := promtest.ToFloat64(RebalancePending); v != 6 {
+		t.Errorf("rebalance pending = %v, want 6", v)
 	}
 }

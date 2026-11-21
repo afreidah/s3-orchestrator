@@ -3,18 +3,20 @@
 //
 // Author: Alex Freidah
 //
-// The quota, object, multipart, plaintext and verification-coverage gauges
-// describe state every instance shares. Each is a read of a few counter rows,
-// so every instance reads them itself on its flush tick and serves the same
-// values without coordinating. Capacity warnings are the exception: one
-// instance at a time raises them, and a shared marker keeps the fleet from
-// raising one again within the notifier's dampen window.
+// The quota, object, multipart, plaintext, verification-coverage and queue
+// depth gauges describe state every instance shares. Each is a read of a few
+// counter rows or a count of a queue's rows, so every instance reads them
+// itself on its flush tick and serves the same values without coordinating.
+// Capacity warnings are the exception: one instance at a time raises them, and
+// a shared marker keeps the fleet from raising one again within the notifier's
+// dampen window.
 // -------------------------------------------------------------------------------
 
 package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -111,6 +113,31 @@ func (mc *Collector) refreshFleet(ctx context.Context, stats map[string]core.Quo
 	mc.applyFleet(snap)
 	mc.warnNearCapacity(ctx, stats)
 	return nil
+}
+
+// refreshQueues publishes how many rows wait in each queue a worker drains. A
+// failed count leaves its gauges as they were.
+func (mc *Collector) refreshQueues(ctx context.Context) error {
+	s := mc.d.Store
+	backlog, err := s.CountReplicationQueue(ctx)
+	if err == nil {
+		telemetry.ReplicationPending.Set(float64(backlog.Under))
+		telemetry.OverReplicationPending.Set(float64(backlog.Over))
+	}
+	errs := []error{err}
+	for gauge, count := range map[prometheus.Gauge]func(context.Context) (int64, error){
+		telemetry.PendingIntentsDepth:    s.PendingDepth,
+		telemetry.CleanupQueueDepth:      s.CleanupQueueDepth,
+		telemetry.CleanupDLQDepth:        s.CleanupDLQDepth,
+		telemetry.NotificationQueueDepth: s.NotificationQueueDepth,
+	} {
+		n, err := count(ctx)
+		if err == nil {
+			gauge.Set(float64(n))
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // applyFleet publishes a snapshot's figures to the gauges. The coverage gauges

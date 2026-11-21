@@ -13,6 +13,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -38,6 +39,11 @@ type Deps interface {
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error)
+	PendingDepth(ctx context.Context) (int64, error)
+	CleanupQueueDepth(ctx context.Context) (int64, error)
+	CleanupDLQDepth(ctx context.Context) (int64, error)
+	CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error)
+	NotificationQueueDepth(ctx context.Context) (int64, error)
 	core.UsageReader
 	core.AdvisoryLocker
 }
@@ -78,9 +84,9 @@ func New(d *CollectorDeps) *Collector {
 // -------------------------------------------------------------------------
 
 // RefreshGauges republishes the gauges the store backs: the fleet-wide figures,
-// the capacity warnings due, and this instance's usage with the baselines its
-// limit checks compare against. stats is a quota read the caller already made,
-// or nil to read it here.
+// the queue depths, the capacity warnings due, and this instance's usage with
+// the baselines its limit checks compare against. stats is a quota read the
+// caller already made, or nil to read it here.
 func (mc *Collector) RefreshGauges(ctx context.Context, stats map[string]core.QuotaStat) error {
 	if stats == nil {
 		read, err := mc.d.Store.GetQuotaStats(ctx)
@@ -90,8 +96,9 @@ func (mc *Collector) RefreshGauges(ctx context.Context, stats map[string]core.Qu
 		stats = read
 	}
 	fleetErr := mc.refreshFleet(ctx, stats)
+	queueErr := mc.refreshQueues(ctx)
 	mc.updateUsageGauges(ctx, stats)
-	return fleetErr
+	return errors.Join(fleetErr, queueErr)
 }
 
 // updateUsageGauges refreshes the tracker's cycle baselines, which the

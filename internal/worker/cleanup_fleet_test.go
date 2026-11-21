@@ -287,21 +287,6 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_QueueDepthError verifies a failed depth read does not
-// fail the tick, since the depths are informational.
-func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
-	t.Parallel()
-	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(0), errors.New("db error")).AnyTimes()
-	store.EXPECT().CleanupDLQDepth(gomock.Any()).Return(int64(0), errors.New("db error")).AnyTimes()
-	storetest.Permissive(store)
-
-	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	if sum := passOf(t)(cw.ProcessCleanupQueue(context.Background())); sum.Succeeded != 0 || sum.Failed != 0 {
-		t.Errorf("summary = %+v, want nothing settled", sum)
-	}
-}
-
 // TestProcessCleanupQueue_Concurrent verifies a batch's deletes are not run one
 // at a time.
 func TestProcessCleanupQueue_Concurrent(t *testing.T) {

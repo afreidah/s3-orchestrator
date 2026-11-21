@@ -29,8 +29,10 @@ import (
 
 // fakeStore is a metrics.Deps returning canned fleet figures: its quota stats,
 // ledger, multipart counts and the scrub queue's head, or ledgerErr from the
-// ledger read. The capacity lock is free unless lockBusy is set.
+// ledger read. The capacity lock is free unless lockBusy is set, and the queue
+// counts, which only RefreshGauges reads, are left to the nil Deps.
 type fakeStore struct {
+	Deps
 	stats     map[string]core.QuotaStat
 	ledger    core.LedgerStats
 	multipart map[string]int64

@@ -42,6 +42,51 @@ func (m *MockDeps) EXPECT() *MockDepsMockRecorder {
 	return m.recorder
 }
 
+// CleanupDLQDepth mocks base method.
+func (m *MockDeps) CleanupDLQDepth(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CleanupDLQDepth", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CleanupDLQDepth indicates an expected call of CleanupDLQDepth.
+func (mr *MockDepsMockRecorder) CleanupDLQDepth(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupDLQDepth", reflect.TypeOf((*MockDeps)(nil).CleanupDLQDepth), ctx)
+}
+
+// CleanupQueueDepth mocks base method.
+func (m *MockDeps) CleanupQueueDepth(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CleanupQueueDepth", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CleanupQueueDepth indicates an expected call of CleanupQueueDepth.
+func (mr *MockDepsMockRecorder) CleanupQueueDepth(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockDeps)(nil).CleanupQueueDepth), ctx)
+}
+
+// CountReplicationQueue mocks base method.
+func (m *MockDeps) CountReplicationQueue(ctx context.Context) (core.ReplicationBacklog, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountReplicationQueue", ctx)
+	ret0, _ := ret[0].(core.ReplicationBacklog)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountReplicationQueue indicates an expected call of CountReplicationQueue.
+func (mr *MockDepsMockRecorder) CountReplicationQueue(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationQueue", reflect.TypeOf((*MockDeps)(nil).CountReplicationQueue), ctx)
+}
+
 // GetActiveMultipartCounts mocks base method.
 func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()
@@ -115,6 +160,36 @@ func (m *MockDeps) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 func (mr *MockDepsMockRecorder) LedgerStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LedgerStats", reflect.TypeOf((*MockDeps)(nil).LedgerStats), ctx)
+}
+
+// NotificationQueueDepth mocks base method.
+func (m *MockDeps) NotificationQueueDepth(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NotificationQueueDepth", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NotificationQueueDepth indicates an expected call of NotificationQueueDepth.
+func (mr *MockDepsMockRecorder) NotificationQueueDepth(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotificationQueueDepth", reflect.TypeOf((*MockDeps)(nil).NotificationQueueDepth), ctx)
+}
+
+// PendingDepth mocks base method.
+func (m *MockDeps) PendingDepth(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PendingDepth", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PendingDepth indicates an expected call of PendingDepth.
+func (mr *MockDepsMockRecorder) PendingDepth(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendingDepth", reflect.TypeOf((*MockDeps)(nil).PendingDepth), ctx)
 }
 
 // WithAdvisoryLock mocks base method.

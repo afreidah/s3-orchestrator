@@ -75,6 +75,10 @@ A backend that was up but slow never tripped its breaker, since nothing failed, 
 - **New metrics and events:** `s3o_backend_pressure`, `s3o_backend_pressured` and `s3o_backend_latency_baseline_seconds`, and the `backend.pressure.demoted` and `backend.pressure.restored` notifications.
 - **New service:** `backend_pressure` appears in `/admin/api/workers` and the worker metrics, ticking every 2 seconds on every instance.
 
+**Queue depth gauges are counted on every instance ([#1591](https://github.com/afreidah/s3-orchestrator/issues/1591), v0.184.1)**
+
+`s3o_pending_intents_depth`, `s3o_cleanup_queue_depth`, `s3o_cleanup_dlq_depth`, `s3o_notification_queue_depth`, `s3o_replication_pending` and `s3o_over_replication_pending` were published by the instance holding each worker's lock at the end of its tick, so between ticks, and after the shared value expired, every instance reported a stale figure. Every instance now counts them on each usage flush, and sets `s3o_drain_active` from the backend states it reloads on the same flush. No action is needed.
+
 ### v0.183.x
 
 **Manual passes take their advisory lock ([#1795](https://github.com/afreidah/s3-orchestrator/issues/1795), v0.183.3)**

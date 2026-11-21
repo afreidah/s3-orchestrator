@@ -96,11 +96,6 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) (batch.Summary,
 		r.log.InfoContext(ctx, "backend refusing HEAD, skipping pending intents",
 			"backend", name, "intents_skipped", refused.n[name])
 	}
-
-	if depth, err := r.d.Store.PendingDepth(ctx); err == nil {
-		r.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourcePendingReaper,
-			telemetry.WorkerGauges{PendingIntentsDepth: &depth})
-	}
 	return sum, nil
 }
 

@@ -110,7 +110,6 @@ func (dr *Drainer) Drain(ctx context.Context, observer progress.Observer) (Drain
 			dr.d.OnRecords(records)
 		}
 		active := inProgress(records)
-		telemetry.DrainActive.Set(float64(len(active)))
 
 		var out DrainSummary
 		for i := range active {

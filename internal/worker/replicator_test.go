@@ -439,9 +439,6 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	if sum.CopiesCreated != 0 {
 		t.Errorf("created = %d, want 0", sum.CopiesCreated)
 	}
-	if p := promtest.ToFloat64(telemetry.ReplicationPending); p != 0 {
-		t.Errorf("ReplicationPending = %v, want 0", p)
-	}
 }
 
 // TestReplicateObject_Success verifies the replicate object success contract.

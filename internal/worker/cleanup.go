@@ -45,7 +45,6 @@ type CleanupWorker struct {
 // reclaimable by another worker tick (typically 5m).
 type CleanupWorkerDeps struct {
 	Ops              Ops
-	Metrics          telemetry.GaugePublisher
 	Store            core.CleanupStore
 	Concurrency      int
 	InstanceID       string
@@ -59,7 +58,6 @@ type CleanupWorkerDeps struct {
 //nolint:gocritic // hugeParam: the Deps are copied once, at construction.
 func NewCleanupWorker(d CleanupWorkerDeps) *CleanupWorker {
 	must.NotNil("d.Ops", d.Ops)
-	must.NotNil("d.Metrics", d.Metrics)
 	must.NotNil("d.Store", d.Store)
 	return &CleanupWorker{
 		d: d,
@@ -122,7 +120,6 @@ func (w *CleanupWorker) processCleanupQueue(ctx context.Context) (batch.Summary,
 		batches++
 		return batch.Step{Progress: sum.Succeeded, Stop: batches == cleanupMaxBatchesPerTick}, nil
 	})
-	w.recordCleanupDepths(ctx)
 	if stop == batch.Errored {
 		return total, fmt.Errorf("claim pending cleanups: %w", err)
 	}
@@ -150,18 +147,4 @@ func (w *CleanupWorker) reportReclaimed(ctx context.Context, items []core.Cleanu
 			slog.String("reclaimed_by", w.d.InstanceID),
 		)
 	}
-}
-
-// recordCleanupDepths publishes the cleanup-queue and DLQ depths at the end
-// of a tick. A failed read leaves that gauge as it was, because depth reads
-// are purely informational.
-func (w *CleanupWorker) recordCleanupDepths(ctx context.Context) {
-	var g telemetry.WorkerGauges
-	if depth, err := w.d.Store.CleanupQueueDepth(ctx); err == nil {
-		g.CleanupQueueDepth = &depth
-	}
-	if dlqDepth, err := w.d.Store.CleanupDLQDepth(ctx); err == nil {
-		g.CleanupDLQDepth = &dlqDepth
-	}
-	w.d.Metrics.PublishWorkerGauges(ctx, telemetry.GaugeSourceCleanup, g)
 }
