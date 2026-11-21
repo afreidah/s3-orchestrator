@@ -445,6 +445,16 @@ func requestCapped(t *testing.T, api, egress, ingress int64) core.UsageLimits {
 	return lim
 }
 
+// ingressCapped builds a backend's limits from a monthly ingress byte cap alone.
+func ingressCapped(t *testing.T, ingress int64) core.UsageLimits {
+	t.Helper()
+	lim, err := core.NewUsageLimits(0, ingress, nil, nil)
+	if err != nil {
+		t.Fatalf("build limits: %v", err)
+	}
+	return lim
+}
+
 // alreadySpent seeds a period partly consumed on one backend, replacing every
 // baseline. Both the request total and the wildcard pool's share of it, which
 // admission judges against, are set.
@@ -472,6 +482,33 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 
 	if mgr.CanAcceptWrite(100) {
 		t.Error("CanAcceptWrite should return false when no backend has capacity")
+	}
+}
+
+// TestCanAcceptWrite_CompressedAdmitsLogicalOverLimit asserts that with
+// compression on, the pre-flight does not reject a write on its logical size:
+// the stored size is only known after encoding, so the admission there decides.
+// With compression off the same write is still refused up front.
+func TestCanAcceptWrite_CompressedAdmitsLogicalOverLimit(t *testing.T) {
+	t.Parallel()
+	limits := map[string]core.UsageLimits{
+		"b1": ingressCapped(t, 50),
+	}
+	store := newPermissiveStore(t)
+	backends := map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}
+
+	off := newFleet(t, store, backends, &fleetOpts{UsageLimits: limits})
+	if off.CanAcceptWrite(100) {
+		t.Fatal("compression off: CanAcceptWrite(100) should be false with 50 bytes of ingress")
+	}
+
+	on := newFleet(t, store, backends, &fleetOpts{
+		UsageLimits: limits,
+		Codec:       newPutCodec(t),
+		Compression: compressionOn(0),
+	})
+	if !on.CanAcceptWrite(100) {
+		t.Error("compression on: CanAcceptWrite(100) should be true; the stored size is judged after encoding")
 	}
 }
 

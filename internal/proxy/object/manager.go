@@ -121,7 +121,15 @@ func (o *Manager) LocationCache() *LocationCache {
 // CanAcceptWrite reports whether any backend can accept a write of the given
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
+//
+// A write that will be compressed is admitted here: its stored size is only
+// known after encoding, and the logical size is the worst case, so the check
+// cannot prove the write will not fit. PutObject judges the stored size once
+// it is encoded. Only an uncompressed write is judged on its logical size.
 func (o *Manager) CanAcceptWrite(size int64) bool {
+	if o.d.Codec != nil && o.d.Compression.Enabled && size >= o.d.Compression.MinSize {
+		return true
+	}
 	return len(o.d.Core.EligibleForWrite(s3op.PutObject, 0, size)) > 0
 }
 
