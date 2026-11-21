@@ -146,7 +146,7 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 					return m.client.DownloadObject(ctx, key)
 				})
 			},
-			run:    transferTick(),
+			run: transferTick(),
 		}
 	})
 	return model, cmd, true
