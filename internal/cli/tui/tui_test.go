@@ -65,7 +65,7 @@ type fakeLister struct {
 	flatPages     map[string]*adminapi.ObjectListResponse // flat listings keyed by prefix
 	flatErr       error                                   // when set, ListObjectsFlat fails
 	payload       []byte                                  // body DownloadObject serves
-	downloaded    string                                  // key passed to DownloadObject
+	downloaded    string                                  // key passed to DownloadObject, or path for the trace snapshot
 	downloadErr   error                                   // when set, DownloadObject fails
 	uploaded      string                                  // key passed to UploadObject
 	uploadedBytes []byte                                  // body UploadObject received
@@ -229,6 +229,15 @@ func (f *fakeLister) DownloadObject(_ context.Context, key string) (io.ReadClose
 		return nil, 0, f.downloadErr
 	}
 	f.downloaded = key
+	return io.NopCloser(bytes.NewReader(f.payload)), int64(len(f.payload)), nil
+}
+
+// DownloadTraceSnapshot serves the canned payload as the snapshot body.
+func (f *fakeLister) DownloadTraceSnapshot(_ context.Context) (io.ReadCloser, int64, error) {
+	if f.downloadErr != nil {
+		return nil, 0, f.downloadErr
+	}
+	f.downloaded = adminapi.PathTraceSnap
 	return io.NopCloser(bytes.NewReader(f.payload)), int64(len(f.payload)), nil
 }
 

@@ -175,6 +175,17 @@ func (c *apiClient) DownloadObject(ctx context.Context, key string) (io.ReadClos
 	return resp.Body, resp.ContentLength, nil
 }
 
+// DownloadTraceSnapshot fetches the flight-recorder ring buffer and returns the
+// open body alongside its size, as DownloadObject does. The caller closes the
+// body. Returns an unavailable adminclient.Error when the recorder is off.
+func (c *apiClient) DownloadTraceSnapshot(ctx context.Context) (io.ReadCloser, int64, error) {
+	resp, err := c.c.Do(ctx, http.MethodPost, adminapi.PathTraceSnap, nil, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
 // UploadObject stores size bytes read from body under key.
 func (c *apiClient) UploadObject(ctx context.Context, key string, body io.Reader, size int64) error {
 	resp, err := c.c.Upload(ctx, http.MethodPut, adminapi.Path(adminapi.PathObjects, key), nil, body, size, "application/octet-stream")

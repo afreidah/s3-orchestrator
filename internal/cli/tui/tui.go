@@ -65,6 +65,7 @@ type adminClient interface {
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
 	ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, error)
+	DownloadTraceSnapshot(ctx context.Context) (io.ReadCloser, int64, error)
 	UploadObject(ctx context.Context, key string, body io.Reader, size int64) error
 	DeleteObject(ctx context.Context, key string) (*adminapi.ObjectDeleteResponse, error)
 	DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error)

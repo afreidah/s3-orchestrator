@@ -119,6 +119,10 @@ func (errLister) DownloadObject(_ context.Context, _ string) (io.ReadCloser, int
 	return nil, 0, errors.New("nope")
 }
 
+func (errLister) DownloadTraceSnapshot(_ context.Context) (io.ReadCloser, int64, error) {
+	return nil, 0, errors.New("nope")
+}
+
 func (errLister) UploadObject(_ context.Context, _ string, _ io.Reader, _ int64) error {
 	return errors.New("nope")
 }

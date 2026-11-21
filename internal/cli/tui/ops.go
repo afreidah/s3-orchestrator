@@ -37,6 +37,9 @@ type opsAction struct {
 	body    []byte
 	ask     inputRequest
 	resolve func(value string) opsRequest
+	// saves marks an action that downloads the trace snapshot to a file the
+	// operator names, instead of running a request.
+	saves bool
 }
 
 // inputRequest is the question an action asks before it can run, and the hint
@@ -61,7 +64,18 @@ func opsActions() []opsAction {
 	actions := maintenanceActions()
 	actions = append(actions, cacheActions()...)
 	actions = append(actions, encryptionActions()...)
-	return append(actions, compressionActions()...)
+	actions = append(actions, compressionActions()...)
+	return append(actions, traceSnapshotAction())
+}
+
+// traceSnapshotFile is the file the trace snapshot prompt proposes, matching the
+// CLI's default.
+const traceSnapshotFile = "trace.bin"
+
+// traceSnapshotAction saves the flight-recorder ring buffer to a file, for
+// `go tool trace`. It asks for the destination rather than streaming progress.
+func traceSnapshotAction() opsAction {
+	return opsAction{label: "Download trace snapshot", saves: true}
 }
 
 // backendActions lists what one backend can be asked to do on its own. Drain
@@ -270,6 +284,17 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		a := &m.ops.actions[m.ops.cursor]
 		backend := m.ops.backend
+		if a.saves {
+			if m.runBusy() || m.transferBusy() {
+				return m, nil
+			}
+			return m.askForValue("Save the trace snapshot to which file?", traceSnapshotFile, func(dest string) adminAction {
+				return adminAction{
+					before: func(m *model) { m.transfer = startTraceSnapshot(m.client, dest) },
+					run:    transferTick(),
+				}
+			})
+		}
 		if a.ask.question != "" {
 			if m.runBusy() {
 				return m, nil

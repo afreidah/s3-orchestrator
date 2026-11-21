@@ -58,6 +58,10 @@ const (
 // treeDirMode is the mode a prefix download's directories are created with.
 const treeDirMode = 0o750
 
+// traceSnapshotLabel names the trace snapshot in a transfer's progress and
+// result lines, where an object key would otherwise go.
+const traceSnapshotLabel = "trace snapshot"
+
 // errNothingUnderPrefix reports a prefix download with no objects to fetch.
 var errNothingUnderPrefix = errors.New("nothing to download")
 
@@ -128,6 +132,20 @@ func startTransfer(kind transferKind, key, local string, work func(*transfer) er
 func startDownload(client adminClient, key, local string) *transfer {
 	return startTransfer(transferDownload, key, local, func(t *transfer) error {
 		body, size, err := client.DownloadObject(context.Background(), key)
+		if err != nil {
+			return err
+		}
+		defer body.Close()
+		t.total.Store(size)
+		return writeToFile(local, body, &t.moved)
+	})
+}
+
+// startTraceSnapshot begins writing the flight-recorder snapshot to a local
+// path. It is a download like any other: the file lands whole or not at all.
+func startTraceSnapshot(client adminClient, local string) *transfer {
+	return startTransfer(transferDownload, traceSnapshotLabel, local, func(t *transfer) error {
+		body, size, err := client.DownloadTraceSnapshot(context.Background())
 		if err != nil {
 			return err
 		}
