@@ -59,3 +59,12 @@ func Track(o Observer, label string, fn func() string) {
 	status := fn()
 	o(Step{Label: label, Phase: PhaseEnd, Status: status, Duration: max(time.Since(start), 0)})
 }
+
+// End reports one finished unit of work with no start step, for items that
+// settle together in a batch, where no single item has a duration of its own.
+// A nil observer reports nothing.
+func End(o Observer, label, status string) {
+	if o != nil {
+		o(Step{Label: label, Phase: PhaseEnd, Status: status})
+	}
+}

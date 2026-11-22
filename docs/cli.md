@@ -75,8 +75,8 @@ The long-running commands stream per-item progress as they work rather than
 blocking on a single final payload. In text mode each item renders on one line,
 dotted out to its status and per-item duration; a final line summarizes the run.
 `-json` mode emits one JSON object per line (NDJSON): a `start` event, a
-`step_start`/`step_end` pair (or a single `step_end` for concurrent ops) per
-item, and a terminal `result`.
+`step_start`/`step_end` pair (or a single `step_end` for ops that settle items
+concurrently or in batches) per item, and a terminal `result`.
 
 | Command | Per-item verb | Item |
 |---------|---------------|------|
@@ -89,6 +89,7 @@ item, and a terminal `result`.
 | `unreadable --execute` | `purging` | object key |
 | `lifecycle` | `expiring` | object key |
 | `remove-backend --purge --confirm` | `deleting` | object key |
+| `object-delete -prefix -confirm` | `deleting` | object key |
 | `compress-existing` / `decompress-existing` | `compressing` / `decompressing` | object key |
 | `encrypt-existing` / `decrypt-existing` | `encrypting` / `decrypting` | object key |
 | `rotate-encryption-key` | `rotating` | object key |
@@ -174,7 +175,8 @@ s3-orchestrator admin object-tags -key "my-bucket/path/to/file.txt"
 # Delete one object and every copy of it
 s3-orchestrator admin object-delete -key "my-bucket/path/to/file.txt"
 
-# Delete every object under a prefix (refused without -confirm)
+# Count what a prefix delete would remove, then run it
+s3-orchestrator admin object-delete -prefix "my-bucket/path/"
 s3-orchestrator admin object-delete -prefix "my-bucket/path/" -confirm
 
 # Show cleanup queue depth and pending items
@@ -600,7 +602,7 @@ The **Files** section acts on objects as well as browsing them. `D` downloads th
 
 `D` on a directory downloads everything under it into a new local directory, mirroring the key layout beneath the prefix; the footer counts objects and bytes as they arrive. The download is all or nothing: objects land in a temporary directory beside the destination, which is renamed into place only once every object is written, and any failure removes it. A destination that already exists is refused rather than merged into, and a key that cannot be a plain relative path (one containing `..`, for instance) fails the download before anything is fetched. Folder-marker keys ending in `/` hold no bytes and are skipped. One transfer runs at a time.
 
-Deleting a directory removes everything under it, so the confirmation states how many objects that is rather than just naming the prefix: the pane counts a page of keys first and asks "Delete 128 objects under bucket/photos/?". A prefix with more objects than one page holds reads as "at least 1,000", since understating what a delete will remove is worse than being vague about the total.
+Deleting a directory removes everything under it, so the confirmation states how many objects that is rather than just naming the prefix: the pane counts a page of keys first and asks "Delete 128 objects under bucket/photos/?". A prefix with more objects than one page holds reads as "at least 1,000", since understating what a delete will remove is worse than being vague about the total. Once confirmed, the delete runs in the output pane like an Ops action, a line per object, so a prefix of any size runs to the end. `admin object-delete -prefix` previews the same count without `-confirm`.
 
 Downloads and uploads move real bytes, so the status line reports the progress (`downloading bucket/db.sql   45.2 MiB / 120.0 MiB (37%)`) while the interface stays responsive. A download writes to a temporary file beside its destination and renames it into place only once the whole body has landed, so an interrupted transfer leaves nothing where a complete file would be - a failure reports what went wrong rather than leaving a truncated file to be discovered later.
 

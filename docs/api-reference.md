@@ -149,7 +149,7 @@ Deletes a single object by key.
 
 ### POST /ui/api/delete-prefix
 
-Deletes all objects under a given key prefix.
+Deletes all objects under a given key prefix in the background. Returns immediately with 202 Accepted. Poll the status endpoint for results. One prefix delete runs at a time.
 
 **Request body:**
 
@@ -157,16 +157,31 @@ Deletes all objects under a given key prefix.
 {"prefix": "my-bucket/photos/vacation/"}
 ```
 
-**Response (success):**
+**Response (202):**
 
 ```json
-{"deleted": 42}
+{"status": "started"}
 ```
 
-**Response (partial failure, 500):**
+**Response (400):** Returned when `prefix` is empty.
+
+**Response (409):** Returned if a prefix delete is already running.
 
 ```json
-{"deleted": 42, "failed": 5, "total": 47}
+{"error": "delete-prefix already running"}
+```
+
+### GET /ui/api/delete-prefix/status
+
+Returns the status of the most recent prefix delete. Once the run ends, `result` is the response the admin API's `DELETE /admin/api/objects?prefix=` returns. A delete that could not remove some objects still ends `ok`, with them counted in `failed`.
+
+**Response:**
+
+```json
+{"status": "running"}
+{"status": "ok", "result": {"status": "ok", "deleted": 42, "failed": 5, "total": 47}}
+{"status": "failed", "error": "failed to delete prefix"}
+{"status": "idle"}
 ```
 
 ### POST /ui/api/upload

@@ -56,18 +56,20 @@ type uiAPIRoute struct {
 	perm     core.PermissionSet
 }
 
-// The methods, kinds and permissions the table below repeats, and the sync
-// route its handler names when it refuses.
+// The methods, kinds and permissions the table below repeats, the sync route
+// its handler names when it refuses, and the prefix delete's route, which also
+// keys its background run.
 const (
-	get            = http.MethodGet
-	post           = http.MethodPost
-	onOrchestrator = core.ResourceOrchestrator
-	onBackend      = core.ResourceBackend
-	onBucket       = core.ResourceBucket
-	adminRead      = core.PermAdminRead
-	adminMaintain  = core.PermAdminMaintain
-	adminConvert   = core.PermAdminConvert
-	routeSync      = "/api/sync"
+	get               = http.MethodGet
+	post              = http.MethodPost
+	onOrchestrator    = core.ResourceOrchestrator
+	onBackend         = core.ResourceBackend
+	onBucket          = core.ResourceBucket
+	adminRead         = core.PermAdminRead
+	adminMaintain     = core.PermAdminMaintain
+	adminConvert      = core.PermAdminConvert
+	routeSync         = "/api/sync"
+	routeDeletePrefix = "/api/delete-prefix"
 )
 
 // -------------------------------------------------------------------------
@@ -87,9 +89,10 @@ var uiAPIRoutes = slices.Concat(
 		{post, "/api/delete", func(h *Handler) http.HandlerFunc { return h.handleAPIDelete }, quotaTrackingTracked,
 			"object.DeleteObject -> cleanup Settler -> infra.deleteBatch Acct().APICall (DeleteObjects)",
 			onBucket, core.PermDelete},
-		{post, "/api/delete-prefix", func(h *Handler) http.HandlerFunc { return h.handleAPIDeletePrefix }, quotaTrackingTracked,
-			"object.ListObjects (ledger only) + DeleteObject per key -> infra.deleteBatch Acct().APICall (DeleteObjects)",
+		{post, routeDeletePrefix, func(h *Handler) http.HandlerFunc { return h.handleAPIDeletePrefix }, quotaTrackingTracked,
+			"object.ListObjects (ledger only) + DeleteObjects per page -> infra.deleteBatch Acct().APICall (DeleteObjects)",
 			onBucket, core.PermDelete},
+		statusRoute(routeDeletePrefix),
 		{post, "/api/upload", func(h *Handler) http.HandlerFunc { return h.handleAPIUpload }, quotaTrackingTracked,
 			"object.PutObject -> infra.Put Acct().Ingress (1 API + ingress)",
 			onBucket, core.PermWrite},
@@ -133,22 +136,27 @@ var uiAPIRoutes = slices.Concat(
 
 // actionRoutes is one async action's trigger and its status poll, tracked
 // under the trigger's suffix. The trigger starts the action in the background
-// and answers 202; the poll only reads the tracker, so it needs what any
-// dashboard read needs.
+// and answers 202.
 func actionRoutes(suffix string, act action, audit string, kind core.ResourceKind, perm core.PermissionSet) []uiAPIRoute {
 	trigger := func(h *Handler) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			p, err := act(h, r)
-			h.startAction(w, suffix, p, err)
+			h.startAction(w, r, suffix, p, err)
 		}
-	}
-	status := func(h *Handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, _ *http.Request) { h.writeActionStatus(w, suffix) }
 	}
 	return []uiAPIRoute{
 		{post, suffix, trigger, quotaTrackingTracked, audit, kind, perm},
-		{get, suffix + "/status", status, quotaTrackingNone, "", onOrchestrator, adminRead},
+		statusRoute(suffix),
 	}
+}
+
+// statusRoute is the poll for the background run tracked under suffix. It only
+// reads the tracker, so it needs what any dashboard read needs.
+func statusRoute(suffix string) uiAPIRoute {
+	status := func(h *Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { h.writeActionStatus(w, suffix) }
+	}
+	return uiAPIRoute{get, suffix + "/status", status, quotaTrackingNone, "", onOrchestrator, adminRead}
 }
 
 // overviewRoute is the overview page's authorization, the same one signing in

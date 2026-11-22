@@ -72,9 +72,7 @@ type fakeLister struct {
 	uploadedSize  int64                                   // size UploadObject was told
 	uploadErr     error                                   // when set, UploadObject fails
 	deletedKey    string                                  // key passed to DeleteObject
-	deletedPrefix string                                  // prefix passed to DeletePrefix
-	deletedCount  int                                     // count DeletePrefix reports
-	deleteErr     error                                   // when set, both deletes fail
+	deleteErr     error                                   // when set, DeleteObject fails
 
 	unhashed      *adminapi.CopyListResponse // the unhashed listing served
 	unreadable    *adminapi.CopyListResponse // the unreadable listing served
@@ -252,15 +250,6 @@ func (f *fakeLister) DeleteObject(_ context.Context, key string) (*adminapi.Obje
 	}
 	f.deletedKey = key
 	return &adminapi.ObjectDeleteResponse{Deleted: 1}, nil
-}
-
-// DeletePrefix records the prefix removed and reports the canned count.
-func (f *fakeLister) DeletePrefix(_ context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
-	if f.deleteErr != nil {
-		return nil, f.deleteErr
-	}
-	f.deletedPrefix = prefix
-	return &adminapi.ObjectDeleteResponse{Deleted: f.deletedCount}, nil
 }
 
 // StartDrain records the backend asked to drain and reports f.drainErr.

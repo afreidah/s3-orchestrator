@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -894,7 +895,7 @@ func TestObjects_RejectsEmptyKeyAndPrefix(t *testing.T) {
 	if err := svc.Objects.Delete(ctx, ""); !errors.Is(err, ErrKeyRequired) {
 		t.Errorf("Delete err = %v, want ErrKeyRequired", err)
 	}
-	if _, err := svc.Objects.DeletePrefix(ctx, ""); !errors.Is(err, ErrPrefixRequired) {
+	if _, err := svc.Objects.DeletePrefix(ctx, "", nil); !errors.Is(err, ErrPrefixRequired) {
 		t.Errorf("DeletePrefix err = %v, want ErrPrefixRequired", err)
 	}
 }
@@ -1640,7 +1641,7 @@ func TestObjects_PropagateBackendFailures(t *testing.T) {
 		objects, api := newObjects(t)
 		api.EXPECT().ListObjects(gomock.Any(), testBucket+"/dir/", "", "", deletePrefixPageSize).
 			Return(nil, errBackend).Times(1)
-		res, err := objects.DeletePrefix(context.Background(), testBucket+"/dir/")
+		res, err := objects.DeletePrefix(context.Background(), testBucket+"/dir/", nil)
 		if !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the listing failure", err)
 		}
@@ -1725,7 +1726,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 }
 
 // TestDeletePrefix_CountsAndReports asserts a prefix delete pages the listing,
-// counts what it removed and separates the failures.
+// counts what it removed and separates the failures, ending each key once.
 func TestDeletePrefix_CountsAndReports(t *testing.T) {
 	t.Parallel()
 	objects, api := newObjects(t)
@@ -1747,11 +1748,21 @@ func TestDeletePrefix_CountsAndReports(t *testing.T) {
 		}).
 		Times(1)
 
-	res, err := objects.DeletePrefix(context.Background(), prefix)
+	var steps []progress.Step
+	res, err := objects.DeletePrefix(context.Background(), prefix, func(s progress.Step) { steps = append(steps, s) })
 	if err != nil {
 		t.Fatalf("DeletePrefix: %v", err)
 	}
 	if res.Succeeded != 2 || res.Failed != 1 || res.Attempted != 3 {
 		t.Errorf("result = %+v, want deleted=2 failed=1 total=3", res)
+	}
+
+	want := []progress.Step{
+		{Label: keys[0], Phase: progress.PhaseEnd, Status: progress.StatusOK},
+		{Label: keys[1], Phase: progress.PhaseEnd, Status: progress.StatusFailed},
+		{Label: keys[2], Phase: progress.PhaseEnd, Status: progress.StatusOK},
+	}
+	if !slices.Equal(steps, want) {
+		t.Errorf("steps = %+v, want %+v", steps, want)
 	}
 }

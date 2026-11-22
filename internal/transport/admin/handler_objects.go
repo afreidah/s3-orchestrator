@@ -98,9 +98,10 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
 	DeleteObject(w, r, h.log, h.d.Ops.Objects, r.PathValue(adminapi.ParamKey))
 }
 
-// handleDeletePrefix removes every object under the given prefix.
+// handleDeletePrefix removes every object under the given prefix, streaming a
+// line per key when the caller asks; the pass is DeletePrefixPass.
 func (h *Handler) handleDeletePrefix(w http.ResponseWriter, r *http.Request) {
-	DeletePrefix(w, r, h.log, h.d.Ops.Objects, r.URL.Query().Get(adminapi.ParamPrefix))
+	h.servePass(w, r, DeletePrefixPass(h.d.Ops, r.URL.Query().Get(adminapi.ParamPrefix)))
 }
 
 // -------------------------------------------------------------------------
@@ -140,21 +141,4 @@ func DeleteObject(w http.ResponseWriter, r *http.Request, log *slog.Logger, obje
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ObjectDeleteResponse{Deleted: 1})
-}
-
-// DeletePrefix removes every object under prefix. The response carries the
-// count, so a caller can tell a no-op from a mass removal, and a partial
-// removal is a 500 carrying what it did remove.
-func DeletePrefix(w http.ResponseWriter, r *http.Request, log *slog.Logger, objects *ops.Objects, prefix string) {
-	res, err := objects.DeletePrefix(r.Context(), prefix)
-	if err != nil {
-		httputil.WriteOpError(w, r, log, err, "failed to delete prefix", "prefix", prefix)
-		return
-	}
-
-	status := http.StatusOK
-	if res.Failed > 0 {
-		status = http.StatusInternalServerError
-	}
-	httputil.WriteJSON(w, status, adminapi.ObjectDeleteResponse{Deleted: res.Succeeded, Failed: res.Failed, Total: res.Attempted})
 }

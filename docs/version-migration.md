@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.184.x (current)
+### v0.186.x (current)
+
+**A prefix delete streams and runs to the end ([#1942](https://github.com/afreidah/s3-orchestrator/issues/1942), v0.186.0)**
+
+A prefix delete answered only once every object was gone, so a large prefix outlasted the CLI and TUI request timeout and stopped partway, leaving the prefix partly removed. It is now a pass like `lifecycle`: it streams a line per object, `admin object-delete -prefix` previews the count before `-confirm`, and the TUI and the dashboard run it to the end.
+
+**Operator action items after upgrade:**
+
+- **Objects a prefix delete could not remove no longer fail the request.** `DELETE /admin/api/objects?prefix=` answers `200` with `status: "ok"` and them counted in `failed`, instead of `500`. Only a listing failure answers `500`.
+- **`admin object-delete -prefix` without `-confirm` previews** the count from one listing page and exits `0`, instead of refusing with exit `1`.
+- **The dashboard's prefix delete runs in the background.** `POST /ui/api/delete-prefix` answers `202` and `GET /ui/api/delete-prefix/status` reports the result. A second one while it runs answers `409`.
+- **`lifecycle` streams one line per object.** Every object in a page sent a `step_start` before any of them finished. Each object now sends a single labeled `step_end` once its page settles.
+
+### v0.184.x
 
 **A slow backend is tried after the others ([#1431](https://github.com/afreidah/s3-orchestrator/issues/1431), v0.184.0)**
 

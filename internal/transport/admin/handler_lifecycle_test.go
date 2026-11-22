@@ -44,15 +44,15 @@ type expiryStub struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ProcessRules records that the sweep ran, brackets one step per object it
-// claims to have handled, and reports the fixed outcome.
+// ProcessRules records that the sweep ran, ends one step per object it claims
+// to have handled, and reports the fixed outcome.
 func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	s.called = true
 	for i := range s.deleted {
-		progress.Track(obs, fmt.Sprintf("gone-%d", i), func() string { return progress.StatusOK })
+		progress.End(obs, fmt.Sprintf("gone-%d", i), progress.StatusOK)
 	}
 	for i := range s.failed {
-		progress.Track(obs, fmt.Sprintf("stuck-%d", i), func() string { return progress.StatusFailed })
+		progress.End(obs, fmt.Sprintf("stuck-%d", i), progress.StatusFailed)
 	}
 	return batch.Summary{Succeeded: s.deleted, Failed: s.failed}
 }
@@ -177,13 +177,13 @@ func TestHandleLifecycle_StreamsProgressAndResult(t *testing.T) {
 	if events[0].Kind != adminstream.KindStart || events[0].Op != "lifecycle" {
 		t.Errorf("first event = %+v, want start/lifecycle", events[0])
 	}
-	if !strings.Contains(events[1].Message, "expiring gone-0") {
-		t.Errorf("step line = %q, want the object being expired", events[1].Message)
+	if events[1].Kind != adminstream.KindStepEnd || !strings.Contains(events[1].Message, "expiring gone-0") {
+		t.Errorf("step = %+v, want a finished line naming the object", events[1])
 	}
-	// Objects are deleted one at a time, so each is a start/end pair.
+	// Objects are deleted a batch at a time, so each is one labeled step_end.
 	stepStarts, steps := countStepEvents(events)
-	if stepStarts != 3 || steps != 3 {
-		t.Errorf("step events = %d step_start / %d step_end, want 3 / 3", stepStarts, steps)
+	if stepStarts != 0 || steps != 3 {
+		t.Errorf("step events = %d step_start / %d step_end, want 0 / 3", stepStarts, steps)
 	}
 	last := events[len(events)-1]
 	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK || last.Processed != 2 {

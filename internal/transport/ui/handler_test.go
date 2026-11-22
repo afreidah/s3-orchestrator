@@ -837,8 +837,30 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 // DELETE PREFIX API TESTS
 // -------------------------------------------------------------------------
 
-// TestAPIDeletePrefix_Success verifies the apidelete prefix success contract.
-// Asserts that status = , want 200; body =.
+// runDeletePrefix starts a prefix delete from the dashboard, waits out the
+// background run, and returns what the status poll then reports.
+func runDeletePrefix(t *testing.T, h *Handler, mux *http.ServeMux, prefix string) (status string, result map[string]any) {
+	t.Helper()
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"`+prefix+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", w.Code, w.Body.String())
+	}
+	waitForResult(t, h, routeDeletePrefix)
+
+	poll := httptest.NewRecorder()
+	mux.ServeHTTP(poll, authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete-prefix/status", nil))
+	body := decodeBody(t, poll)
+	status, _ = body["status"].(string)
+	result, _ = body["result"].(map[string]any)
+	return status, result
+}
+
+// TestAPIDeletePrefix_Success asserts the poll reports how many objects a
+// finished prefix delete removed.
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
@@ -850,29 +872,14 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 		}, nil).AnyTimes()
 	})
 
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":"test-bucket/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
-	}
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if int(result["deleted"].(float64)) != 2 {
-		t.Errorf("expected deleted=2, got %v", result["deleted"])
+	status, result := runDeletePrefix(t, h, mux, "test-bucket/")
+	if status != adminstream.OutcomeOK || result["deleted"] != float64(2) || result["total"] != float64(2) {
+		t.Errorf("poll = %s %v, want ok with deleted 2 of 2", status, result)
 	}
 }
 
-// TestAPIDeletePrefix_EmptyResult verifies the apidelete prefix empty result contract.
-// Asserts that status = , want 200; body =.
+// TestAPIDeletePrefix_EmptyResult asserts a prefix with nothing under it ends
+// as a completed delete of zero.
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
@@ -880,48 +887,27 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 			Return(&core.ListObjectsResult{}, nil).AnyTimes()
 	})
 
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":"empty-prefix/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
-	}
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if int(result["deleted"].(float64)) != 0 {
-		t.Errorf("expected deleted=0, got %v", result["deleted"])
+	status, result := runDeletePrefix(t, h, mux, "empty-prefix/")
+	if status != adminstream.OutcomeOK || result["deleted"] != float64(0) {
+		t.Errorf("poll = %s %v, want ok with deleted 0", status, result)
 	}
 }
 
-// TestAPIDeletePrefix_ListObjectsError verifies the apidelete prefix list objects error contract.
-// Asserts that status = , want 500.
+// TestAPIDeletePrefix_ListObjectsError asserts a delete that could not list
+// the prefix ends failed, naming what went wrong.
 func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
 	})
 
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":"test-bucket/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", w.Result().StatusCode)
+	if status, _ := runDeletePrefix(t, h, mux, "test-bucket/"); status != adminstream.OutcomeFailed {
+		t.Errorf("poll status = %s, want failed", status)
 	}
 }
 
-// TestAPIDeletePrefix_DeleteError verifies the apidelete prefix delete error contract.
-// Asserts that status = , want 500.
+// TestAPIDeletePrefix_DeleteError asserts a delete that ran but could not
+// remove a key reports it in the failed count.
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
@@ -933,23 +919,9 @@ func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).Return(nil, errors.New("delete failed")).AnyTimes()
 	})
 
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":"test-bucket/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", resp.StatusCode)
-	}
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if failed, _ := result["failed"].(float64); failed == 0 {
-		t.Errorf("expected the failed count in the response, got %v", result)
+	status, result := runDeletePrefix(t, h, mux, "test-bucket/")
+	if status != adminstream.OutcomeOK || result["failed"] != float64(1) || result["deleted"] != float64(0) {
+		t.Errorf("poll = %s %v, want ok with failed 1", status, result)
 	}
 }
 

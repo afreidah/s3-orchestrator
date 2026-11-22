@@ -131,32 +131,21 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 }
 
 // expirePage deletes one page of expired objects in a single batch and records
-// each key's outcome. obs, when set, sees every key start before the batch and
-// end with its own outcome.
+// each key's outcome. obs, when set, sees each key end with its own outcome as
+// the batch settles.
 func (m *Manager) expirePage(ctx context.Context, rule config.LifecycleRule, page []core.ObjectLocation, obs progress.Observer) batch.Summary {
-	keys := make([]string, len(page))
-	for i := range page {
-		keys[i] = page[i].ObjectKey
-		report(obs, keys[i], progress.PhaseStart, "")
-	}
+	keys := core.KeysOf(page)
 	sum := batch.Summary{Planned: len(keys), Attempted: len(keys)}
 	for _, res := range m.objects.DeleteObjects(ctx, keys) {
 		if !m.recordExpired(ctx, rule, res) {
 			sum.Failed++
-			report(obs, res.Key, progress.PhaseEnd, progress.StatusFailed)
+			progress.End(obs, res.Key, progress.StatusFailed)
 			continue
 		}
 		sum.Succeeded++
-		report(obs, res.Key, progress.PhaseEnd, progress.StatusOK)
+		progress.End(obs, res.Key, progress.StatusOK)
 	}
 	return sum
-}
-
-// report sends one progress step when an observer is watching.
-func report(obs progress.Observer, key string, phase progress.Phase, status string) {
-	if obs != nil {
-		obs(progress.Step{Label: key, Phase: phase, Status: status})
-	}
 }
 
 // recordExpired records one key's delete outcome: a warning and the failure

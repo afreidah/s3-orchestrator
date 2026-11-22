@@ -189,12 +189,6 @@ func (c *apiClient) DeleteObject(ctx context.Context, key string) (*adminapi.Obj
 	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, adminapi.Path(adminapi.PathObjects, key), nil)
 }
 
-// DeletePrefix removes every object under prefix and reports how many it
-// removed.
-func (c *apiClient) DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
-	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, adminapi.PathObjects, url.Values{adminapi.ParamPrefix: {prefix}})
-}
-
 // StartDrain begins migrating every copy off one backend and routes new writes
 // away from it. Returns as soon as the drain is accepted; progress is polled
 // with DrainProgress.

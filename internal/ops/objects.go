@@ -18,6 +18,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -206,13 +207,24 @@ func (o *Objects) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// CheckPrefix refuses an empty prefix, which a prefix delete would otherwise
+// read as every object. A caller that answers before the delete runs checks
+// it up front.
+func CheckPrefix(prefix string) error {
+	if prefix == "" {
+		return ErrPrefixRequired
+	}
+	return nil
+}
+
 // DeletePrefix removes every object under prefix, one listing page at a time
 // so the key set never has to be held whole. The result counts the keys
 // removed as succeeded, so a caller can tell a no-op from a mass removal, and
-// the ones that could not be removed as failed.
-func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summary, error) {
-	if prefix == "" {
-		return batch.Summary{}, ErrPrefixRequired
+// the ones that could not be removed as failed. obs, when set, sees each key
+// end with its own outcome as its page settles.
+func (o *Objects) DeletePrefix(ctx context.Context, prefix string, obs progress.Observer) (batch.Summary, error) {
+	if err := CheckPrefix(prefix); err != nil {
+		return batch.Summary{}, err
 	}
 
 	var res batch.Summary
@@ -228,7 +240,7 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summar
 		CursorOf: func(key string) string { return key },
 	}
 	if _, err := pager.Walk(ctx, func(ctx context.Context, keys []string) (batch.Step, error) {
-		o.deletePage(ctx, keys, &res)
+		o.deletePage(ctx, keys, &res, obs)
 		return batch.Step{}, nil
 	}); err != nil {
 		return res, err
@@ -242,16 +254,19 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string) (batch.Summar
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// deletePage removes one page of keys and folds the per-key outcomes into res.
-func (o *Objects) deletePage(ctx context.Context, keys []string, res *batch.Summary) {
+// deletePage removes one page of keys and folds the per-key outcomes into res,
+// reporting each to obs.
+func (o *Objects) deletePage(ctx context.Context, keys []string, res *batch.Summary, obs progress.Observer) {
 	res.Planned += len(keys)
 	res.Attempted += len(keys)
 	for _, item := range o.d.Objects.DeleteObjects(ctx, keys) {
 		if item.Err != nil {
 			res.Failed++
-		} else {
-			res.Succeeded++
+			progress.End(obs, item.Key, progress.StatusFailed)
+			continue
 		}
+		res.Succeeded++
+		progress.End(obs, item.Key, progress.StatusOK)
 	}
 }
 

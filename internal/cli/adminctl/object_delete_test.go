@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Covers the two deletion forms: a single key goes to the object route, a
-// prefix goes to the collection route only with -confirm, and the refusals
+// prefix is previewed without -confirm and streamed with it, and the refusals
 // that must not reach the server at all.
 // -------------------------------------------------------------------------------
 
@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -39,37 +40,54 @@ func TestCmdObjectDelete_KeyDeletesOneObject(t *testing.T) {
 	}
 }
 
-// TestCmdObjectDelete_PrefixNeedsConfirm verifies a prefix deletion without
-// -confirm is refused before any request is sent.
-func TestCmdObjectDelete_PrefixNeedsConfirm(t *testing.T) {
+// TestCmdObjectDelete_PrefixPreviewsWithoutConfirm verifies a prefix deletion
+// without -confirm only lists the prefix flat and states the count it found,
+// as a floor when the page was truncated.
+func TestCmdObjectDelete_PrefixPreviewsWithoutConfirm(t *testing.T) {
 	t.Parallel()
-	hit := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hit = true
-	}))
-	defer srv.Close()
+	for name, tc := range map[string]struct {
+		page, want string
+	}{
+		"empty":     {`{"objects":[]}`, `Nothing under "bucket/dir/".`},
+		"one page":  {`{"objects":[{"key":"bucket/dir/a"},{"key":"bucket/dir/b"}]}`, `2 objects under "bucket/dir/" would be deleted.`},
+		"truncated": {`{"objects":[{"key":"bucket/dir/a"}],"truncated":true}`, `at least 1 objects under "bucket/dir/"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod string
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotQuery = r.Method, r.URL.Query()
+				_, _ = w.Write([]byte(tc.page))
+			}))
+			defer srv.Close()
 
-	var stdout, stderr bytes.Buffer
-	code := Command("object-delete", []string{"-prefix", "bucket/dir/"}, srv.URL, testCreds, &stdout, &stderr)
-	if code == 0 {
-		t.Fatal("expected a non-zero exit for -prefix without -confirm")
-	}
-	if hit {
-		t.Error("a request reached the server without -confirm")
-	}
-	if !strings.Contains(stderr.String(), "-confirm") {
-		t.Errorf("stderr = %q, want it to name -confirm", stderr.String())
+			var stdout, stderr bytes.Buffer
+			if code := Command("object-delete", []string{"-prefix", "bucket/dir/"}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+			}
+			if gotMethod != http.MethodGet || gotQuery.Get("prefix") != "bucket/dir/" || !gotQuery.Has("delimiter") || gotQuery.Get("delimiter") != "" {
+				t.Errorf("request = %s ?%s, want a flat GET of the prefix", gotMethod, gotQuery.Encode())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Errorf("stdout = %q, want %q", stdout.String(), tc.want)
+			}
+		})
 	}
 }
 
-// TestCmdObjectDelete_PrefixWithConfirm verifies -prefix -confirm issues a
-// DELETE against the collection route carrying the prefix as a query.
+// TestCmdObjectDelete_PrefixWithConfirm verifies -prefix -confirm asks for the
+// progress stream on the collection route, carrying the prefix as a query.
 func TestCmdObjectDelete_PrefixWithConfirm(t *testing.T) {
 	t.Parallel()
-	var gotMethod, gotPath, gotPrefix string
+	var gotMethod, gotPath, gotPrefix, gotAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath, gotPrefix = r.Method, r.URL.Path, r.URL.Query().Get("prefix")
-		_, _ = w.Write([]byte(`{"deleted":2,"failed":0,"total":2}`))
+		gotMethod, gotPath, gotPrefix, gotAccept = r.Method, r.URL.Path, r.URL.Query().Get("prefix"), r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"event":"start","op":"delete-prefix"}
+{"event":"step_end","message":"deleting bucket/dir/a","outcome":"ok"}
+{"event":"result","outcome":"ok","processed":1,"message":"deleted 1, failed 0"}
+`))
 	}))
 	defer srv.Close()
 
@@ -80,6 +98,12 @@ func TestCmdObjectDelete_PrefixWithConfirm(t *testing.T) {
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/admin/api/objects" || gotPrefix != "bucket/dir/" {
 		t.Errorf("request = %s %s prefix=%q, want DELETE /admin/api/objects prefix=bucket/dir/", gotMethod, gotPath, gotPrefix)
+	}
+	if !strings.Contains(gotAccept, "application/x-ndjson") {
+		t.Errorf("Accept = %q, want the progress stream", gotAccept)
+	}
+	if !strings.Contains(stdout.String(), "deleting bucket/dir/a") {
+		t.Errorf("stdout = %q, want a line per key", stdout.String())
 	}
 }
 

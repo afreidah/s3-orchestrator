@@ -43,6 +43,23 @@ func (fakePass) Name() string { return "fake" }
 // Run implements pass.
 func (p fakePass) Run(context.Context, *slog.Logger) admin.Report { return p.rep }
 
+// ctxPass is a dashboard action that hands its run context to a check.
+type ctxPass func(context.Context)
+
+// Name implements pass.
+func (ctxPass) Name() string { return "ctx" }
+
+// Run implements pass.
+func (p ctxPass) Run(ctx context.Context, _ *slog.Logger) admin.Report {
+	p(ctx)
+	return admin.Report{Result: adminstream.OutcomeOK}
+}
+
+// fakeReq is a dashboard POST carrying ctx.
+func fakeReq(ctx context.Context) *http.Request {
+	return httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/fake", nil)
+}
+
 // TestStartAction_AlreadyRunning asserts single-flight semantics: a second
 // start while the first runs is refused with 409 rather than clobbering it.
 func TestStartAction_AlreadyRunning(t *testing.T) {
@@ -53,7 +70,7 @@ func TestStartAction_AlreadyRunning(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	h.startAction(w, "/api/fake", fakePass{}, nil)
+	h.startAction(w, fakeReq(t.Context()), "/api/fake", fakePass{}, nil)
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
@@ -67,7 +84,7 @@ func TestStartAction_InvalidRefusedBeforeStarting(t *testing.T) {
 	h := &Handler{log: slog.Default()}
 
 	w := httptest.NewRecorder()
-	h.startAction(w, "/api/fake", fakePass{}, errors.New("max is not a count"))
+	h.startAction(w, fakeReq(t.Context()), "/api/fake", fakePass{}, errors.New("max is not a count"))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -84,13 +101,31 @@ func TestStartAction_AcceptedKeepsTheReport(t *testing.T) {
 	h := &Handler{log: slog.Default()}
 
 	w := httptest.NewRecorder()
-	h.startAction(w, "/api/fake", fakePass{rep: admin.Report{Result: adminstream.OutcomeOK, Body: "done"}}, nil)
+	h.startAction(w, fakeReq(t.Context()), "/api/fake", fakePass{rep: admin.Report{Result: adminstream.OutcomeOK, Body: "done"}}, nil)
 
 	if w.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusAccepted)
 	}
 	if res := waitForResult(t, h, "/api/fake"); res.Body != "done" {
 		t.Errorf("report = %+v, want the pass's own", res)
+	}
+}
+
+// TestStartAction_OutlivesTheRequest asserts the run keeps going once the
+// request that started it ends, since the dashboard answers 202 straight away.
+func TestStartAction_OutlivesTheRequest(t *testing.T) {
+	t.Parallel()
+	h := &Handler{log: slog.Default()}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var runErr error
+	p := ctxPass(func(ctx context.Context) { runErr = ctx.Err() })
+	h.startAction(httptest.NewRecorder(), fakeReq(ctx), "/api/fake", p, nil)
+
+	waitForResult(t, h, "/api/fake")
+	if runErr != nil {
+		t.Errorf("run ctx err = %v, want the request's cancellation left behind", runErr)
 	}
 }
 
@@ -198,6 +233,7 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 var actionPaths = []string{
 	"/api/rebalance", "/api/clean-excess", "/api/lifecycle", "/api/replicate", "/api/scrub",
 	"/api/backfill-checksums", "/api/encrypt-existing", "/api/compress-existing", "/api/decompress-existing",
+	routeDeletePrefix,
 }
 
 // TestAdminActions_IdleBeforeFirstRun asserts every status poll reports idle
