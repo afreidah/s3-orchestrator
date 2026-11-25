@@ -64,6 +64,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.187.x (current)
 
+**A backend that signs `!` unescaped is learned and sent it literal ([#1945](https://github.com/afreidah/s3-orchestrator/issues/1945), v0.187.1)**
+
+Some providers check a request's signature against a path that leaves `!'()*` unescaped, where SigV4 escapes them, and refuse every such request with `403 AccessDenied: signature mismatch`. Every stored copy's path carries a `!`, so such a backend could store nothing: its writes failed, its pending intents were probed with a `403` every reaper tick, and its cleanups exhausted to the DLQ. The first refused request is now sent once more with those characters literal, and a backend that takes it is sent them that way until restart.
+
+**Operator action items after upgrade:**
+
+- **The backend shows `escaped-path` under `unsupported`** in `/admin/api/status`, the TUI backend detail and the Unsupported Features panel, with `s3o_backend_unsupported{feature="escaped-path"}` set to 1.
+- **Requeue its dead-lettered cleanups** with `s3-orchestrator admin cleanup-dlq requeue -backend NAME`. Its pending intents resolve on the reaper's next ticks.
+
 **A conversion reads each object once ([#1469](https://github.com/afreidah/s3-orchestrator/issues/1469), v0.187.0)**
 
 `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` downloaded and converted every copy on its own, so a fleet at replication factor N cost N reads of each object. The copies of one object that hold the same bytes, by their stored layers and content hash, are now converted from one read, checked against the content hash, and written to each copy's own backend. A copy without a content hash, and an unmanaged one, is still read on its own.

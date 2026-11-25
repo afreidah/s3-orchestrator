@@ -1501,7 +1501,7 @@
       "type": "table",
       "id": 159,
       "title": "Unsupported Features",
-      "description": "Optional features (range, batch-delete, native-copy) a backend has refused on any instance. The instance takes the fallback until it restarts.",
+      "description": "Optional features a backend has refused on any instance. The instance takes the fallback until it restarts.",
       "gridPos": {
         "x": 18,
         "y": 70,

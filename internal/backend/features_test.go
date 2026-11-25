@@ -31,8 +31,7 @@ import (
 func copyServer(status int, code string, requests *atomic.Int32) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`<Error><Code>` + code + `</Code><Message>no</Message></Error>`))
+		writeS3Error(w, status, code)
 	}
 }
 

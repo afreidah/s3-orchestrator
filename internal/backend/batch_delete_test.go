@@ -76,8 +76,7 @@ func (s *batchDeleteServer) handle(w http.ResponseWriter, r *http.Request) {
 		case http.StatusForbidden:
 			code = "AccessDenied"
 		}
-		w.WriteHeader(status)
-		_, _ = fmt.Fprintf(w, `<Error><Code>%s</Code><Message>no</Message></Error>`, code)
+		writeS3Error(w, status, code)
 		return
 	}
 	var out strings.Builder

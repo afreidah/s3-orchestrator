@@ -120,6 +120,8 @@ type CheckedBackend interface {
 
 // S3Backend implements ObjectBackend using AWS SDK v2. unsupported holds the
 // optional features the backend has refused, as core.BackendFeatures bits.
+// literalTried records that a refused escaped path was resent literal, which
+// is tried once, so a provider refusing for another reason is not asked twice.
 type S3Backend struct {
 	client          *s3.Client
 	bucket          string
@@ -127,6 +129,7 @@ type S3Backend struct {
 	endpoint        string
 	unsignedPayload bool
 	unsupported     atomic.Uint64
+	literalTried    atomic.Bool
 }
 
 // newBackendTransport creates an HTTP transport for a single S3 backend, so
@@ -174,15 +177,15 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 	if cfg.StripSDKHeaders {
 		opts.APIOptions = append(opts.APIOptions, stripSDKHeadersMiddleware)
 	}
-	client := s3.New(opts)
-
-	return &S3Backend{
-		client:          client,
+	b := &S3Backend{
 		bucket:          cfg.Bucket,
 		name:            cfg.Name,
 		endpoint:        cfg.Endpoint,
 		unsignedPayload: cfg.UnsignedPayloadEnabled(),
-	}, nil
+	}
+	opts.APIOptions = append(opts.APIOptions, b.literalPathMiddleware)
+	b.client = s3.New(opts)
+	return b, nil
 }
 
 // -------------------------------------------------------------------------
@@ -600,30 +603,48 @@ func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
 }
 
 // -------------------------------------------------------------------------
-// METRICS HELPER
+// REQUEST MIDDLEWARE
 // -------------------------------------------------------------------------
+
+// sendFunc signs and sends one HTTP request from a step ahead of signing.
+type sendFunc func(req *smithyhttp.Request) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error)
+
+// beforeSigning installs step as the Finalize middleware named id, just ahead
+// of signing, so what it does to the request is what gets signed and sent. A
+// step may send more than one request through send.
+func beforeSigning(stack *smithymiddleware.Stack, id string,
+	step func(ctx context.Context, req *smithyhttp.Request, send sendFunc) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error),
+) error {
+	return stack.Finalize.Insert(smithymiddleware.FinalizeMiddlewareFunc(id,
+		func(ctx context.Context, in smithymiddleware.FinalizeInput, next smithymiddleware.FinalizeHandler) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
+			req, ok := in.Request.(*smithyhttp.Request)
+			if !ok {
+				return next.HandleFinalize(ctx, in)
+			}
+			return step(ctx, req, func(req *smithyhttp.Request) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
+				in.Request = req
+				return next.HandleFinalize(ctx, in)
+			})
+		},
+	), "Signing", smithymiddleware.Before)
+}
 
 // stripSDKHeadersMiddleware removes AWS SDK v2-specific headers and query
 // parameters before request signing. GCS (and potentially other S3-compatible
 // backends) fail signature verification when these non-standard headers are
 // included in the signed header set.
 func stripSDKHeadersMiddleware(stack *smithymiddleware.Stack) error {
-	return stack.Finalize.Insert(smithymiddleware.FinalizeMiddlewareFunc(
-		"StripSDKHeaders",
-		func(ctx context.Context, in smithymiddleware.FinalizeInput, next smithymiddleware.FinalizeHandler) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
-			req, ok := in.Request.(*smithyhttp.Request)
-			if ok {
-				q := req.URL.Query()
-				q.Del("x-id")
-				req.URL.RawQuery = q.Encode()
+	return beforeSigning(stack, "StripSDKHeaders",
+		func(_ context.Context, req *smithyhttp.Request, send sendFunc) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
+			q := req.URL.Query()
+			q.Del("x-id")
+			req.URL.RawQuery = q.Encode()
 
-				req.Header.Del("Amz-Sdk-Invocation-Id")
-				req.Header.Del("Amz-Sdk-Request")
-				req.Header.Del("Accept-Encoding")
-			}
-			return next.HandleFinalize(ctx, in)
-		},
-	), "Signing", smithymiddleware.Before)
+			req.Header.Del("Amz-Sdk-Invocation-Id")
+			req.Header.Del("Amz-Sdk-Request")
+			req.Header.Del("Accept-Encoding")
+			return send(req)
+		})
 }
 
 // withUnsignedPayload is an S3 per-request option that replaces the payload
@@ -632,6 +653,10 @@ func stripSDKHeadersMiddleware(stack *smithymiddleware.Stack) error {
 func withUnsignedPayload(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // resolveCredentials selects the credentials provider for cfg based on
 // CredentialSource. "static" uses the configured access/secret keys;

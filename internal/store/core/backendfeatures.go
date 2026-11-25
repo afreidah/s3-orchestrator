@@ -27,11 +27,13 @@ type BackendFeatures uint64
 
 // The optional features. Range is a ranged GET answered with only the range.
 // BatchDelete is multi-object DeleteObjects. NativeCopy is a server-side
-// CopyObject within the backend's bucket.
+// CopyObject within the backend's bucket. EscapedPath is a request path that
+// escapes !'()* as SigV4 requires; a backend without it is sent them literal.
 const (
 	FeatureRange BackendFeatures = 1 << iota
 	FeatureBatchDelete
 	FeatureNativeCopy
+	FeatureEscapedPath
 )
 
 // backendFeatureNames pairs each feature with its name, in the order a
@@ -40,6 +42,7 @@ var backendFeatureNames = bitset.Vocabulary[BackendFeatures]{
 	{Bit: FeatureRange, Name: "range"},
 	{Bit: FeatureBatchDelete, Name: "batch-delete"},
 	{Bit: FeatureNativeCopy, Name: "native-copy"},
+	{Bit: FeatureEscapedPath, Name: "escaped-path"},
 }
 
 // Has reports whether the set carries every feature in want.
