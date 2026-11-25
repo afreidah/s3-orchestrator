@@ -287,6 +287,7 @@ type mockMetadataStore struct {
 	lastUpdatedHash     string
 	lastRecordedETag    string
 	underReplicated     []core.ObjectLocation
+	shortIntentsOnly    []string
 	underReplicatedErr  error
 	overReplicated      []core.ObjectLocation
 	overReplicatedErr   error
@@ -520,7 +521,13 @@ func (m *mockMetadataStore) ListReplicationQueue(_ context.Context, side core.Re
 	if err != nil {
 		return nil, err
 	}
-	return queuedFrom(side, rows, excluded), nil
+	queued := queuedFrom(side, rows, excluded)
+	if side == core.ReplicationShort {
+		for _, key := range m.shortIntentsOnly {
+			queued = append(queued, core.QueuedReplication{Key: key, Direction: side, Live: 1})
+		}
+	}
+	return queued, nil
 }
 
 // queuedFrom groups rows into the keys a read of side hands out, each counted

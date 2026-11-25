@@ -219,6 +219,6 @@ To encrypt objects that were uploaded before encryption was enabled, run the enc
 s3-orchestrator admin encrypt-existing
 ```
 
-It reports how many objects it encrypted, skipped and failed when it finishes. Each copy is rewritten to a new path on its own backend, so it is encrypted on the local store and R2 alike. `-max N` stops after N objects, so a large bucket can be converted over several runs.
+It reports how many copies it encrypted, skipped and failed when it finishes, and how many objects those copies belong to. An object's copies are encrypted from one download and each is written to a new path on its own backend, so it is encrypted on the local store and R2 alike. `-max N` stops after N objects, so a large bucket can be converted over several runs.
 
 For production deployments, consider using [Vault Transit](../nomad-vault-deployment/) instead of an inline key. See the [Encrypting Existing Data](../encrypting-existing-data/) guide for the full walkthrough and the [Key Rotation](../key-rotation/) guide for rotating master keys.

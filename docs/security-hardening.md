@@ -202,7 +202,7 @@ integrity:
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3o_integrity_checks_total{operation}` | Verification count by operation (read, replicate, scrub) |
+| `s3o_integrity_checks_total{operation}` | Verification count by operation (read, replicate, scrub, rewrite) |
 | `s3o_integrity_errors_total{operation}` | Any non-zero rate indicates data corruption |
 | `s3o_integrity_usage_declined_total` | Copies left unverified for lack of backend egress headroom |
 

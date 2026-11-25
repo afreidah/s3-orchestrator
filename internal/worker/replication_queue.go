@@ -126,7 +126,11 @@ func (q *ReplicationQueue) read(ctx context.Context, side core.ReplicationDirect
 
 // copySetOf builds the copy set of a key off by off, or reports whether one
 // that needs no work is done: a key at the factor or gone is, and one whose
-// copies could not be read is held for a retry.
+// copies could not be read is held for a retry. A key with no copy recorded
+// yet is not gone while it holds a live intent, since Live counts it beyond
+// the copies Held does, so it is held until that upload is promoted or
+// dropped; settling it would lose the key, because the promotion leaves its
+// count unchanged and queues nothing.
 func (q *ReplicationQueue) copySetOf(ctx context.Context, queued *core.QueuedReplication, off int) (*copySet, bool) {
 	if off <= 0 {
 		return nil, true
@@ -134,7 +138,7 @@ func (q *ReplicationQueue) copySetOf(ctx context.Context, queued *core.QueuedRep
 	copies, err := core.ClientLocations(q.store.GetAllObjectLocations(ctx, queued.Key))
 	switch {
 	case errors.Is(err, core.ErrObjectNotFound):
-		return nil, true
+		return nil, queued.Live <= queued.Held
 	case err != nil:
 		q.log.WarnContext(ctx, "failed to read a queued key's copies", "key", queued.Key, "error", err)
 		return nil, false

@@ -144,8 +144,8 @@ func TestReplicationQueue_ReadHandsOutEveryCopy(t *testing.T) {
 }
 
 // TestReplicationQueue_ReadReleasesKeysItCannotWork verifies a key whose copies
-// are gone is settled, and one whose copies could not be read is held for a
-// retry, neither handed out.
+// are gone is settled, and one whose copies could not be read, or that has no
+// copy recorded yet but a live intent, is held for a retry, none handed out.
 func TestReplicationQueue_ReadReleasesKeysItCannotWork(t *testing.T) {
 	t.Parallel()
 	queued := []core.ObjectLocation{{ObjectKey: "k1", BackendName: "b1"}}
@@ -157,6 +157,7 @@ func TestReplicationQueue_ReadReleasesKeysItCannotWork(t *testing.T) {
 	}{
 		{"gone", &mockMetadataStore{underReplicated: queued, allLocations: []core.ObjectLocation{}}, []string{"k1"}, nil},
 		{"unreadable", &mockMetadataStore{underReplicated: queued, allLocationsErr: errors.New("db down")}, nil, []string{"k1"}},
+		{"intent not yet promoted", &mockMetadataStore{shortIntentsOnly: []string{"k1"}, allLocations: []core.ObjectLocation{}}, nil, []string{"k1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
