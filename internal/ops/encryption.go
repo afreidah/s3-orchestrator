@@ -6,7 +6,7 @@
 // Fleet-wide transitions between plaintext and ciphertext, plus key rotation.
 // Encrypt-existing and decrypt-existing differ only in the listing query and
 // the form each copy should end up in, so both drive the bulk rewrite driver's
-// one pagination and per-copy move. Rotation re-wraps each object's DEK with
+// one pagination and per-object rewrite. Rotation re-wraps each object's DEK with
 // the current primary key without touching the bytes.
 // -------------------------------------------------------------------------------
 
@@ -39,11 +39,14 @@ const rotateBatchSize = 500
 // TYPES
 // -------------------------------------------------------------------------
 
-// EncryptionDeps holds the collaborators Encryption requires.
+// EncryptionDeps holds the collaborators Encryption requires. Codec reads a
+// rewritten copy's encoding back when its content hash is checked; the passes
+// carry an encoding through rather than decode it.
 type EncryptionDeps struct {
 	Encryptor *encryption.Encryptor
+	Codec     storedform.Codec
 	Store     RewriteStore
-	Mover     Mover
+	Rewriter  Rewriter
 	Locker    core.AdvisoryLocker
 }
 
@@ -57,7 +60,7 @@ type Encryption struct {
 
 // NewEncryption is the explicit-deps constructor.
 func NewEncryption(d EncryptionDeps) *Encryption {
-	must.NotNil("d.Mover", d.Mover)
+	must.NotNil("d.Rewriter", d.Rewriter)
 	must.NotNil("d.Locker", d.Locker)
 	return &Encryption{d: d, log: logfmt.Logger(logComponent)}
 }
@@ -69,9 +72,9 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // EncryptExisting rewrites every plaintext copy as ciphertext and records the
 // new encryption metadata. A compressed copy keeps its encoding underneath.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
+// maxObjects caps how many objects are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
-func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
+func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxObjects int, backend string) (BulkRewriteResult, error) {
 	if e.disabled() {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
@@ -82,7 +85,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 		layer:       core.StoredEncrypted,
 		add:         true,
 		filter:      core.FormFilter{Backend: backend},
-		maxRewrites: maxRewrites,
+		maxObjects:  maxObjects,
 	}
 	return op.run(ctx, e.rewriteEnv(), obs)
 }
@@ -91,9 +94,9 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 // encryption metadata. Encryption must still be configured, since the key
 // provider is what unwraps each DEK. A compressed copy keeps its encoding.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
+// maxObjects caps how many objects are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
-func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
+func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxObjects int, backend string) (BulkRewriteResult, error) {
 	if e.disabled() {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
@@ -103,7 +106,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.DecryptExistingObjectsTotal,
 		layer:       core.StoredEncrypted,
 		filter:      core.FormFilter{Backend: backend},
-		maxRewrites: maxRewrites,
+		maxObjects:  maxObjects,
 	}
 	return op.run(ctx, e.rewriteEnv(), obs)
 }
@@ -138,18 +141,8 @@ func (e *Encryption) RotateKey(ctx context.Context, obs progress.Observer, oldKe
 
 // rotate re-wraps the DEK of every copy filter selects, a page at a time.
 func (e *Encryption) rotate(ctx context.Context, obs progress.Observer, filter *core.FormFilter) (batch.Summary, error) {
-	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
-		PageSize: batch.FixedPage(rotateBatchSize),
-		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.d.Store.ListCopiesByForm(ctx, filter, limit, after)
-		},
-		CursorOf: core.CursorOf,
-	}
-	runner := batch.Runner[core.ObjectLocation]{
-		Concurrency: 1,
-		Observer:    obs,
-		Key:         func(loc core.ObjectLocation) string { return loc.ObjectKey },
-	}
+	pager := core.CopyPager(e.d.Store, filter, rotateBatchSize)
+	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: obs, Key: core.KeyOf}
 	res, _, err := pager.RunPages(ctx, runner,
 		func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 			return e.rotateOneLocation(ctx, &loc)
@@ -208,9 +201,10 @@ func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err erro
 
 // rewriteEnv exposes this service's collaborators to the shared driver. A
 // pass changes only the envelope, so an encoding is carried through rather
-// than decoded and no codec is needed.
+// than decoded; the codec only reads it back for the content hash check.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, store: e.d.Store, mover: e.d.Mover, locker: e.d.Locker, layers: &storedform.Layers{Encryptor: e.d.Encryptor}}
+	layers := &storedform.Layers{Encryptor: e.d.Encryptor, Codec: e.d.Codec}
+	return bulkRewriteEnv{log: e.log, store: e.d.Store, rewriter: e.d.Rewriter, locker: e.d.Locker, layers: layers}
 }
 
 // disabled reports whether the orchestrator runs without encryption, which

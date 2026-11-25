@@ -180,7 +180,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, 0, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, br); err != nil {
+	if err := o.buildPlaintextReader(ctx, r, loc, br); err != nil {
 		_ = r.Body.Close()
 		cancel()
 		return fail, 0, err
@@ -262,19 +262,13 @@ func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocati
 // hashes the body as it streams when read-time integrity checking is
 // enabled. This is the single read-path pipeline for both layers. Mutates
 // r.Body/r.Size/r.ContentRange. The caller must close r.Body on error.
-func (o *Manager) buildPlaintextReader(
-	ctx context.Context,
-	r *s3be.GetObjectResult,
-	loc *core.ObjectLocation,
-	key, beName string,
-	br backendRange,
-) error {
+func (o *Manager) buildPlaintextReader(ctx context.Context, r *s3be.GetObjectResult, loc *core.ObjectLocation, br backendRange) error {
 	if loc != nil && loc.Encrypted && o.d.Encryptor != nil {
 		if err := decryptResponse(ctx, o.d.Encryptor, r, loc, br.rng, br.ptStart, br.ptEnd); err != nil {
 			return err
 		}
 	}
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, br.header != "")
+	o.maybeWrapIntegrityReader(ctx, r, loc, br.header != "")
 	return nil
 }
 
@@ -286,30 +280,21 @@ func (o *Manager) buildPlaintextReader(
 // download cut short by the backend timeout, and a client that disconnects
 // all hash a prefix, which can never match, and comparing one would destroy a
 // healthy copy. The scrubber covers what reads leave unchecked.
-func (o *Manager) maybeWrapIntegrityReader(
-	ctx context.Context,
-	r *s3be.GetObjectResult,
-	loc *core.ObjectLocation,
-	key, beName string,
-	partial bool,
-) {
+func (o *Manager) maybeWrapIntegrityReader(ctx context.Context, r *s3be.GetObjectResult, loc *core.ObjectLocation, partial bool) {
 	icfg := o.d.IntegrityCfg.Config()
 	if partial || loc == nil || loc.ContentHash == "" || !icfg.ShouldVerifyOnRead() {
 		return
 	}
 	hasher := icfg.Hasher()
 	r.Body = ioutilx.TeeOnComplete(r.Body, r.Size, hasher, func() {
-		actual := etag.Hex(hasher)
-		if actual == loc.ContentHash {
-			return
+		if !storedform.ContentMatches(ctx, o.log, integrityOpRead, loc, loc.ContentHash, etag.Hex(hasher)) {
+			o.dropCorruptedLocation(ctx, loc)
 		}
-		o.log.ErrorContext(ctx, "integrity check failed on read",
-			"key", key, "backend", beName,
-			"expected_hash", loc.ContentHash, "actual_hash", actual)
-		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.dropCorruptedLocation(ctx, loc)
 	})
 }
+
+// integrityOpRead labels the integrity checks a GET makes as it streams.
+const integrityOpRead = "read"
 
 // dropCorruptedLocation removes the ledger row for a copy discarded on read and
 // queues its bytes in one transaction, then settles the cleanup. Without the

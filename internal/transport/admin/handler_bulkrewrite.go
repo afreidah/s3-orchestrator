@@ -23,7 +23,7 @@ import (
 )
 
 // handleBulkRewrite serves one rewrite endpoint. The optional max parameter
-// caps how many copies are rewritten (0 or absent means all); a repeated capped
+// caps how many objects are rewritten (0 or absent means all); a repeated capped
 // request resumes where the last stopped, because converted and ratio-declined
 // copies leave the selection. The optional backend parameter limits the pass to
 // one backend.

@@ -136,15 +136,15 @@ func (r *rowEncAdmin) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ 
 // each name to a fake so a rewrite can run end to end.
 func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore) *Services {
 	t.Helper()
-	return testServicesWith(t, backends, enc, encStore, &fakeMover{})
+	return testServicesWith(t, backends, enc, encStore, &fakeRewriter{})
 }
 
-// testServicesWith is testServices over the given mover, for the rewrite tests
-// that assert on what was placed. The mover moves between the same backends the
+// testServicesWith is testServices over the given rewriter, for the rewrite tests
+// that assert on what was placed. The rewriter moves between the same backends the
 // fleet is built over.
-func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore, mover *fakeMover) *Services {
+func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore, rewriter *fakeRewriter) *Services {
 	t.Helper()
-	mover.backends = backends
+	rewriter.backends = backends
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mock)
 
@@ -174,7 +174,7 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Store:      mock,
 		Encryptor:  enc,
 		EncStore:   store,
-		Mover:      mover,
+		Rewriter:   rewriter,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Backlog:    mock,
@@ -291,7 +291,7 @@ func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.
 // encryptionOver builds an encryption service over enc and store that moves
 // nothing, under a lock it always takes.
 func encryptionOver(enc *encryption.Encryptor, store RewriteStore) *Encryption {
-	return NewEncryption(EncryptionDeps{Encryptor: enc, Store: store, Mover: &fakeMover{}, Locker: testx.Locker{}})
+	return NewEncryption(EncryptionDeps{Encryptor: enc, Store: store, Rewriter: &fakeRewriter{}, Locker: testx.Locker{}})
 }
 
 // TestRebalance_RunsTheRunningConfig asserts a manual cycle runs with the
@@ -412,8 +412,8 @@ func servicesLockedBy(t *testing.T, l testx.Locker) *Services {
 			Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 		}),
 		Rebalance:   NewRebalance(RebalanceDeps{Rebalancer: opstest.NewMockRebalancer(ctrl), Locker: l, Config: config.NewLive(&config.Config{})}),
-		Encryption:  NewEncryption(EncryptionDeps{Encryptor: testEncryptor(t), Store: store, Mover: &fakeMover{}, Locker: l}),
-		Compression: NewCompression(&CompressionDeps{Codec: testCodec(t), Store: store, Mover: &fakeMover{}, Locker: l}),
+		Encryption:  NewEncryption(EncryptionDeps{Encryptor: testEncryptor(t), Store: store, Rewriter: &fakeRewriter{}, Locker: l}),
+		Compression: NewCompression(&CompressionDeps{Codec: testCodec(t), Store: store, Rewriter: &fakeRewriter{}, Locker: l}),
 	}
 }
 
@@ -550,8 +550,8 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 		SizeBytes:   int64(len(fake.payload)),
 		ContentHash: "hash",
 	}}
-	mover := &fakeMover{}
-	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, encStore, mover)
+	rewriter := &fakeRewriter{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, encStore, rewriter)
 
 	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -563,7 +563,7 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 	if fake.puts.Load() != 1 {
 		t.Errorf("PutObject calls = %d, want 1", fake.puts.Load())
 	}
-	placed := mover.placements()
+	placed := rewriter.placements()
 	if len(placed) != 1 {
 		t.Fatalf("placements = %d, want 1", len(placed))
 	}
@@ -592,13 +592,13 @@ func TestEncryptExisting_KeepsTheEncoding(t *testing.T) {
 		ObjectKey: testBucket + "/file.txt", BackendName: "backend-a", SizeBytes: int64(len(encoded)),
 		CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 4096,
 	}}
-	mover := &fakeMover{}
-	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore, mover)
+	rewriter := &fakeRewriter{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore, rewriter)
 
 	if res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, ""); err != nil || res.Succeeded != 1 {
 		t.Fatalf("EncryptExisting = %+v, %v; want one succeeded", res, err)
 	}
-	placed := mover.placements()
+	placed := rewriter.placements()
 	if len(placed) != 1 {
 		t.Fatalf("placements = %d, want 1", len(placed))
 	}
@@ -663,8 +663,8 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 		EncryptionKey: keyData,
 		KeyID:         keyID,
 	}}
-	mover := &fakeMover{}
-	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store, mover)
+	rewriter := &fakeRewriter{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store, rewriter)
 
 	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -676,7 +676,7 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	if fake.puts.Load() != 1 {
 		t.Errorf("PutObject calls = %d, want 1", fake.puts.Load())
 	}
-	placed := mover.placements()
+	placed := rewriter.placements()
 	if len(placed) != 1 {
 		t.Fatalf("placements = %d, want 1", len(placed))
 	}
@@ -789,8 +789,8 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 				be.SetErr(tc.method, backendtest.ErrSimulatedBackendFailure)
 			}
 			store := &rowEncAdmin{row: core.ObjectLocation{ObjectKey: key, BackendName: "backend-a", SizeBytes: 11}}
-			mover := &fakeMover{placeErr: tc.placeErr}
-			svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store, mover)
+			rewriter := &fakeRewriter{placeErr: tc.placeErr}
+			svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store, rewriter)
 
 			res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 			if err != nil {
@@ -799,7 +799,7 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 			if res.Total != 1 || res.Failed != 1 || res.Succeeded != 0 {
 				t.Errorf("res = %+v, want total=1 failed=1 succeeded=0", res)
 			}
-			if n := len(mover.placements()); n != 0 {
+			if n := len(rewriter.placements()); n != 0 {
 				t.Errorf("placements = %d, want none for an object that was never rewritten", n)
 			}
 		})
@@ -1091,8 +1091,8 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 		BackendName: "missing-backend",
 		SizeBytes:   11,
 	}}
-	mover := &fakeMover{}
-	svc := testServicesWith(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore, mover)
+	rewriter := &fakeRewriter{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore, rewriter)
 
 	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -1101,7 +1101,7 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	if res.Total != 1 || res.Failed != 1 || res.Succeeded != 0 {
 		t.Errorf("res = %+v, want total=1 failed=1 succeeded=0", res)
 	}
-	if n := len(mover.placements()); n != 0 {
+	if n := len(rewriter.placements()); n != 0 {
 		t.Errorf("placements = %d, want none for a backend that is gone", n)
 	}
 }

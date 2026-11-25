@@ -526,7 +526,10 @@ func (m *mockMetadataStore) ListReplicationQueue(_ context.Context, side core.Re
 // queuedFrom groups rows into the keys a read of side hands out, each counted
 // by its rows and live outside excluded.
 func queuedFrom(side core.ReplicationDirection, rows []core.ObjectLocation, excluded []string) []core.QueuedReplication {
-	grouped := core.GroupByKey(rows)
+	grouped := make(map[string][]core.ObjectLocation)
+	for i := range rows {
+		grouped[rows[i].ObjectKey] = append(grouped[rows[i].ObjectKey], rows[i])
+	}
 	out := make([]core.QueuedReplication, 0, len(grouped))
 	for _, key := range slices.Sorted(maps.Keys(grouped)) {
 		copies := grouped[key]

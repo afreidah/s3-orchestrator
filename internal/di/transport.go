@@ -179,7 +179,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		EncStore:     stores,
 		Codec:        codec,
 		CompStore:    stores,
-		Mover:        coord,
+		Rewriter:     coord,
 		Replicator:   replicator,
 		OverRep:      overRep,
 		Backlog:      stores,

@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Pure-function coverage for ObjectFromStoredForm, StoredForm.Described,
-// removedFromExisting, removedCopy.request, PartPath, ObjectLocation.ObjectSize
-// and LocationOn.
+// removedFromExisting, removedCopy.request, PartPath, ObjectLocation.ObjectSize,
+// LocationOn, and the copy listing walk of CopyPager and CopyRuns.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -18,6 +18,8 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -138,47 +140,103 @@ func TestStoredFormDescribed_CopiesEveryField(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// GroupByKey
+// CopyPager and CopyRuns
 // -------------------------------------------------------------------------
 
-// TestGroupByKey_EmptySlice verifies the empty-slice case returns an
-// empty map, so callers can range over the result without a nil check.
-func TestGroupByKey_EmptySlice(t *testing.T) {
+// errListing is the failure sortedCopies returns once it runs out of pages.
+var errListing = errors.New("listing failed")
+
+// sortedCopies is a CopyLister over rows already in key order. A positive
+// failAfter fails every listing after that many pages; filter records what
+// the pager asked with.
+type sortedCopies struct {
+	rows      []ObjectLocation
+	failAfter int
+	pages     int
+	filter    *FormFilter
+}
+
+// ListCopiesByForm returns up to limit rows after the cursor.
+func (s *sortedCopies) ListCopiesByForm(_ context.Context, f *FormFilter, limit int, after Cursor) ([]ObjectLocation, error) {
+	s.pages++
+	s.filter = f
+	if s.failAfter > 0 && s.pages > s.failAfter {
+		return nil, errListing
+	}
+	start := 0
+	for i := range s.rows {
+		if after != (Cursor{}) && CursorOf(s.rows[i]) == after {
+			start = i + 1
+		}
+	}
+	return s.rows[start:min(start+limit, len(s.rows))], nil
+}
+
+// copyRows builds one copy for each "key/backend" given, in the order given.
+func copyRows(copies ...string) []ObjectLocation {
+	rows := make([]ObjectLocation, 0, len(copies))
+	for _, c := range copies {
+		key, backend, _ := strings.Cut(c, "/")
+		rows = append(rows, ObjectLocation{ObjectKey: key, BackendName: backend})
+	}
+	return rows
+}
+
+// TestCopyRuns_GroupsEachKeyAcrossPages verifies a key's copies come out as
+// one run even when a page boundary falls between them, and that the pager
+// lists with the filter it was given.
+func TestCopyRuns_GroupsEachKeyAcrossPages(t *testing.T) {
 	t.Parallel()
-	got := GroupByKey(nil)
-	if len(got) != 0 {
-		t.Errorf("expected empty map for nil input, got %+v", got)
+	list := &sortedCopies{rows: copyRows("a/b1", "a/b2", "b/b1", "b/b2", "b/b3", "c/b1")}
+	filter := &FormFilter{With: StoredEncrypted}
+	var runs []string
+	for run, err := range CopyRuns(CopyPager(list, filter, 2).Rows(t.Context())) {
+		if err != nil {
+			t.Fatalf("CopyRuns: %v", err)
+		}
+		runs = append(runs, KeyOf(run[0])+":"+strconv.Itoa(len(run)))
+	}
+	if want := []string{"a:2", "b:3", "c:1"}; !slices.Equal(runs, want) {
+		t.Errorf("runs = %v, want %v", runs, want)
+	}
+	if list.filter != filter {
+		t.Error("the pager listed with a filter other than the one it was given")
 	}
 }
 
-// TestGroupByKey_SingleKeySingleCopy verifies one key holding one copy
-// groups into a single bucket carrying that copy.
-func TestGroupByKey_SingleKeySingleCopy(t *testing.T) {
+// TestCopyRuns_ErrorDropsTheInterruptedRun verifies a listing failure ends
+// the runs with its error and leaves out the run it cut short, whose other
+// copies were never listed.
+func TestCopyRuns_ErrorDropsTheInterruptedRun(t *testing.T) {
 	t.Parallel()
-	got := GroupByKey([]ObjectLocation{{ObjectKey: "k", BackendName: "b1"}})
-	if len(got) != 1 || len(got["k"]) != 1 || got["k"][0].BackendName != "b1" {
-		t.Errorf("group result wrong: %+v", got)
+	list := &sortedCopies{rows: copyRows("a/b1", "a/b2", "b/b1", "b/b2", "b/b3"), failAfter: 2}
+	var runs []string
+	var got error
+	for run, err := range CopyRuns(CopyPager(list, &FormFilter{}, 2).Rows(t.Context())) {
+		if err != nil {
+			got = err
+			continue
+		}
+		runs = append(runs, KeyOf(run[0]))
+	}
+	if !errors.Is(got, errListing) {
+		t.Errorf("err = %v, want the listing failure", got)
+	}
+	if !slices.Equal(runs, []string{"a"}) {
+		t.Errorf("runs = %v, want only the run completed before the failure", runs)
 	}
 }
 
-// TestGroupByKey_MultipleKeysAndReplicas verifies replicas under the
-// same key are bucketed together while distinct keys remain separate.
-func TestGroupByKey_MultipleKeysAndReplicas(t *testing.T) {
+// TestCopyRuns_StopsWhenTheConsumerDoes verifies a consumer that stops ranging
+// stops the listing with it.
+func TestCopyRuns_StopsWhenTheConsumerDoes(t *testing.T) {
 	t.Parallel()
-	in := []ObjectLocation{
-		{ObjectKey: "k1", BackendName: "b1"},
-		{ObjectKey: "k1", BackendName: "b2"},
-		{ObjectKey: "k2", BackendName: "b1"},
+	list := &sortedCopies{rows: copyRows("a/b1", "b/b1", "c/b1", "d/b1")}
+	for range CopyRuns(CopyPager(list, &FormFilter{}, 1).Rows(t.Context())) {
+		break
 	}
-	got := GroupByKey(in)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 keys in map, got %d", len(got))
-	}
-	if len(got["k1"]) != 2 {
-		t.Errorf("k1 should have 2 copies, got %d", len(got["k1"]))
-	}
-	if len(got["k2"]) != 1 {
-		t.Errorf("k2 should have 1 copy, got %d", len(got["k2"]))
+	if list.pages != 2 {
+		t.Errorf("listed %d pages, want the 2 that completed the first run", list.pages)
 	}
 }
 

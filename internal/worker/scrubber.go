@@ -287,10 +287,8 @@ func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, re
 // tried once per purge.
 func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) (batch.Summary, error) {
 	return cycle.Run(ctx, cycle.Pass{Workload: audit.WorkloadPurge}, func(ctx context.Context) (batch.Summary, error) {
-		pager := copyPager(batchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return s.d.Store.ListCopiesByForm(ctx, &core.UnreadableCopies, limit, after)
-		})
-		runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
+		pager := core.CopyPager(s.d.Store, &core.UnreadableCopies, batchSize)
+		runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: core.KeyOf}
 		total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 			if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
 				s.log.WarnContext(ctx, "failed to purge unreadable copy",
@@ -305,19 +303,6 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 		return total, nil
 	})
 }
-
-// copyPager walks a listing of copies by key, batchSize at a time.
-func copyPager(batchSize int, list func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error)) batch.Pager[core.ObjectLocation, core.Cursor] {
-	return batch.Pager[core.ObjectLocation, core.Cursor]{
-		PageSize: batch.FixedPage(batchSize),
-		List:     list,
-		CursorOf: core.CursorOf,
-	}
-}
-
-// locationKey labels a copy on the progress stream by its object key. A
-// runner hands each item by value, which is why this takes the copy whole.
-var locationKey = func(loc core.ObjectLocation) string { return loc.ObjectKey }
 
 // -------------------------------------------------------------------------
 // BACKFILL  -  compute hashes for objects that don't have one
@@ -358,9 +343,7 @@ func (s *Scrubber) Backfill(ctx context.Context, req BackfillRequest, observer p
 // hashed complete.
 func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
 	unhashed := core.UnhashedCopies(req.Backend, new(true))
-	pager := copyPager(req.BatchSize, func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-		return s.d.Store.ListCopiesByForm(ctx, &unhashed, limit, after)
-	})
+	pager := core.CopyPager(s.d.Store, &unhashed, req.BatchSize)
 	var res BackfillResult
 	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
 		res.Summary = res.Plus(s.hashPage(ctx, locs, observer))
@@ -382,7 +365,7 @@ func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer p
 // hashPage hashes one page of copies, one at a time like Scrub, since each
 // reads and hashes a full object body.
 func (s *Scrubber) hashPage(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: locationKey}
+	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: core.KeyOf}
 	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
 		return s.hashOne(ctx, &loc)
 	})

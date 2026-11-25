@@ -11,12 +11,15 @@
 package core
 
 import (
+	"context"
 	"fmt"
+	"iter"
 	"slices"
 	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -104,6 +107,53 @@ func CursorOf(l ObjectLocation) Cursor { //nolint:gocritic // matches batch.Page
 // resumes from after l, taken by value for batch.Pager.CursorOf.
 func SizeCursorOf(l ObjectLocation) SizeCursor { //nolint:gocritic // matches batch.Pager.CursorOf
 	return SizeCursor{SizeBytes: l.SizeBytes, ObjectKey: l.ObjectKey}
+}
+
+// KeyOf returns the object key l is a copy of, taken by value so a
+// batch.Runner can use it as the Key that labels each copy's progress step.
+func KeyOf(l ObjectLocation) string { //nolint:gocritic // matches batch.Runner.Key
+	return l.ObjectKey
+}
+
+// CopyPager pages the copies filter selects from list, pageSize at a time in
+// key order. Each page resumes after the last copy listed, so a pass whose
+// copies leave the filter as they are worked does not skip any, and one that
+// fails is retried by the next pass rather than again by this one.
+func CopyPager(list CopyLister, filter *FormFilter, pageSize int) batch.Pager[ObjectLocation, Cursor] {
+	return batch.Pager[ObjectLocation, Cursor]{
+		PageSize: batch.FixedPage(pageSize),
+		List: func(ctx context.Context, limit int, after Cursor) ([]ObjectLocation, error) {
+			return list.ListCopiesByForm(ctx, filter, limit, after)
+		},
+		CursorOf: CursorOf,
+	}
+}
+
+// CopyRuns yields the copies of each key in rows together, for rows in key
+// order such as a CopyPager's Rows, so a pass can act on an object's copies
+// at once. A key whose copies span two pages comes out whole, and each run is
+// a slice of its own. An error ends the runs with it and leaves out the run
+// it interrupted, whose remaining copies were never listed.
+func CopyRuns(rows iter.Seq2[ObjectLocation, error]) iter.Seq2[[]ObjectLocation, error] {
+	return func(yield func([]ObjectLocation, error) bool) {
+		var run []ObjectLocation
+		for row, err := range rows {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if len(run) > 0 && run[0].ObjectKey != row.ObjectKey {
+				if !yield(run, nil) {
+					return
+				}
+				run = nil
+			}
+			run = append(run, row)
+		}
+		if len(run) > 0 {
+			yield(run, nil)
+		}
+	}
 }
 
 // LocationOn returns the copy in locs held on backendName, or nil when there is

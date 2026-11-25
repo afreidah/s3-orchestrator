@@ -23,12 +23,10 @@ type CopyPhase string
 
 // CopyPhase values. Read failures are recoverable by trying another
 // source; write failures terminate the attempt because the destination
-// rejected the data. A transform failure is about the bytes read, and the
-// transform's own error says why.
+// rejected the data.
 const (
-	CopyPhaseRead      CopyPhase = "read"
-	CopyPhaseTransform CopyPhase = "transform"
-	CopyPhaseWrite     CopyPhase = "write"
+	CopyPhaseRead  CopyPhase = "read"
+	CopyPhaseWrite CopyPhase = "write"
 )
 
 // CopyError tags a stream-copy failure with the phase that produced it

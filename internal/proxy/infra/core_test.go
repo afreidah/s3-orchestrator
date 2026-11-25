@@ -607,83 +607,75 @@ func TestCore_StreamCopy_ChargesFailedLegs(t *testing.T) {
 	})
 }
 
-// TestCore_StreamCopy_TransformReplacesTheBody verifies a transform sees the
-// object read, its body and size are what the destination gets and what the
-// destination is charged, and its release runs after the write.
-func TestCore_StreamCopy_TransformReplacesTheBody(t *testing.T) {
+// TestCore_ReadCopy_OpensAndChargesTheSource verifies the read leg hands back
+// the source's bytes and charges the source one call and the bytes read.
+func TestCore_ReadCopy_OpensAndChargesTheSource(t *testing.T) {
 	t.Parallel()
 	c, counters := newCopyRuntime(t)
-	src := &readableBackend{payload: []byte("hello")}
-	dst := &recordingBackend{}
-	var seen string
-	released := 0
-	req := copyReq(ep("b1", src), ep("b2", dst), 5)
-	req.Transform = func(_ context.Context, read *backend.GetObjectResult) (io.Reader, int64, func(), error) {
-		raw, err := io.ReadAll(read.Body)
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		seen = string(raw)
-		return strings.NewReader("HELLO!!"), 7, func() { released++ }, nil
+	read, cancel, err := c.ReadCopy(context.Background(), ep("b1", &readableBackend{payload: []byte("hello")}), "k", 5)
+	if err != nil {
+		t.Fatalf("ReadCopy: %v", err)
 	}
+	defer cancel()
+	defer func() { _ = read.Body.Close() }()
+	if got, _ := io.ReadAll(read.Body); string(got) != "hello" {
+		t.Errorf("read %q, want the source's bytes", got)
+	}
+	if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1, egress: 5}) {
+		t.Errorf("source charged %+v, want one call and 5 bytes out", got)
+	}
+}
 
-	if _, err := c.StreamCopy(context.Background(), req); err != nil {
-		t.Fatalf("StreamCopy: %v", err)
+// TestCore_ReadCopy_RefusesInTheReadPhase verifies a source with no egress
+// headroom and a source of the wrong size both fail as the read phase, so a
+// caller moves on to another source.
+func TestCore_ReadCopy_RefusesInTheReadPhase(t *testing.T) {
+	t.Parallel()
+	limited := limitedCore(t,
+		map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}},
+		map[string]core.UsageStat{"b1": {EgressBytes: 99}})
+	unlimited, _ := newCopyRuntime(t)
+	cases := []struct {
+		name string
+		c    *BackendRuntime
+		size int64
+		want error
+	}{
+		{name: "out of egress", c: limited, size: 50, want: core.ErrUsageLimitExceeded},
+		{name: "wrong size", c: unlimited, size: 9, want: backend.ErrSourceSizeMismatch},
 	}
-	if seen != "hello" {
-		t.Errorf("transform read %q, want the source bytes", seen)
+	for _, tc := range cases {
+		_, _, err := tc.c.ReadCopy(context.Background(), ep("b1", &readableBackend{payload: []byte("hello")}), "k", tc.size)
+		if !errors.Is(err, tc.want) || !backend.IsCopyPhase(err, backend.CopyPhaseRead) {
+			t.Errorf("%s: err = %v, want a read-phase %v", tc.name, err, tc.want)
+		}
 	}
-	if dst.putBodyLen != 7 {
-		t.Errorf("destination got %d bytes, want 7", dst.putBodyLen)
-	}
-	if released != 1 {
-		t.Errorf("release ran %d times, want once", released)
+}
+
+// TestCore_WriteCopy_AdmitsAndChargesTheSizeWritten verifies the write leg is
+// judged and charged on the bytes it writes, and that both a destination with
+// no headroom for them and a failed PUT fail as the write phase.
+func TestCore_WriteCopy_AdmitsAndChargesTheSizeWritten(t *testing.T) {
+	t.Parallel()
+	c, counters := newCopyRuntime(t)
+	put := &backend.PutRequest{Dst: ep("b2", &recordingBackend{}), Key: "k", Body: strings.NewReader("HELLO!!"), Size: 7}
+	if _, err := c.WriteCopy(context.Background(), put); err != nil {
+		t.Fatalf("WriteCopy: %v", err)
 	}
 	if got := loadUsage(counters, "b2"); got != (usageOf{calls: 1, ingress: 7}) {
-		t.Errorf("destination charged %+v, want one call and the 7 transformed bytes", got)
-	}
-}
-
-// TestCore_StreamCopy_TransformWithoutRelease verifies a transform that
-// buffers nothing may return a nil release.
-func TestCore_StreamCopy_TransformWithoutRelease(t *testing.T) {
-	t.Parallel()
-	c, _ := newCopyRuntime(t)
-	req := copyReq(ep("b1", &readableBackend{payload: []byte("hello")}), ep("b2", &recordingBackend{}), 5)
-	req.Transform = func(_ context.Context, read *backend.GetObjectResult) (io.Reader, int64, func(), error) {
-		return read.Body, read.Size, nil, nil
-	}
-	if _, err := c.StreamCopy(context.Background(), req); err != nil {
-		t.Fatalf("StreamCopy: %v", err)
-	}
-}
-
-// TestCore_StreamCopy_TransformErrorTagsTransformPhase verifies a failed
-// transform writes nothing and surfaces as a transform-phase copy error that
-// still carries the transform's own error.
-func TestCore_StreamCopy_TransformErrorTagsTransformPhase(t *testing.T) {
-	t.Parallel()
-	c, counters := newCopyRuntime(t)
-	dst := &recordingBackend{}
-	sentinel := errors.New("encode failed")
-	req := copyReq(ep("b1", &readableBackend{payload: []byte("hello")}), ep("b2", dst), 5)
-	req.Transform = func(context.Context, *backend.GetObjectResult) (io.Reader, int64, func(), error) {
-		return nil, 0, nil, sentinel
+		t.Errorf("destination charged %+v, want one call and the 7 bytes written", got)
 	}
 
-	_, err := c.StreamCopy(context.Background(), req)
-	ce, ok := errors.AsType[*backend.CopyError](err)
-	if !ok || ce.Phase != backend.CopyPhaseTransform {
-		t.Fatalf("err = %v, want a transform-phase *backend.CopyError", err)
+	full := limitedCore(t,
+		map[string]core.UsageLimits{"b2": {IngressByteLimit: 100}},
+		map[string]core.UsageStat{"b2": {IngressBytes: 99}})
+	refused := &backend.PutRequest{Dst: ep("b2", &recordingBackend{}), Key: "k", Body: strings.NewReader("HELLO!!"), Size: 7}
+	if _, err := full.WriteCopy(context.Background(), refused); !errors.Is(err, core.ErrUsageLimitExceeded) || !backend.IsCopyPhase(err, backend.CopyPhaseWrite) {
+		t.Errorf("full destination: err = %v, want a write-phase usage refusal", err)
 	}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("err = %v, want it to wrap the transform's error", err)
-	}
-	if dst.putBodyLen != 0 {
-		t.Errorf("destination got %d bytes, want none", dst.putBodyLen)
-	}
-	if got := loadUsage(counters, "b2"); got != (usageOf{}) {
-		t.Errorf("destination charged %+v, want nothing", got)
+	failed := &backend.PutRequest{Dst: ep("b2", writeRejectingBackend{}), Key: "k", Body: strings.NewReader("HELLO!!"), Size: 7}
+	if _, err := c.WriteCopy(context.Background(), failed); !backend.IsCopyPhase(err, backend.CopyPhaseWrite) {
+		t.Errorf("failed PUT: err = %v, want a write-phase copy error", err)
 	}
 }
 

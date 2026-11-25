@@ -22,11 +22,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -102,19 +100,13 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 	// Hashing an envelope as if it were plaintext writes a ciphertext digest
 	// into content_hash, which makes the mismatch look verified forever and
 	// turns any later repair of the flag into a false integrity failure.
-	reader, closeDecoded, err := storedform.Open(ctx, h.encryptor, h.codec, result.Body, &loc.StoredForm)
-	if err != nil {
+	hasher := sha256.New()
+	etagHasher := etag.NewHasher()
+	if err := storedform.Digest(ctx, h.encryptor, h.codec, result.Body, &loc.StoredForm, hasher, etagHasher); err != nil {
 		if errors.Is(err, core.ErrEncryptionFlagMismatch) {
 			countFlagMismatch(ctx)
 		}
 		return storedDigests{}, err
-	}
-	defer closeDecoded()
-
-	hasher := sha256.New()
-	etagHasher := etag.NewHasher()
-	if _, err := io.Copy(io.MultiWriter(hasher, etagHasher), reader); err != nil {
-		return storedDigests{}, fmt.Errorf("read body: %w", err)
 	}
 	return storedDigests{SHA256: hex.EncodeToString(hasher.Sum(nil)), MD5: etag.Hex(etagHasher)}, nil
 }
@@ -171,11 +163,10 @@ func (o CopyOutcome) String() string {
 }
 
 // verify reads the copy at read and compares its plaintext digest against
-// want's content hash, counting the check under op. admit decides whether
-// the read's egress may be spent. The read and the check that judges it are
-// usually one row; a new replica is judged by the source it was copied from.
-// A mismatch publishes IntegrityCorruptionFound, and acting on it is the
-// caller's business.
+// want's content hash through storedform.ContentMatches, which counts and
+// reports the check under op. admit decides whether the read's egress may be
+// spent. The read and the check that judges it are usually one row; a new
+// replica is judged by the source it was copied from.
 func (h *storedHasher) verify(ctx context.Context, read, want *core.ObjectLocation, op string, admit func(backend string, egress int64) bool) CopyOutcome {
 	if !want.Form().Has(core.StoredHashed) {
 		return CopyNotHashed
@@ -193,21 +184,9 @@ func (h *storedHasher) verify(ctx context.Context, read, want *core.ObjectLocati
 			"key", read.ObjectKey, "backend", read.BackendName, "error", err)
 		return CopyUnreadable
 	}
-	telemetry.IntegrityChecksTotal.WithLabelValues(op).Inc()
-	if actual.SHA256 == want.ContentHash {
+	if storedform.ContentMatches(ctx, log, op, read, want.ContentHash, actual.SHA256) {
 		return CopyVerified
 	}
-	telemetry.IntegrityErrorsTotal.WithLabelValues(op).Inc()
-	log.ErrorContext(ctx, "integrity check failed",
-		"key", read.ObjectKey, "backend", read.BackendName,
-		"expected_hash", want.ContentHash, "actual_hash", actual.SHA256)
-	event.Publish(event.IntegrityCorruptionFound, read.ObjectKey, map[string]any{
-		"key":           read.ObjectKey,
-		"backend":       read.BackendName,
-		"expected_hash": want.ContentHash,
-		"actual_hash":   actual.SHA256,
-		"size_bytes":    read.SizeBytes,
-	})
 	return CopyMismatch
 }
 

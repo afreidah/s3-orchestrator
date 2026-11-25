@@ -73,12 +73,12 @@ func newBackendOps(t *testing.T, cfg backendOpsStub) *MockBackendOps {
 	return m
 }
 
-// newOpsMover builds the mover a rewrite pass hands each copy to. It expects
-// no calls: the runtime these tests use resolves no backend, so a pass fails
-// each copy before it would move it.
-func newOpsMover(t *testing.T) *opstest.MockMover {
+// newOpsRewriter builds the rewriter a rewrite pass hands each object to. It
+// expects no calls: the runtime these tests use resolves no backend, so a pass
+// fails each object before it would rewrite it.
+func newOpsRewriter(t *testing.T) *opstest.MockRewriter {
 	t.Helper()
-	return opstest.NewMockMover(gomock.NewController(t))
+	return opstest.NewMockRewriter(gomock.NewController(t))
 }
 
 // integrityWith installs integrity operations built from the given stubs, for
@@ -182,7 +182,7 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 	h.d.Ops.Encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
-		Mover:     newOpsMover(t),
+		Rewriter:  newOpsRewriter(t),
 		Locker:    testx.Locker{},
 	})
 }
@@ -193,11 +193,11 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.RewriteStore) {
 	t.Helper()
 	h.d.Ops.Compression = ops.NewCompression(&ops.CompressionDeps{
-		Codec:  codec,
-		Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-		Store:  store,
-		Mover:  newOpsMover(t),
-		Locker: testx.Locker{},
+		Codec:    codec,
+		Config:   config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+		Store:    store,
+		Rewriter: newOpsRewriter(t),
+		Locker:   testx.Locker{},
 	})
 }
 

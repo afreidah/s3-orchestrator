@@ -113,7 +113,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		EncStore:     testStore,
 		CompStore:    testStore,
 		Locker:       testStore,
-		Mover:        st.Coord,
+		Rewriter:     st.Coord,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
 		Backlog:      testStore,

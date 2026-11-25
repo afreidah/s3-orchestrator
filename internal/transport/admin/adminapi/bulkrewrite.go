@@ -23,12 +23,15 @@ type BulkRewriteOutcome struct {
 // BulkRewriteTally partitions what a bulk rewrite pass saw. The admin API and
 // the dashboard's status poll both report it.
 //
-// Skipped counts copies left alone on purpose (too incompressible, or on a
-// backend at its usage limit or without room for the rewrite), not failures.
-// Changed counts copies converted but not recorded because a client wrote the
-// key meanwhile; the client's write stands, and a non-zero value means the
-// pass overlapped live traffic, not a fault.
+// Objects counts the objects the pass rewrote a copy of, which is what a
+// capped pass stops on; the other counts are of copies. Skipped counts copies
+// left alone on purpose (too incompressible, or on a backend at its usage
+// limit or without room for the rewrite), not failures. Changed counts copies
+// converted but not recorded because a client wrote the key meanwhile; the
+// client's write stands, and a non-zero value means the pass overlapped live
+// traffic, not a fault.
 type BulkRewriteTally struct {
+	Objects int `json:"objects"`
 	Skipped int `json:"skipped"`
 	Changed int `json:"changed"`
 	Failed  int `json:"failed"`

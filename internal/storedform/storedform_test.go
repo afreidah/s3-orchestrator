@@ -236,7 +236,7 @@ func TestReform_EveryTransition(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Reform: %v", err)
 				}
-				got := readAll(t, out.Body)
+				got := readAll(t, out.Body.Reader())
 				out.Release()
 				out.Release()
 				assertReformed(t, l, plain, got, out.Size, out.Form, want)
@@ -283,8 +283,8 @@ func TestReform_KeptEncodingIsPassedThrough(t *testing.T) {
 		t.Fatalf("Reform: %v", err)
 	}
 	defer out.Release()
-	if len(out.release) != 0 {
-		t.Errorf("release list has %d entries, want none for a passed-through encoding", len(out.release))
+	if len(out.release) != 1 {
+		t.Errorf("release list has %d entries, want only the result's buffer for a passed-through encoding", len(out.release))
 	}
 	if out.Form.PlaintextSize != int64(len(stored)) {
 		t.Errorf("PlaintextSize = %d, want the %d encoded bytes", out.Form.PlaintextSize, len(stored))
@@ -307,7 +307,7 @@ func TestReform_ReleaseFreesBuffers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reform: %v", err)
 			}
-			_ = readAll(t, out.Body)
+			_ = readAll(t, out.Body.Reader())
 			if len(out.release) == 0 {
 				t.Fatal("release list is empty, want the buffer the reform opened")
 			}

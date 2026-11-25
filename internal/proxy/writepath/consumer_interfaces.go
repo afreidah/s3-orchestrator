@@ -31,4 +31,6 @@ type WriteRuntime interface {
 	ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 	StreamCopy(ctx context.Context, req *backend.CopyRequest) (string, error)
+	ReadCopy(ctx context.Context, src backend.Endpoint, key string, size int64) (*backend.GetObjectResult, context.CancelFunc, error)
+	WriteCopy(ctx context.Context, req *backend.PutRequest) (string, error)
 }

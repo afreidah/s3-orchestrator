@@ -96,10 +96,11 @@ type RegistryPublisher interface {
 // RUNTIME AND WORKERS
 // -------------------------------------------------------------------------
 
-// Mover moves one copy through the placement step, which is how a bulk rewrite
-// replaces a copy with its reformed bytes. *writepath.Coordinator satisfies it.
-type Mover interface {
-	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
+// Rewriter replaces one object's copies with their reformed bytes through the
+// placement step, which is how a bulk rewrite converts them, and returns one
+// error per copy. *writepath.Coordinator satisfies it.
+type Rewriter interface {
+	RewriteCopies(ctx context.Context, req *writepath.RewriteRequest) []error
 }
 
 // Replicator is the slice of *worker.Replicator the replication operations
@@ -158,7 +159,7 @@ type ScrubberOps interface {
 // Compile-time assertions.
 var (
 	_ ObjectAPI              = (*object.Manager)(nil)
-	_ Mover                  = (*writepath.Coordinator)(nil)
+	_ Rewriter               = (*writepath.Coordinator)(nil)
 	_ Replicator             = (*worker.Replicator)(nil)
 	_ Rebalancer             = (*worker.Rebalancer)(nil)
 	_ Reconciler             = (*worker.Reconciler)(nil)

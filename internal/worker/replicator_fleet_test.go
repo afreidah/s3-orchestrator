@@ -88,34 +88,6 @@ func stubReplicatorComplete(ct *replicatorCompleteTracker) func(context.Context,
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestGroupByKey_Groups verifies the group-by-key contract.
-func TestGroupByKey_Groups(t *testing.T) {
-	t.Parallel()
-	locations := []core.ObjectLocation{
-		{ObjectKey: "a", BackendName: "b1"},
-		{ObjectKey: "a", BackendName: "b2"},
-		{ObjectKey: "b", BackendName: "b1"},
-	}
-	grouped := core.GroupByKey(locations)
-	if len(grouped) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(grouped))
-	}
-	if len(grouped["a"]) != 2 {
-		t.Errorf("expected 2 copies of 'a', got %d", len(grouped["a"]))
-	}
-	if len(grouped["b"]) != 1 {
-		t.Errorf("expected 1 copy of 'b', got %d", len(grouped["b"]))
-	}
-}
-
-// TestGroupByKey_Empty asserts the empty input contract.
-func TestGroupByKey_Empty(t *testing.T) {
-	t.Parallel()
-	if grouped := core.GroupByKey(nil); len(grouped) != 0 {
-		t.Errorf("expected 0 groups, got %d", len(grouped))
-	}
-}
-
 // TestReplicate_NoUnderReplicatedObjects asserts the no-work case.
 func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	t.Parallel()

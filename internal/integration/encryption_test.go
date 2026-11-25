@@ -104,7 +104,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Encryptor:    enc,
 		EncStore:     testStore,
 		Locker:       testStore,
-		Mover:        st.Coord,
+		Rewriter:     st.Coord,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
 		Backlog:      testStore,

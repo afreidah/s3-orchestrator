@@ -1713,6 +1713,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                objects:
+                    format: int64
+                    type: integer
                 reason:
                     type: string
                 skipped:
@@ -1725,6 +1728,7 @@ components:
                     type: integer
             required:
                 - status
+                - objects
                 - skipped
                 - changed
                 - failed
@@ -1860,6 +1864,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                objects:
+                    format: int64
+                    type: integer
                 reason:
                     type: string
                 skipped:
@@ -1872,6 +1879,7 @@ components:
                     type: integer
             required:
                 - status
+                - objects
                 - skipped
                 - changed
                 - failed
@@ -1889,6 +1897,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                objects:
+                    format: int64
+                    type: integer
                 reason:
                     type: string
                 skipped:
@@ -1901,6 +1912,7 @@ components:
                     type: integer
             required:
                 - status
+                - objects
                 - skipped
                 - changed
                 - failed
@@ -1941,6 +1953,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                objects:
+                    format: int64
+                    type: integer
                 reason:
                     type: string
                 skipped:
@@ -1953,6 +1968,7 @@ components:
                     type: integer
             required:
                 - status
+                - objects
                 - skipped
                 - changed
                 - failed

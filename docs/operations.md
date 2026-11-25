@@ -260,10 +260,10 @@ If you enable encryption on an orchestrator that already has unencrypted objects
    s3-orchestrator admin encrypt-existing
    ```
 
-   This processes all unencrypted copies in batches of 100: downloads each from its backend, encrypts it, and writes the ciphertext to a new path on the same backend. The new row replaces the old one in one transaction, then the plaintext bytes are deleted. The response shows progress:
+   This processes all unencrypted copies in batches of 100. The copies of one object that hold the same bytes are encrypted from one download, and the ciphertext is written to a new path on each copy's own backend. The new row replaces the old one in one transaction, then the plaintext bytes are deleted. The response counts copies, and `objects` the objects converted:
 
    ```json
-   {"status": "ok", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
+   {"status": "ok", "encrypted": 1423, "objects": 712, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
 3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (`status` values: `success`, `skipped`, `changed`, `error`). A `changed` copy is one a client wrote mid-pass; the client's write stands. See [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write).
@@ -280,10 +280,10 @@ To remove encryption from all objects and restore plaintext on backends, use the
    s3-orchestrator admin decrypt-existing
    ```
 
-   This processes all encrypted copies in batches of 100: downloads the ciphertext from its backend, decrypts it, and writes the plaintext to a new path on the same backend. The new row, with no encryption metadata, replaces the old one in one transaction, then the ciphertext bytes are deleted. A compressed copy keeps its encoding. Each copy costs a GET, a PUT and a DELETE, plus egress and ingress against the backend's usage quota. The response shows progress:
+   This processes all encrypted copies in batches of 100. The copies of one object that hold the same bytes are decrypted from one download, and the plaintext is written to a new path on each copy's own backend. The new row, with no encryption metadata, replaces the old one in one transaction, then the ciphertext bytes are deleted. A compressed copy keeps its encoding. Each object costs one GET, and each of its copies a PUT and a DELETE, plus egress and ingress against the backends' usage quotas. The response shows progress:
 
    ```json
-   {"status": "ok", "decrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
+   {"status": "ok", "decrypted": 1423, "objects": 712, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
 2. **Disable encryption** in the config and restart the orchestrator.
