@@ -51,6 +51,14 @@ func newTestBackend(t *testing.T, handler http.HandlerFunc) *S3Backend {
 	return be
 }
 
+// writeS3Error answers a fake-S3 request with status and an S3 error document
+// naming code, which is what the SDK turns into an API error.
+func writeS3Error(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, "<Error><Code>"+code+"</Code><Message>refused</Message></Error>")
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------

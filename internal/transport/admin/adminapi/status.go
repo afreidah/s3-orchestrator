@@ -87,9 +87,9 @@ type IntegrityStatus struct {
 // such as GetObject while a provider's download quota is exhausted, and is
 // empty while every call is served. Healthy is true exactly when it is empty.
 //
-// Unsupported names the optional features (range, batch-delete, native-copy)
-// the backend has refused since this instance started. Each has a fallback the
-// instance uses instead, and the list is empty for a backend that refused none.
+// Unsupported names the optional features the backend has refused since this
+// instance started. Each has a fallback the instance uses instead, and the
+// list is empty for a backend that refused none.
 // Pressure is how this instance last judged the backend's calls.
 //
 // CompressionSavedBytes is the logical size of this backend's compressed

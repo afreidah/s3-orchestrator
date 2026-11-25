@@ -45,9 +45,7 @@ func TestPutObject_SignedStreamRetriesSlowDownWithoutLosingBytes(t *testing.T) {
 		}
 		bodies <- body
 		if attempts.Add(1) == 1 {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, "<Error><Code>SlowDown</Code><Message>retry later</Message></Error>")
+			writeS3Error(w, http.StatusServiceUnavailable, "SlowDown")
 			return
 		}
 		w.Header().Set("ETag", `"retry-ok"`)
