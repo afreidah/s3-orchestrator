@@ -219,7 +219,7 @@ window.s3oDiagram = {
     S3: {
       title: 'S3 Backend PutObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata. The key sent is the intent\'s storage key, not the object key.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata. The key sent is the intent\'s storage key, not the object key. That key carries a <code>!</code>, so a backend that checks signatures against a path with <code>!\'()*</code> left unescaped refuses it with a 403; the first refusal is resent once with them literal, and a backend that takes it is sent them that way until restart.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds</p>'
     },
     FAIL: {
       title: 'Upload Failed?',

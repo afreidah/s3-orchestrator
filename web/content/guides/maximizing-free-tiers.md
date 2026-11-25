@@ -204,7 +204,7 @@ auth:
 ui:
   enabled: true
   session_secret: "{{ .Data.data.ui_session_secret }}"
-  force_secure_cookies: true   # unconditionally sets Secure on session cookies; alternative is to let the orchestrator detect TLS via X-Forwarded-Proto from a trusted_proxies CIDR — see docs/security-hardening.md
+  force_secure_cookies: true   # unconditionally sets Secure on session cookies; alternative is to let the orchestrator detect TLS via X-Forwarded-Proto from a trusted_proxies CIDR - see docs/security-hardening.md
 
 usage_flush:
   interval: "30s"
@@ -220,15 +220,15 @@ telemetry:
     enabled: true
     endpoint: "tempo.service.consul:4317"
     insecure: true
-    sample_rate: 1.0             # reduce to 0.01–0.1 for production
+    sample_rate: 1.0             # reduce to 0.01-0.1 for production
 ```
 
 {{< callout type="info" >}}
 **Google Cloud Storage** requires three backend-level settings to work correctly:
 
-- **`disable_checksum: true`** — GCS does not support the `x-amz-checksum-*` headers that the AWS SDK sends by default.
-- **`unsigned_payload: true`** — GCS does not support `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunked signing.
-- **`strip_sdk_headers: true`** — AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that GCS does not include when verifying the SigV4 signature, causing `SignatureDoesNotMatch` errors.
+- **`disable_checksum: true`** - GCS does not support the `x-amz-checksum-*` headers that the AWS SDK sends by default.
+- **`unsigned_payload: true`** - GCS does not support `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunked signing.
+- **`strip_sdk_headers: true`** - AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that GCS does not include when verifying the SigV4 signature, causing `SignatureDoesNotMatch` errors.
 
 See the [Admin Guide](../../docs/backends/) for more details.
 {{< /callout >}}
@@ -258,7 +258,7 @@ Check each provider's free-tier limits. The allowances below were checked in Sep
 
 Together those come to 96 GB of combined storage behind a single S3 endpoint.
 
-That is the raw figure, and it is only what you can store if every object exists once. **Replication divides it.** At a factor of 2 the same 96 GB holds 48 GB of distinct objects, since every one is written twice; at 3 it holds 32 GB. Decide the factor before sizing the pool, because it is the difference between a 96 GB answer and a 32 GB one. Compression pushes back the other way — see Step 4 — but by an amount that depends entirely on what you store, so plan on the raw division and treat compression as headroom you earn rather than capacity you can count on.
+That is the raw figure, and it is only what you can store if every object exists once. **Replication divides it.** At a factor of 2 the same 96 GB holds 48 GB of distinct objects, since every one is written twice; at 3 it holds 32 GB. Decide the factor before sizing the pool, because it is the difference between a 96 GB answer and a 32 GB one. Compression pushes back the other way - see Step 4 - but by an amount that depends entirely on what you store, so plan on the raw division and treat compression as headroom you earn rather than capacity you can count on.
 
 Three things in that table decide how the backend is configured:
 
@@ -475,7 +475,7 @@ compression:
 
 Objects are stored as chunked zstd, so a backend holds the compressed size and that is what counts against `quota_bytes`. The same reduction applies to every byte crossing the wire, so `ingress_byte_limit` on the write and `egress_byte_limit` on every later read shrink with it. Three allowances for one setting.
 
-How much depends entirely on your data: text, JSON, logs and most documents compress several times over, while media files and anything already compressed do not move at all. Objects below `min_size` are stored verbatim because a seek table costs more than a small object saves, and anything that fails to shrink past `min_ratio` is stored verbatim too — so incompressible data costs you the attempt and nothing else. Range reads stay proportional to the bytes requested rather than the object size, because each chunk is an independently decodable frame.
+How much depends entirely on your data: text, JSON, logs and most documents compress several times over, while media files and anything already compressed do not move at all. Objects below `min_size` are stored verbatim because a seek table costs more than a small object saves, and anything that fails to shrink past `min_ratio` is stored verbatim too - so incompressible data costs you the attempt and nothing else. Range reads stay proportional to the bytes requested rather than the object size, because each chunk is an independently decodable frame.
 
 ### Write-placed copies: no read to make a replica
 
@@ -488,9 +488,9 @@ write_path:
     enabled: true
 ```
 
-With replication on, a second copy has to come from somewhere. By default the replicator makes it by reading the object back off the backend that holds it and writing it to another — which charges the source a **GET and its egress**, then the target a PUT. On a free tier that is exactly the wrong shape: reads are what the small Class A/Class B allowances and the egress caps meter.
+With replication on, a second copy has to come from somewhere. By default the replicator makes it by reading the object back off the backend that holds it and writing it to another - which charges the source a **GET and its egress**, then the target a PUT. On a free tier that is exactly the wrong shape: reads are what the small Class A/Class B allowances and the egress caps meter.
 
-`parallel_copies` has the write upload to both backends itself, from bytes it already has in hand. The PUT on the target is unavoidable either way, but the GET and the source egress disappear entirely. For a factor of 2 that removes one read per object from your API budget, and the bytes of every replica from an egress allowance — on IBM's 5 GB/month egress or GCS's 5,000 Class A calls, that is the difference between a working backend and one that goes read-only halfway through the month.
+`parallel_copies` has the write upload to both backends itself, from bytes it already has in hand. The PUT on the target is unavoidable either way, but the GET and the source egress disappear entirely. For a factor of 2 that removes one read per object from your API budget, and the bytes of every replica from an egress allowance - on IBM's 5 GB/month egress or GCS's 5,000 Class A calls, that is the difference between a working backend and one that goes read-only halfway through the month.
 
 The cost is that both copies are uploaded during the write rather than spread over replicator cycles, so peak write bandwidth roughly doubles. For free-tier setups, where the constraint is a monthly allowance rather than throughput, that is usually the right trade.
 
@@ -502,7 +502,7 @@ Both settings compound: compression shrinks the object, and the write then place
 
 The two settings above reduce how many bytes you move. This one changes who pays for them.
 
-Backblaze B2, IBM Cloud Object Storage and Oracle Cloud are members of the [Cloudflare Bandwidth Alliance](https://www.cloudflare.com/bandwidth-alliance/), along with Wasabi, DigitalOcean Spaces, Linode, Vultr, Scaleway, Alibaba Cloud OSS and Tencent Cloud COS. Members waive the transfer fee on traffic leaving to Cloudflare. Put a Cloudflare Worker in front of the bucket and every read egresses to Cloudflare rather than to the caller, so the provider bills nothing for it — which turns a metered backend into an unmetered one without changing how the orchestrator addresses it.
+Backblaze B2, IBM Cloud Object Storage and Oracle Cloud are members of the [Cloudflare Bandwidth Alliance](https://www.cloudflare.com/bandwidth-alliance/), along with Wasabi, DigitalOcean Spaces, Linode, Vultr, Scaleway, Alibaba Cloud OSS and Tencent Cloud COS. Members waive the transfer fee on traffic leaving to Cloudflare. Put a Cloudflare Worker in front of the bucket and every read egresses to Cloudflare rather than to the caller, so the provider bills nothing for it - which turns a metered backend into an unmetered one without changing how the orchestrator addresses it.
 
 On one deployment, routing B2 through a worker moved 1,679 MB out of the backend in a day, of which Backblaze counted 42 MB against the account's egress cap. Without it that single day would have exceeded the free tier's 1 GB/day allowance.
 
@@ -510,7 +510,7 @@ This does nothing for a provider outside the alliance, and nothing for Cloudflar
 
 #### Why a CNAME is not enough
 
-Pointing a proxied DNS record at an object store does not work. Cloudflare forwards the caller's `Host`, so the origin sees the proxy hostname instead of its own endpoint — which breaks bucket routing, and because `host` is a signed header under SigV4, invalidates the signature with it. Every request comes back `SignatureDoesNotMatch`.
+Pointing a proxied DNS record at an object store does not work. Cloudflare forwards the caller's `Host`, so the origin sees the proxy hostname instead of its own endpoint - which breaks bucket routing, and because `host` is a signed header under SigV4, invalidates the signature with it. Every request comes back `SignatureDoesNotMatch`.
 
 The worker in [`deploy/cloudflare-worker/`](https://github.com/afreidah/s3-orchestrator/tree/main/deploy/cloudflare-worker) terminates the request instead: it verifies the caller's signature, rewrites `Host` to the native endpoint, and re-signs with the account credential before forwarding.
 
@@ -536,12 +536,12 @@ backends:
     api_request_limit: 2500
 ```
 
-`strip_sdk_headers: true` is required rather than optional. The Go SDK signs `accept-encoding`, Cloudflare rewrites it in transit, and the worker verifies against what actually arrived — without this every request fails `SignatureDoesNotMatch`.
+`strip_sdk_headers: true` is required rather than optional. The Go SDK signs `accept-encoding`, Cloudflare rewrites it in transit, and the worker verifies against what actually arrived - without this every request fails `SignatureDoesNotMatch`.
 
 `unsigned_payload: true` matters for the same class of reason. A client using chunked payload signatures embeds per-chunk signatures derived from its own key, which cannot be re-signed without buffering the whole body, so the worker answers those with `501 Not Implemented` rather than forwarding something the origin will reject. Presigned URLs carry their signature in the query string and take a different verification path; the worker rejects those explicitly too.
 
 {{< callout >}}
-Relax the egress budget on a proxied backend, not the request budget. The alliance waives egress and only egress — every GET still counts as a Class B transaction against whatever request allowance the provider gives you. `egress_byte_limit` can come up or come off; `api_request_limit` stays exactly where it was.
+Relax the egress budget on a proxied backend, not the request budget. The alliance waives egress and only egress - every GET still counts as a Class B transaction against whatever request allowance the provider gives you. `egress_byte_limit` can come up or come off; `api_request_limit` stays exactly where it was.
 {{< /callout >}}
 
 One worker fronts one backend, so a pool spanning three alliance providers deploys the same script three times under distinct names and routes. Cloudflare's free and Pro plans cap the request body at 100 MB, so keep multipart part size below that.
@@ -633,11 +633,13 @@ Use the web dashboard or Prometheus metrics to track how close each backend is t
 
 The dashboard shows per-backend quota bars and monthly usage charts so you can see at a glance how much headroom remains.
 
-The per-class metrics are the ones to watch on providers that meter by class. A backend can be nowhere near its overall request count while its Class A allowance is exhausted — which on GCS, at 5,000 uploads a month against 50,000 reads, is the failure mode you will meet first.
+The per-class metrics are the ones to watch on providers that meter by class. A backend can be nowhere near its overall request count while its Class A allowance is exhausted - which on GCS, at 5,000 uploads a month against 50,000 reads, is the failure mode you will meet first.
 
 ## Adding More Providers
 
 To expand your pool, add another backend with its own quota and usage limits. No existing configuration needs to change. Adding a backend needs a restart (a rolling restart for a multi-instance deployment); quotas and usage limits on existing backends reload with SIGHUP.
+
+A provider that ignores Range, refuses multi-object delete or server-side copy, or checks signatures against a path with `!'()*` left unescaped needs no setting for it: the orchestrator learns each from the first refusal and uses the fallback from then on. See [Features a backend does not support](../../docs/backends/) for what each one costs.
 
 {{< callout >}}
 Enable [replication](../../docs/replication/) with a factor of 2 or more so that objects are copied across providers. This gives you redundancy and allows reads to fail over when one backend's usage limits are reached. Remember that it also halves your usable capacity - see the note under Step 1.
