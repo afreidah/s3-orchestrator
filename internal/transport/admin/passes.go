@@ -364,12 +364,14 @@ func RewritePass(svc *ops.Services, kind Rewrite, maxObjects int, backend string
 			return run(ctx, obs, maxObjects, backend)
 		},
 		body: func(o adminapi.Outcome, res ops.BulkRewriteResult) any {
-			tally := adminapi.BulkRewriteTally{Skipped: res.Skipped, Changed: res.Changed, Failed: res.Failed, Total: res.Total}
+			tally := adminapi.BulkRewriteTally{
+				Objects: res.Objects, Skipped: res.Skipped, Changed: res.Changed, Failed: res.Failed, Total: res.Total,
+			}
 			return spec.body(adminapi.BulkRewriteOutcome{Outcome: o, BulkRewriteTally: tally}, res.Succeeded)
 		},
 		summary: func(res ops.BulkRewriteResult) (int, string) {
-			return res.Succeeded, fmt.Sprintf("rewrote %d, skipped %d, changed %d, failed %d, of %d",
-				res.Succeeded, res.Skipped, res.Changed, res.Failed, res.Total)
+			return res.Succeeded, fmt.Sprintf("rewrote %d copies of %d objects, skipped %d, changed %d, failed %d, of %d",
+				res.Succeeded, res.Objects, res.Skipped, res.Changed, res.Failed, res.Total)
 		},
 	}
 }

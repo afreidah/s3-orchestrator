@@ -210,7 +210,7 @@ func (dr *Drainer) movePage(ctx context.Context, srcName string, page []core.Obj
 		Concurrency: 1,
 		Admission:   dr.d.Ops,
 		Observer:    observer,
-		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
+		Key:         core.KeyOf,
 	}
 	return runner.Run(ctx, page, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
 		res := dr.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey])

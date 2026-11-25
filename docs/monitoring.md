@@ -372,8 +372,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_head_served_from_metadata_total` | Counter | - | HEAD responses answered from the object ledger, each one a backend request and a metered API call avoided |
 | `s3o_cache_flush_total` | Counter | - | Admin-triggered object data cache flushes |
 | `s3o_cache_admin_invalidations_total` | Counter | - | Admin-triggered single-key cache invalidations |
-| `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, replicate, scrub), counting a single key's verification as a scrub |
-| `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup, or a new replica discarded) |
+| `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, replicate, scrub, rewrite), counting a single key's verification as a scrub and a rewrite pass's check of the bytes it converted as a rewrite |
+| `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup, a new replica discarded, or a rewrite that wrote nothing) |
 | `s3o_integrity_oldest_unverified_seconds` | Gauge | - | How long the most overdue reachable object copy has gone unverified |
 | `s3o_integrity_never_verified_copies` | Gauge | - | Reachable copies with a content hash that have never been verified |
 | `s3o_integrity_deferred_copies` | Gauge | - | Copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve |

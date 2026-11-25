@@ -108,11 +108,12 @@ type Layers struct {
 	Compression config.CompressionConfig
 }
 
-// Reformed is a copy's bytes in a new stored form: what to send, how many bytes
-// that is, and the form describing them. Release frees anything the reform
-// buffered and must run whether or not the upload succeeds.
+// Reformed is a copy's bytes in a new stored form, buffered so every copy that
+// takes them is sent the same bytes: the buffer, how many bytes it holds, and
+// the form describing them. Release frees the buffer and must run once the
+// uploads are done, whether or not they succeeded.
 type Reformed struct {
-	Body    io.Reader
+	Body    *materialize.Body
 	Size    int64
 	Form    *core.StoredForm
 	release []func()
@@ -335,8 +336,9 @@ func Open(ctx context.Context, enc *encryption.Encryptor, codec Decompressor, bo
 // carrying the layers in want, touching only the layers that change: an
 // encoding that stays is passed through rather than decoded and re-encoded.
 // storedSize is how many bytes body holds. The content hash carries over,
-// since it covers the bytes the client wrote. An encoding that misses the
-// ratio is a *Declined error and nothing is returned to release.
+// since it covers the bytes the client wrote. The result is buffered, reusing
+// the encoding's buffer when encoding was the last stage. An encoding that
+// misses the ratio is a *Declined error and nothing is returned to release.
 func (l *Layers) Reform(ctx context.Context, body io.Reader, storedSize int64, from *core.StoredForm, want core.StoredFlags) (*Reformed, error) {
 	out := &Reformed{Form: &core.StoredForm{ContentHash: from.ContentHash}}
 	r, size, err := l.unsealFor(ctx, body, storedSize, from)
@@ -344,27 +346,17 @@ func (l *Layers) Reform(ctx context.Context, body io.Reader, storedSize int64, f
 		return nil, err
 	}
 	r, size, err = l.recode(r, size, from, want, out)
+	if err == nil && want.Has(core.StoredEncrypted) {
+		r, size, err = l.seal(ctx, r, size, out)
+	}
+	if err == nil && out.Body == nil {
+		err = out.buffer(r, size)
+	}
 	if err != nil {
 		out.Release()
 		return nil, err
 	}
-	if want.Has(core.StoredEncrypted) {
-		if l.Encryptor == nil {
-			out.Release()
-			return nil, ErrNoEncryptor
-		}
-		sealed, err := Seal(ctx, l.Encryptor, r, size, nil)
-		if err != nil {
-			out.Release()
-			return nil, err
-		}
-		r, size = sealed.Body, sealed.Size
-		out.Form.Encrypted = true
-		out.Form.EncryptionKey = sealed.Form.EncryptionKey
-		out.Form.KeyID = sealed.Form.KeyID
-		out.Form.PlaintextSize = sealed.Form.PlaintextSize
-	}
-	out.Body, out.Size = r, size
+	out.Size = size
 	return out, nil
 }
 
@@ -431,7 +423,44 @@ func (l *Layers) encode(r io.Reader, logical int64, out *Reformed) (io.Reader, i
 		enc.Body.Cleanup()
 		return nil, 0, &Declined{EncodedSize: enc.Size}
 	}
+	out.Body = enc.Body
 	out.release = append(out.release, enc.Body.Cleanup)
 	Describe(out.Form, l.Compression.Level, logical)
 	return enc.Body.Reader(), enc.Size, nil
+}
+
+// seal wraps the reform's bytes in a fresh envelope and records it on out's
+// form. The envelope streams over whatever came before it, so out no longer
+// holds a buffer of the result.
+func (l *Layers) seal(ctx context.Context, r io.Reader, size int64, out *Reformed) (io.Reader, int64, error) {
+	if l.Encryptor == nil {
+		return nil, 0, ErrNoEncryptor
+	}
+	sealed, err := Seal(ctx, l.Encryptor, r, size, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	out.Body = nil
+	out.Form.Encrypted = true
+	out.Form.EncryptionKey = sealed.Form.EncryptionKey
+	out.Form.KeyID = sealed.Form.KeyID
+	out.Form.PlaintextSize = sealed.Form.PlaintextSize
+	return sealed.Body, sealed.Size, nil
+}
+
+// buffer reads the reform's last stage into a buffer of its own, checking it
+// came to size bytes, and frees the stages it read through, which nothing
+// reads again.
+func (r *Reformed) buffer(src io.Reader, size int64) error {
+	body, err := materialize.New(src, size)
+	r.Release()
+	if err != nil {
+		return fmt.Errorf("buffer reformed object: %w", err)
+	}
+	if body.Size() != size {
+		body.Cleanup()
+		return fmt.Errorf("reformed object came to %d bytes, expected %d", body.Size(), size)
+	}
+	r.Body, r.release = body, []func(){body.Cleanup}
+	return nil
 }

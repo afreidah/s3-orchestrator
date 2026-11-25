@@ -62,7 +62,22 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.186.x (current)
+### v0.187.x (current)
+
+**A conversion reads each object once ([#1469](https://github.com/afreidah/s3-orchestrator/issues/1469), v0.187.0)**
+
+`encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` downloaded and converted every copy on its own, so a fleet at replication factor N cost N reads of each object. The copies of one object that hold the same bytes, by their stored layers and content hash, are now converted from one read, checked against the content hash, and written to each copy's own backend. A copy without a content hash, and an unmanaged one, is still read on its own.
+
+**Operator action items after upgrade:**
+
+- **`-max` and the `max` parameter count objects.** A capped pass stopped after that many copies; it now stops after that many objects have a copy converted.
+- **The result gains `objects`,** the objects the pass converted a copy of. The other counts are still copies. The summary line reads `rewrote N copies of M objects, ...`.
+- **A pass streams one step per object.** Its status is the worst of the object's copies, so an object with one copy that failed shows as `failed`.
+- **A conversion buffers what it writes.** Each converted object is held in memory up to 32 MiB and in `spill_dir` above that, as a PUT is, since every copy is sent the same bytes.
+- **A conversion checks its bytes against the content hash before writing.** A mismatch writes nothing, fails the object's copies, and counts under `s3o_integrity_checks_total` and `s3o_integrity_errors_total` with `operation="rewrite"`.
+- **A read that finds a corrupt copy publishes `integrity.corruption_detected`,** as the scrubber does, and counts its checks under `s3o_integrity_checks_total{operation="read"}`.
+
+### v0.186.x
 
 **A prefix delete streams and runs to the end ([#1942](https://github.com/afreidah/s3-orchestrator/issues/1942), v0.186.0)**
 

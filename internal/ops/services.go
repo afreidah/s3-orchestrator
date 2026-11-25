@@ -39,7 +39,7 @@ type Deps struct {
 	EncStore     RewriteStore
 	Codec        storedform.Codec
 	CompStore    RewriteStore
-	Mover        Mover
+	Rewriter     Rewriter
 	Replicator   Replicator
 	OverRep      OverReplicationCleaner
 	Backlog      BacklogCounter
@@ -103,8 +103,9 @@ func New(d *Deps) *Services {
 		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry, Config: cfg}),
 		Encryption: NewEncryption(EncryptionDeps{
 			Encryptor: d.Encryptor,
+			Codec:     d.Codec,
 			Store:     d.EncStore,
-			Mover:     d.Mover,
+			Rewriter:  d.Rewriter,
 			Locker:    d.Locker,
 		}),
 		Compression: NewCompression(&CompressionDeps{
@@ -112,7 +113,7 @@ func New(d *Deps) *Services {
 			Config:    d.Config.Load().Compression,
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
-			Mover:     d.Mover,
+			Rewriter:  d.Rewriter,
 			Locker:    d.Locker,
 		}),
 		Provision: NewProvisioning(ProvisioningDeps{

@@ -92,7 +92,7 @@ The filter is applied when candidates are selected, not after, so `max` is spent
 
 ## When a conversion meets a live write
 
-The four conversions -- `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- read a stored copy, transform it, and write the result to a new path on the same backend. A client writing the same key in between is a race the pass is expected to lose sometimes, and the result carries a `changed` count for the copies it lost.
+The four conversions -- `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- read a stored copy, transform it, and write the result to a new path on the same backend, once for each copy of the object that holds the same bytes. A client writing the same key in between is a race the pass is expected to lose sometimes, and the result carries a `changed` count for the copies it lost.
 
 A conversion records its new copy only while the copy it read is still the recorded one. The new row replaces the old one in a single transaction, and the old bytes are deleted after it commits. When a client has replaced the object, nothing is recorded and the pass deletes the bytes it wrote. The client's write stands, and readers never see bytes the row does not describe. Those copies are reported as `changed` rather than `failed`: nothing is misconfigured, and the newer write has already stored the object in whatever form the write path was set to use.
 

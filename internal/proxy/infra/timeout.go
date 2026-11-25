@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Applies the configured per-backend-operation timeout to a context
-// (honouring a tighter parent deadline) and hosts the GET, HEAD, PUT and
-// stream copy that pair it with a backend RPC. Each charges the call where it
+// (honouring a tighter parent deadline) and hosts the GET, HEAD, PUT and the
+// legs of a copy that pair it with a backend RPC. Each charges the call where it
 // is sent, so no call site carries the timeout plumbing or the accounting rule.
 // GET and HEAD are also timed for the backend's pressure; a PUT's time depends
 // on its size, so it is not.
@@ -147,55 +147,33 @@ func (c *BackendRuntime) Put(ctx context.Context, op s3op.Operation, req *backen
 // Returns the ETag the destination reported, or a *backend.CopyError tagged
 // with the failing phase.
 //
-// Admission and accounting happen here so every backend-to-backend copy
-// enforces the same limits, judged on the source row's size, and is charged
-// the same way. A source that reads at any other size is damaged, so the read
-// fails rather than placing those bytes.
+// Admission and accounting happen in the two legs, ReadCopy and WriteCopy, so
+// every backend-to-backend copy enforces the same limits, judged on the source
+// row's size, and is charged the same way. Both legs are admitted before the
+// read, so a full destination costs no egress.
 //
 // The two keys differ: the copy is a new write with its own path on the
 // destination, so a cleanup after it deletes only those bytes.
 func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyRequest) (string, error) {
-	src, dst := req.Src, req.Dst
-	// A refusal is tagged with the leg that had no headroom: another source
-	// may have egress left, but a destination that is full ends the attempt.
-	if !c.Acct().Allow(src.Name, s3op.GetObject, req.SrcSize, 0) {
-		return "", &backend.CopyError{
-			Phase: backend.CopyPhaseRead,
-			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
-		}
+	if err := c.admitSource(req.Src.Name, req.SrcSize); err != nil {
+		return "", err
 	}
-	if !c.Acct().Allow(dst.Name, s3op.PutObject, 0, req.SrcSize) {
-		return "", &backend.CopyError{
-			Phase: backend.CopyPhaseWrite,
-			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),
-		}
+	if err := c.admitDestination(req.Dst.Name, req.SrcSize); err != nil {
+		return "", err
 	}
-
-	result, rcancel, err := c.Get(ctx, src.Name, src.Backend, req.SrcKey, "")
+	result, rcancel, err := c.openSource(ctx, req.Src, req.SrcKey, req.SrcSize)
 	if err != nil {
-		return "", &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
+		return "", err
 	}
 	defer rcancel()
 	defer func() { _ = result.Body.Close() }()
-	c.Acct().Egress(ctx, s3op.GetObject, src.Name, result.Size)
-	if result.Size != req.SrcSize {
-		return "", &backend.CopyError{
-			Phase: backend.CopyPhaseRead,
-			Err:   fmt.Errorf("source %s read %d bytes, row records %d: %w", src.Name, result.Size, req.SrcSize, backend.ErrSourceSizeMismatch),
-		}
-	}
 
 	// PutObject consumes the source body live, so a write-leg error can come
 	// from a failing source read. Attributing it to the read phase keeps a
 	// degraded source from tripping a healthy target's breaker.
 	tracked := &readTracker{r: result.Body}
-	body, size, release, err := copyBody(ctx, req.Transform, result, tracked)
-	if err != nil {
-		return "", &backend.CopyError{Phase: backend.CopyPhaseTransform, Err: err}
-	}
-	defer release()
 	etag, err := c.Put(ctx, s3op.PutObject, &backend.PutRequest{
-		Dst: dst, Key: req.DstKey, Body: body, Size: size,
+		Dst: req.Dst, Key: req.DstKey, Body: tracked, Size: result.Size,
 		ContentType: result.ContentType, Metadata: result.Metadata,
 	})
 	if err != nil {
@@ -208,26 +186,75 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 	return etag, nil
 }
 
-// copyBody is what a copy writes: the tracked source as read, or what the
-// transform made of it. The release is always safe to call.
-func copyBody(ctx context.Context, transform backend.CopyTransform, result *backend.GetObjectResult, tracked *readTracker) (io.Reader, int64, func(), error) {
-	if transform == nil {
-		return tracked, result.Size, func() {
-			// Nothing was buffered.
-		}, nil
+// ReadCopy opens the read leg of a copy: key on src, admitted against the
+// source's usage limits on size and charged for its egress. The cancel and the
+// body are the caller's, as with Get. A source that reads at any size other
+// than the one its row records is damaged, so the read fails rather than
+// handing those bytes on. Failures are a *backend.CopyError in the read phase.
+func (c *BackendRuntime) ReadCopy(ctx context.Context, src backend.Endpoint, key string, size int64) (*backend.GetObjectResult, context.CancelFunc, error) {
+	if err := c.admitSource(src.Name, size); err != nil {
+		return nil, nil, err
 	}
-	read := *result
-	read.Body = io.NopCloser(tracked)
-	body, size, release, err := transform(ctx, &read)
+	return c.openSource(ctx, src, key, size)
+}
+
+// WriteCopy sends the write leg of a copy, admitted against the destination's
+// usage limits on the size it writes. Failures are a *backend.CopyError in the
+// write phase.
+func (c *BackendRuntime) WriteCopy(ctx context.Context, req *backend.PutRequest) (string, error) {
+	if err := c.admitDestination(req.Dst.Name, req.Size); err != nil {
+		return "", err
+	}
+	etag, err := c.Put(ctx, s3op.PutObject, req)
 	if err != nil {
-		return nil, 0, nil, err
+		return "", &backend.CopyError{Phase: backend.CopyPhaseWrite, Err: err}
 	}
-	if release == nil {
-		release = func() {
-			// The transform streams and buffered nothing.
+	return etag, nil
+}
+
+// admitSource refuses a copy read of size bytes that the source's egress
+// limit has no room for. The refusal is tagged with the read phase, since
+// another source may have egress left.
+func (c *BackendRuntime) admitSource(name string, size int64) error {
+	if c.Acct().Allow(name, s3op.GetObject, size, 0) {
+		return nil
+	}
+	return &backend.CopyError{
+		Phase: backend.CopyPhaseRead,
+		Err:   fmt.Errorf("source %s: %w", name, core.ErrUsageLimitExceeded),
+	}
+}
+
+// admitDestination refuses a copy write of size bytes that the destination's
+// ingress limit has no room for. The refusal is tagged with the write phase,
+// since a full destination ends the attempt whichever source it reads.
+func (c *BackendRuntime) admitDestination(name string, size int64) error {
+	if c.Acct().Allow(name, s3op.PutObject, 0, size) {
+		return nil
+	}
+	return &backend.CopyError{
+		Phase: backend.CopyPhaseWrite,
+		Err:   fmt.Errorf("destination %s: %w", name, core.ErrUsageLimitExceeded),
+	}
+}
+
+// openSource GETs an admitted copy source, charges its egress, and checks it
+// read at the size its row records. On error the call is already released.
+func (c *BackendRuntime) openSource(ctx context.Context, src backend.Endpoint, key string, size int64) (*backend.GetObjectResult, context.CancelFunc, error) {
+	result, cancel, err := c.Get(ctx, src.Name, src.Backend, key, "")
+	if err != nil {
+		return nil, nil, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
+	}
+	c.Acct().Egress(ctx, s3op.GetObject, src.Name, result.Size)
+	if result.Size != size {
+		_ = result.Body.Close()
+		cancel()
+		return nil, nil, &backend.CopyError{
+			Phase: backend.CopyPhaseRead,
+			Err:   fmt.Errorf("source %s read %d bytes, row records %d: %w", src.Name, result.Size, size, backend.ErrSourceSizeMismatch),
 		}
 	}
-	return body, size, release, nil
+	return result, cancel, nil
 }
 
 // readTracker wraps the source body so StreamCopy can tell whether a copy

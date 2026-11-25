@@ -12,7 +12,6 @@
 package backend
 
 import (
-	"context"
 	"errors"
 	"io"
 )
@@ -36,23 +35,16 @@ type PutRequest struct {
 	Metadata    map[string]string
 }
 
-// CopyRequest is one backend-to-backend copy: read SrcKey from Src and write
-// DstKey on Dst. SrcSize is the size the source's row records: both legs are
-// admitted against it, and a source read of any other size fails the copy.
-// Transform, when set, rewrites the bytes between the legs; nil copies them
-// verbatim.
+// CopyRequest is one backend-to-backend copy of the bytes verbatim: read
+// SrcKey from Src and write DstKey on Dst. SrcSize is the size the source's row
+// records: both legs are admitted against it, and a source read of any other
+// size fails the copy.
 type CopyRequest struct {
 	Src, Dst       Endpoint
 	SrcKey, DstKey string
 	SrcSize        int64
-	Transform      CopyTransform
 }
 
 // ErrSourceSizeMismatch reports a copy source whose stored bytes are not the
 // size its row records, such as a truncated or empty object.
 var ErrSourceSizeMismatch = errors.New("source size does not match its row")
-
-// CopyTransform turns the object a copy read into the bytes it writes,
-// returning the body, its size and a release for anything it buffered. The
-// release runs once the write is done, whatever its outcome.
-type CopyTransform func(ctx context.Context, src *GetObjectResult) (body io.Reader, size int64, release func(), err error)

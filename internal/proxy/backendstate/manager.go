@@ -339,11 +339,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 		},
 		CursorOf: core.SizeCursorOf,
 	}
-	runner := batch.Runner[core.ObjectLocation]{
-		Concurrency: 1,
-		Observer:    observer,
-		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
-	}
+	runner := batch.Runner[core.ObjectLocation]{Concurrency: 1, Observer: observer, Key: core.KeyOf}
 	stop, err := pager.Walk(ctx, func(ctx context.Context, objects []core.ObjectLocation) (batch.Step, error) {
 		paths := make(map[string]string, len(objects))
 		list := make([]string, len(objects))

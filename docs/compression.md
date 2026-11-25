@@ -23,7 +23,7 @@ Every path handles compression: PUT and multipart completion write it, GET and H
 
 ## Seeing it per object and per backend
 
-The object inspector shows how each copy is stored: a `COMP` column naming the encoding, and a `LOGICAL` column with the size the client wrote. Both read as a dash for a copy stored verbatim, where the stored size already is the object's size. That is the view that answers "is this particular object compressed, and by how much" - the copies of one key can differ, since a rewrite pass works one copy at a time.
+The object inspector shows how each copy is stored: a `COMP` column naming the encoding, and a `LOGICAL` column with the size the client wrote. Both read as a dash for a copy stored verbatim, where the stored size already is the object's size. That is the view that answers "is this particular object compressed, and by how much" - the copies of one key can differ, since a copy a rewrite pass could not convert keeps the form it had.
 
 The dashboard and the TUI backends pane carry a `Saved` column per backend: what the compressed objects on it are, less what they occupy. The dashboard also has a Compression Savings section with the fleet totals and the ratio achieved. That ratio covers only objects stored encoded, so it is what the encoder managed rather than an average diluted by everything it declined.
 
@@ -56,7 +56,7 @@ s3-orchestrator admin decompress-existing   # and back out again
 
 Both are available in the web UI as well, and as `POST /admin/api/compress-existing` and `/admin/api/decompress-existing`.
 
-The pass reads each copy, encodes it, and writes the result to a new path on the same backend. The new row replaces the old one in one transaction, which also moves the backend's quota by the difference and queues the old bytes for deletion; they are deleted once it commits. Readers see either the old copy or the new one, never bytes the row does not describe. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
+The copies of one object that hold the same bytes, by their stored layers and content hash, are converted from one read: the pass downloads one copy, encodes it once, checks the encoding decodes to the content hash, and writes it to a new path on each copy's own backend. A copy without a content hash is read and encoded on its own. The new row replaces the old one in one transaction, which also moves the backend's quota by the difference and queues the old bytes for deletion; they are deleted once it commits. Readers see either the old copy or the new one, never bytes the row does not describe. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
 
 The new copy is recorded only while the copy the pass read is still the recorded one. A client that writes the key mid-pass keeps its write: nothing is recorded, the pass deletes the bytes it wrote, and the copy is counted as `changed` (see [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write)). Each rewritten copy claims its backend with a pending intent for its full new size once it is encoded, so the backend needs room for the new copy beside the old one until the old one is deleted; a backend without that room refuses the rewrite and the copy is skipped. A cordoned backend still admits a rewrite, since it replaces a copy the backend already holds; a draining backend refuses it and the copy is skipped.
 
@@ -78,7 +78,7 @@ That recording is what keeps a batched conversion from costing more than a singl
 
 An encrypted object is decrypted, encoded, and re-encrypted, because compression sits inside encryption. That mints a fresh data key for the rewritten copy - re-encrypting changes the base nonce whatever key is used, so keeping the old one preserves nothing, and the new one is wrapped under whichever key is primary now.
 
-The pass rewrites one copy at a time, so a replicated object is brought over one copy per pass rather than atomically. Copies that differ in stored form are not a problem: every row describes its own bytes.
+Each copy of an object is placed on its own, so a replicated object is not brought over atomically: a copy whose backend refuses the rewrite keeps its old form while the others convert. Copies that differ in stored form are not a problem: every row describes its own bytes.
 
 ## Why the format is chunked
 

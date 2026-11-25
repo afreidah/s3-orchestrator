@@ -109,7 +109,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Encryptor:  enc,
 		EncStore:   store,
 		Locker:     store,
-		Mover:      st.Coord,
+		Rewriter:   st.Coord,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Backlog:    store,

@@ -194,7 +194,7 @@ func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 		ContentHash: hashOf([]byte(writtenBytes)),
 	}
 
-	f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+	f.maybeWrapIntegrityReader(context.Background(), r, loc, false)
 
 	// The client still receives every byte; verification lands at EOF.
 	if _, err := io.ReadAll(r.Body); err != nil {
@@ -227,7 +227,7 @@ func TestMaybeWrapIntegrityReader_GoodCopySurvivesFullRead(t *testing.T) {
 	}
 	loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: hashOf([]byte(writtenBytes))}
 
-	f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+	f.maybeWrapIntegrityReader(context.Background(), r, loc, false)
 
 	if _, err := io.ReadAll(r.Body); err != nil {
 		t.Fatalf("reading wrapped body: %v", err)
@@ -284,7 +284,7 @@ func TestMaybeWrapIntegrityReader_IncompleteReadKeepsCopy(t *testing.T) {
 
 			r := &backend.GetObjectResult{Body: io.NopCloser(tc.body), Size: int64(len(writtenBytes))}
 			loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: hashOf([]byte(writtenBytes))}
-			f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+			f.maybeWrapIntegrityReader(context.Background(), r, loc, false)
 
 			if err := tc.read(r.Body); err != nil {
 				t.Fatalf("read: %v", err)
@@ -333,7 +333,7 @@ func TestMaybeWrapIntegrityReader_LeavesBodyAlone(t *testing.T) {
 			body := io.NopCloser(strings.NewReader("whatever"))
 			r := &backend.GetObjectResult{Body: body, Size: 8}
 
-			f.maybeWrapIntegrityReader(context.Background(), r, tc.loc, key, beName, false)
+			f.maybeWrapIntegrityReader(context.Background(), r, tc.loc, false)
 
 			if r.Body != body {
 				t.Error("response body was wrapped when no verification was possible")

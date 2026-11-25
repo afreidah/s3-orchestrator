@@ -8,8 +8,8 @@
 // the feature adoptable on a fleet that already holds data - and what takes it
 // back out again.
 //
-// Both directions drive the same pagination and per-copy move the encryption
-// passes use, differing only in the listing query and the form each copy
+// Both directions drive the same pagination and per-object rewrite the
+// encryption passes use, differing only in the listing query and the form each copy
 // should end up in. Compression sits inside encryption, so an encrypted copy
 // is unsealed before its bytes are encoded or decoded and sealed again after.
 // -------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ type CompressionDeps struct {
 	Config    config.CompressionConfig
 	Encryptor *encryption.Encryptor
 	Store     RewriteStore
-	Mover     Mover
+	Rewriter  Rewriter
 	Locker    core.AdvisoryLocker
 }
 
@@ -58,7 +58,7 @@ type Compression struct {
 
 // NewCompression is the explicit-deps constructor.
 func NewCompression(d *CompressionDeps) *Compression {
-	must.NotNil("d.Mover", d.Mover)
+	must.NotNil("d.Rewriter", d.Rewriter)
 	must.NotNil("d.Locker", d.Locker)
 	return &Compression{
 		d:      *d,
@@ -69,7 +69,7 @@ func NewCompression(d *CompressionDeps) *Compression {
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, store: c.d.Store, mover: c.d.Mover, locker: c.d.Locker, layers: c.layers}
+	return bulkRewriteEnv{log: c.log, store: c.d.Store, rewriter: c.d.Rewriter, locker: c.d.Locker, layers: c.layers}
 }
 
 // unavailable reports whether the orchestrator runs without a codec or a
@@ -87,10 +87,10 @@ func (c *Compression) unavailable() bool {
 // stored form, applying the same thresholds a PUT does. Objects that do not
 // shrink past the configured ratio are left as they are and counted as skipped.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
+// maxObjects caps how many objects are rewritten, or zero for the whole fleet.
 // Rewritten and declined copies both leave the listing, so running a capped
 // pass again continues with the next batch.
-func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
+func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxObjects int, backend string) (BulkRewriteResult, error) {
 	if c.unavailable() {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -112,16 +112,16 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 				Level:    c.d.Config.Level,
 			},
 		},
-		onDeclined:  c.recordDecline,
-		maxRewrites: maxRewrites,
+		onDeclined: c.recordDecline,
+		maxObjects: maxObjects,
 	}
 	return op.run(ctx, c.rewriteEnv(), obs)
 }
 
 // DecompressExisting decodes every encoded copy and records it as stored
-// verbatim. maxRewrites caps how many copies are rewritten, or zero for the
+// verbatim. maxObjects caps how many objects are rewritten, or zero for the
 // whole fleet; a capped run can be repeated to continue.
-func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
+func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxObjects int, backend string) (BulkRewriteResult, error) {
 	if c.unavailable() {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -131,7 +131,7 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 		counter:     telemetry.DecompressExistingObjectsTotal,
 		layer:       core.StoredCompressed,
 		filter:      core.FormFilter{Backend: backend},
-		maxRewrites: maxRewrites,
+		maxObjects:  maxObjects,
 	}
 	return op.run(ctx, c.rewriteEnv(), obs)
 }

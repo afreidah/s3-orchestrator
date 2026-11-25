@@ -824,17 +824,3 @@ type DirectoryListResult struct {
 	HasMore    bool       `json:"hasMore"`
 	NextCursor string     `json:"nextCursor"`
 }
-
-// -------------------------------------------------------------------------
-// HELPERS
-// -------------------------------------------------------------------------
-
-// GroupByKey groups a flat list of object locations into a map keyed by
-// object_key.
-func GroupByKey(locations []ObjectLocation) map[string][]ObjectLocation {
-	m := make(map[string][]ObjectLocation, len(locations)/2)
-	for i := range locations {
-		m[locations[i].ObjectKey] = append(m[locations[i].ObjectKey], locations[i])
-	}
-	return m
-}

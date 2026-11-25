@@ -7,7 +7,7 @@
 // that each placement carries bytes and a form that agree: an encoding
 // described as an encoding, at the size it actually occupies, with the logical
 // size the client's object still has. These tests drive a real codec over a
-// fake backend and assert on what the mover placed.
+// fake backend and assert on what the rewriter placed.
 //
 // The skip cases get equal weight. A pass that declines most of a fleet is the
 // expected outcome on media or archives, and reporting those as failures would
@@ -34,7 +34,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
@@ -138,19 +137,17 @@ func (s *oneRowStore) serveOnce() []core.ObjectLocation {
 // with, so a test can watch a capped run stop partway rather than seeing every
 // row arrive on one page.
 type pagedStore struct {
-	rows      []core.ObjectLocation
-	pageSizes []int
-	marked    int
+	rows   []core.ObjectLocation
+	marked int
 }
 
-// ListCopiesByForm returns the rows after the cursor, capped at limit, and
-// records what the driver asked for. It serves nothing to a listing of
-// compressed copies: these tests drive the forward pass.
+// ListCopiesByForm returns the rows after the cursor, capped at limit. It
+// serves nothing to a listing of compressed copies: these tests drive the
+// forward pass.
 func (s *pagedStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	if f.With.Has(core.StoredCompressed) {
 		return nil, nil
 	}
-	s.pageSizes = append(s.pageSizes, limit)
 	out := make([]core.ObjectLocation, 0, limit)
 	for i := range s.rows {
 		if s.rows[i].ObjectKey <= after.ObjectKey {
@@ -193,8 +190,8 @@ func pagedRows(n int, size int64) []core.ObjectLocation {
 }
 
 // newCompression builds the service over a fake backend holding payload and
-// a mover that places what the pass reforms.
-func newCompression(t *testing.T, store RewriteStore, cfg config.CompressionConfig, payload []byte) (*Compression, *fakeBackend, *fakeMover) {
+// a rewriter that places what the pass reforms.
+func newCompression(t *testing.T, store RewriteStore, cfg config.CompressionConfig, payload []byte) (*Compression, *fakeBackend, *fakeRewriter) {
 	t.Helper()
 	return newCompressionWith(t, store, cfg, payload, testCodec(t), nil)
 }
@@ -202,26 +199,26 @@ func newCompression(t *testing.T, store RewriteStore, cfg config.CompressionConf
 // newCompressionWith builds the service over the given codec and encryptor,
 // with the fake backend as backend-a, where every row in these tests lives. The
 // codec is an interface so a test can hand in a failing one.
-func newCompressionWith(t *testing.T, store RewriteStore, cfg config.CompressionConfig, payload []byte, codec storedform.Codec, enc *encryption.Encryptor) (*Compression, *fakeBackend, *fakeMover) {
+func newCompressionWith(t *testing.T, store RewriteStore, cfg config.CompressionConfig, payload []byte, codec storedform.Codec, enc *encryption.Encryptor) (*Compression, *fakeBackend, *fakeRewriter) {
 	t.Helper()
 	be := &fakeBackend{payload: payload}
-	mover := &fakeMover{backends: map[string]s3be.ObjectBackend{"backend-a": be}}
+	rewriter := &fakeRewriter{backends: map[string]s3be.ObjectBackend{"backend-a": be}}
 
 	return NewCompression(&CompressionDeps{
 		Codec:     codec,
 		Config:    cfg,
 		Encryptor: enc,
 		Store:     store,
-		Mover:     mover,
+		Rewriter:  rewriter,
 		Locker:    testx.Locker{},
-	}), be, mover
+	}), be, rewriter
 }
 
-// onlyPlacement returns the one copy the mover placed, failing the test when
+// onlyPlacement returns the one copy the rewriter placed, failing the test when
 // there is not exactly one.
-func onlyPlacement(t *testing.T, mover *fakeMover) placedCopy {
+func onlyPlacement(t *testing.T, rewriter *fakeRewriter) placedCopy {
 	t.Helper()
-	placed := mover.placements()
+	placed := rewriter.placements()
 	if len(placed) != 1 {
 		t.Fatalf("placements = %d, want 1", len(placed))
 	}
@@ -248,7 +245,7 @@ func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/file.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
-	svc, be, mover := newCompression(t, store, compressionOn(), payload)
+	svc, be, rewriter := newCompression(t, store, compressionOn(), payload)
 
 	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -261,7 +258,7 @@ func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 		t.Errorf("PutObject calls = %d, want 1", be.puts.Load())
 	}
 
-	placed := onlyPlacement(t, mover)
+	placed := onlyPlacement(t, rewriter)
 	got := placed.form
 	if got.CompressionAlgorithm != compression.Algorithm {
 		t.Errorf("Algorithm = %q, want %q", got.CompressionAlgorithm, compression.Algorithm)
@@ -312,12 +309,12 @@ func TestCompressionPasses_WantedForm(t *testing.T) {
 		ObjectKey: "bucket/secret.txt", BackendName: "backend-a", SizeBytes: int64(len(ciphertext)),
 		Encrypted: true, EncryptionKey: keyData, KeyID: keyID, PlaintextSize: int64(len(plain)),
 	}
-	svc, _, mover := newCompressionWith(t, &oneRowStore{row: row}, compressionOn(), ciphertext, testCodec(t), enc)
+	svc, _, rewriter := newCompressionWith(t, &oneRowStore{row: row}, compressionOn(), ciphertext, testCodec(t), enc)
 
 	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
-	placed := onlyPlacement(t, mover)
+	placed := onlyPlacement(t, rewriter)
 	if got := placed.form.Form() & core.StoredLayers; got != core.StoredLayers {
 		t.Errorf("compress-existing placed %v, want compressed and encrypted", got)
 	}
@@ -370,7 +367,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 		ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	cfg := compressionOn()
-	svc, be, mover := newCompression(t, store, cfg, payload)
+	svc, be, rewriter := newCompression(t, store, cfg, payload)
 
 	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -382,7 +379,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 	if be.puts.Load() != 0 {
 		t.Errorf("PutObject calls = %d, want 0; nothing should be written", be.puts.Load())
 	}
-	if n := len(mover.placements()); n != 0 {
+	if n := len(rewriter.placements()); n != 0 {
 		t.Errorf("placements = %d, want none for an object that was not compressed", n)
 	}
 }
@@ -419,8 +416,8 @@ func TestCompressExisting_StopsAtMax(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
 	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
-	svc, be, mover := newCompression(t, store, compressionOn(), payload)
-	mover.onPlaced = store.rewrote
+	svc, be, rewriter := newCompression(t, store, compressionOn(), payload)
+	rewriter.onPlaced = store.rewrote
 
 	res, err := svc.CompressExisting(context.Background(), nil, 3, "")
 	if err != nil {
@@ -437,24 +434,6 @@ func TestCompressExisting_StopsAtMax(t *testing.T) {
 	}
 }
 
-// TestCompressExisting_MaxNarrowsThePage checks the cap reaches the listing. A
-// run asking for 3 must not pull a full page of a hundred rows it will never
-// look at.
-func TestCompressExisting_MaxNarrowsThePage(t *testing.T) {
-	t.Parallel()
-	payload := compressibleBytes(8192)
-	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
-	svc, _, mover := newCompression(t, store, compressionOn(), payload)
-	mover.onPlaced = store.rewrote
-
-	if _, err := svc.CompressExisting(context.Background(), nil, 3, ""); err != nil {
-		t.Fatalf("CompressExisting: %v", err)
-	}
-	if len(store.pageSizes) == 0 || store.pageSizes[0] != 3 {
-		t.Errorf("first page asked for %v, want 3", store.pageSizes)
-	}
-}
-
 // TestCompressExisting_ResumesWhereTheLastRunStopped is the property that makes
 // a capped run usable without an operator tracking anything: a converted copy
 // leaves the listing, so the next run continues rather than repeating.
@@ -462,8 +441,8 @@ func TestCompressExisting_ResumesWhereTheLastRunStopped(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
 	store := &pagedStore{rows: pagedRows(5, int64(len(payload)))}
-	svc, _, mover := newCompression(t, store, compressionOn(), payload)
-	mover.onPlaced = store.rewrote
+	svc, _, rewriter := newCompression(t, store, compressionOn(), payload)
+	rewriter.onPlaced = store.rewrote
 
 	for range 2 {
 		if _, err := svc.CompressExisting(context.Background(), nil, 2, ""); err != nil {
@@ -485,8 +464,8 @@ func TestCompressExisting_MaxZeroConvertsEverything(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
 	store := &pagedStore{rows: pagedRows(7, int64(len(payload)))}
-	svc, _, mover := newCompression(t, store, compressionOn(), payload)
-	mover.onPlaced = store.rewrote
+	svc, _, rewriter := newCompression(t, store, compressionOn(), payload)
+	rewriter.onPlaced = store.rewrote
 
 	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -630,7 +609,7 @@ func TestDecompressExisting_RestoresStoredBytes(t *testing.T) {
 		CompressionFormatVersion: compression.FormatVersion,
 		LogicalSize:              int64(len(plain)),
 	}}
-	svc, be, mover := newCompression(t, store, compressionOn(), encoded.Bytes())
+	svc, be, rewriter := newCompression(t, store, compressionOn(), encoded.Bytes())
 
 	res, err := svc.DecompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -639,7 +618,7 @@ func TestDecompressExisting_RestoresStoredBytes(t *testing.T) {
 	if res.Succeeded != 1 || res.Failed != 0 {
 		t.Fatalf("counts = %+v, want one succeeded", res)
 	}
-	placed := onlyPlacement(t, mover)
+	placed := onlyPlacement(t, rewriter)
 	if got := placed.form.Form(); got != 0 {
 		t.Errorf("form = %v, want verbatim so the row no longer claims an encoding", got)
 	}
@@ -670,13 +649,13 @@ func TestDecompressExisting_KeepsTheEnvelope(t *testing.T) {
 		CompressionAlgorithm: compression.Algorithm, CompressionFormatVersion: compression.FormatVersion,
 		LogicalSize: int64(len(plain)),
 	}}
-	svc, _, mover := newCompressionWith(t, store, compressionOn(), ciphertext, codec, enc)
+	svc, _, rewriter := newCompressionWith(t, store, compressionOn(), ciphertext, codec, enc)
 
 	res, err := svc.DecompressExisting(context.Background(), nil, 0, "")
 	if err != nil || res.Succeeded != 1 {
 		t.Fatalf("DecompressExisting = %+v, %v; want one succeeded", res, err)
 	}
-	placed := onlyPlacement(t, mover)
+	placed := onlyPlacement(t, rewriter)
 	if got := placed.form.Form() & core.StoredLayers; got != core.StoredEncrypted {
 		t.Fatalf("form = %v, want encrypted only", got)
 	}
@@ -699,9 +678,9 @@ func TestDecompressExisting_KeepsTheEnvelope(t *testing.T) {
 func TestCompressExisting_WithoutCodec(t *testing.T) {
 	t.Parallel()
 	svc := NewCompression(&CompressionDeps{
-		Store:  &oneRowStore{},
-		Mover:  &fakeMover{},
-		Locker: testx.Locker{},
+		Store:    &oneRowStore{},
+		Rewriter: &fakeRewriter{},
+		Locker:   testx.Locker{},
 	})
 
 	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, ErrCompressionUnavailable) {
@@ -743,7 +722,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 	}}
 
 	codec := testCodec(t)
-	svc, be, mover := newCompressionWith(t, store, compressionOn(), ciphertext, codec, enc)
+	svc, be, rewriter := newCompressionWith(t, store, compressionOn(), ciphertext, codec, enc)
 
 	got, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -753,7 +732,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 		t.Fatalf("counts = %+v, want one succeeded", got)
 	}
 
-	placed := onlyPlacement(t, mover)
+	placed := onlyPlacement(t, rewriter)
 	u := placed.form
 	if u.LogicalSize != int64(len(plain)) {
 		t.Errorf("LogicalSize = %d, want the %d bytes the client wrote", u.LogicalSize, len(plain))
@@ -828,7 +807,7 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 		ObjectKey: "bucket/claims-encoding", BackendName: "backend-a", SizeBytes: 64,
 		CompressionAlgorithm: compression.Algorithm, LogicalSize: 4096,
 	}}
-	svc, _, mover := newCompression(t, store, compressionOn(), []byte("not a zstd stream at all"))
+	svc, _, rewriter := newCompression(t, store, compressionOn(), []byte("not a zstd stream at all"))
 
 	res, err := svc.DecompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -837,7 +816,7 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 	if res.Failed != 1 || res.Succeeded != 0 {
 		t.Errorf("counts = %+v, want one failed", res)
 	}
-	if n := len(mover.placements()); n != 0 {
+	if n := len(rewriter.placements()); n != 0 {
 		t.Errorf("placements = %d, want none for an object that could not be decoded", n)
 	}
 }
@@ -895,7 +874,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/file.txt", BackendName: "backend-a", SizeBytes: 4096,
 	}}
-	svc, be, mover := newCompressionWith(t, store, compressionOn(), compressibleBytes(4096),
+	svc, be, rewriter := newCompressionWith(t, store, compressionOn(), compressibleBytes(4096),
 		failingCodec{err: errors.New("encoder exploded")}, nil)
 
 	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
@@ -908,7 +887,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 	if be.puts.Load() != 0 {
 		t.Errorf("PutObject calls = %d, want 0", be.puts.Load())
 	}
-	if n := len(mover.placements()); n != 0 {
+	if n := len(rewriter.placements()); n != 0 {
 		t.Errorf("placements = %d, want none for an object that never encoded", n)
 	}
 }
@@ -958,8 +937,8 @@ func TestCompressExisting_ChangedCopyIsNotAFailure(t *testing.T) {
 	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/raced.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
-	svc, _, mover := newCompression(t, store, compressionOn(), payload)
-	mover.placeErr = fmt.Errorf("place copy: %w", core.ErrCopyChanged)
+	svc, _, rewriter := newCompression(t, store, compressionOn(), payload)
+	rewriter.placeErr = fmt.Errorf("place copy: %w", core.ErrCopyChanged)
 
 	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -977,30 +956,30 @@ func TestCompressExisting_ChangedCopyIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestCompressExisting_MovesTheCopyTheListingReported pins that the move names
-// the copy the listing served, storage key included, since that key is what
-// lets the placement refuse a copy a client replaced.
-func TestCompressExisting_MovesTheCopyTheListingReported(t *testing.T) {
+// TestCompressExisting_RewritesTheCopyTheListingReported pins that the rewrite
+// names the copy the listing served, storage key included, since that key is
+// what lets the placement refuse a copy a client replaced.
+func TestCompressExisting_RewritesTheCopyTheListingReported(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
 	row := core.ObjectLocation{
 		ObjectKey: "bucket/quiet.txt", BackendName: "backend-a", StorageKey: "bucket/quiet.txt!w1",
 		SizeBytes: int64(len(payload)), Identity: &core.ObjectIdentity{ETag: "etag-v1"},
 	}
-	svc, _, mover := newCompression(t, &oneRowStore{row: row}, compressionOn(), payload)
+	svc, _, rewriter := newCompression(t, &oneRowStore{row: row}, compressionOn(), payload)
 
 	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
 
-	reqs := mover.moveRequests()
-	if len(reqs) != 1 {
-		t.Fatalf("MoveObject calls = %d, want 1", len(reqs))
+	reqs := rewriter.requests()
+	if len(reqs) != 1 || len(reqs[0].Copies) != 1 {
+		t.Fatalf("rewrite requests = %+v, want one of one copy", reqs)
 	}
-	if got := reqs[0].Source; got.StorageKey != row.StorageKey || !reflect.DeepEqual(got.Identity, row.Identity) {
-		t.Errorf("moved %+v, want the listed copy at %s", got, row.StorageKey)
+	if got := reqs[0].Copies[0]; got.StorageKey != row.StorageKey || !reflect.DeepEqual(got.Identity, row.Identity) {
+		t.Errorf("rewrote %+v, want the listed copy at %s", got, row.StorageKey)
 	}
-	if reqs[0].DestName != row.BackendName || reqs[0].Profile != writepath.RewriteMove {
-		t.Errorf("move to %q with %+v, want a rewrite onto %s", reqs[0].DestName, reqs[0].Profile, row.BackendName)
+	if !reqs[0].Want.Has(core.StoredCompressed) {
+		t.Errorf("want = %v, want the copy compressed", reqs[0].Want)
 	}
 }

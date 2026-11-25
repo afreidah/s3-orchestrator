@@ -158,7 +158,7 @@ func backfillAction(h *Handler, _ *http.Request) (pass, error) {
 }
 
 // rewriteAction builds the bulk rewrite of kind. The request's max caps how
-// many copies the run rewrites, 0 meaning the whole fleet.
+// many objects the run rewrites, 0 meaning the whole fleet.
 func rewriteAction(kind admin.Rewrite) action {
 	return func(h *Handler, r *http.Request) (pass, error) {
 		maxObjects, err := httputil.QueryCount(r.URL.Query(), adminapi.ParamMax, 0, httputil.NoCeiling)

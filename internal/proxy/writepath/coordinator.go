@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"slices"
 
@@ -33,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -425,15 +423,10 @@ func (w *Coordinator) settleDisplaced(ctx context.Context, key, newBackend strin
 // is the copy the caller read; the move commits only while it is still the
 // copy recorded on its backend. The destination is claimed with an intent at a
 // path minted for the move, so each cleanup deletes exactly its own bytes.
-//
-// Reform, when set, rewrites the bytes on the way and reports the form they
-// then carry. A move with a reform may name the source's own backend as its
-// destination, which is how a rewrite pass replaces a copy.
 type MoveRequest struct {
 	Source   *core.ObjectLocation
 	DestName string
 	Profile  MoveProfile
-	Reform   func(ctx context.Context, src *backend.GetObjectResult) (*storedform.Reformed, error)
 }
 
 // MoveProfile is how one subsystem moves objects: the labels it queues bytes
@@ -443,10 +436,10 @@ type MoveProfile struct {
 	Accepts core.BackendFlags
 }
 
-// RebalanceMove, DrainMove and RewriteMove are the profiles of the subsystems
-// that move objects. A rewrite replaces a copy on its own backend, so a
-// cordoned backend still takes it. ReplicationReasons labels a replica that
-// was never recorded.
+// RebalanceMove and DrainMove are the profiles of the subsystems that move
+// objects, and rewriteMove the one RewriteCopies lands its copies under. A
+// rewrite replaces a copy on its own backend, so a cordoned backend still
+// takes it. ReplicationReasons labels a replica that was never recorded.
 var (
 	RebalanceMove = MoveProfile{
 		Reasons: core.MoveReasons{Orphan: "rebalance_orphan", SourceDelete: "rebalance_source_delete"},
@@ -456,20 +449,19 @@ var (
 		Reasons: core.MoveReasons{Orphan: "drain_orphan", SourceDelete: "drain_source_delete"},
 		Accepts: core.AcceptForWrite,
 	}
-	RewriteMove = MoveProfile{
+	rewriteMove = MoveProfile{
 		Reasons: core.MoveReasons{Orphan: "rewrite_orphan", SourceDelete: "rewrite_source_delete"},
 		Accepts: core.AcceptForRewrite,
 	}
 	ReplicationReasons = core.MoveReasons{Orphan: "replication_orphan"}
 )
 
-// MoveObject moves one object from src to dest for drain, rebalance and the
-// rewrite passes: it claims dest for the bytes, copies them, reformed when the
-// request says how, and places them while removing the source through
-// PlaceCopy, which queues the source's bytes for the cleanup settled here.
-// Returns the moved size, or the wrapped failure: core.ErrCopyChanged when a
-// newer write replaced the source, core.ErrTargetRefused when dest holds a
-// copy or has no room for the bytes.
+// MoveObject moves one object's bytes verbatim from src to dest for drain and
+// rebalance: it claims dest for the bytes, copies them, and places them while
+// removing the source through PlaceCopy, which queues the source's bytes for
+// the cleanup settled here. Returns the moved size, or the wrapped failure:
+// core.ErrCopyChanged when a newer write replaced the source,
+// core.ErrTargetRefused when dest holds a copy or has no room for the bytes.
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
 	key, srcName := req.Source.ObjectKey, req.Source.BackendName
 	src, err := w.core.GetBackend(srcName)
@@ -481,49 +473,40 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 		return 0, err
 	}
 	intent := NewCopyIntent(key, req.DestName, req.Source.SizeBytes, &req.Source.StoredForm)
-	copyReq := &backend.CopyRequest{
-		Src:     backend.Endpoint{Name: srcName, Backend: src},
-		Dst:     backend.Endpoint{Name: req.DestName, Backend: dest},
-		SrcKey:  core.StoragePath(key, req.Source.StorageKey),
-		DstKey:  intent.StorageKey,
-		SrcSize: req.Source.SizeBytes,
-	}
 	placement := &core.Placement{Source: req.Source, Intent: intent, RemoveSource: true, Reasons: req.Profile.Reasons}
-	claimed := false
-	if req.Reform == nil {
-		if err := w.ClaimCopyTarget(ctx, intent, req.Profile.Accepts); err != nil {
-			return 0, fmt.Errorf("claim %s for %s: %w", req.DestName, key, err)
+	return w.landCopy(ctx, placement, req.Profile.Accepts, func(ctx context.Context) error {
+		_, err := w.core.StreamCopy(ctx, &backend.CopyRequest{
+			Src:     backend.Endpoint{Name: srcName, Backend: src},
+			Dst:     backend.Endpoint{Name: req.DestName, Backend: dest},
+			SrcKey:  core.StoragePath(key, req.Source.StorageKey),
+			DstKey:  intent.StorageKey,
+			SrcSize: req.Source.SizeBytes,
+		})
+		if err != nil {
+			return fmt.Errorf("stream copy %s -> %s: %w", srcName, req.DestName, err)
 		}
-		claimed = true
-	} else {
-		// A reform learns its size only once it has encoded the bytes, so the
-		// claim waits for it and admits exactly what will land.
-		copyReq.Transform = func(ctx context.Context, src *backend.GetObjectResult) (io.Reader, int64, func(), error) {
-			out, err := req.Reform(ctx, src)
-			if err != nil {
-				return nil, 0, nil, err
-			}
-			intent.StoredForm, intent.SizeBytes = *out.Form, out.Size
-			if err := w.ClaimCopyTarget(ctx, intent, req.Profile.Accepts); err != nil {
-				out.Release()
-				return nil, 0, nil, err
-			}
-			claimed, placement.Reformed = true, true
-			return out.Body, out.Size, out.Release, nil
-		}
-	}
-	if _, err := w.core.StreamCopy(ctx, copyReq); err != nil {
-		if claimed {
-			w.Discard(ctx, intent, req.Profile.Reasons.Orphan)
-		}
-		return 0, fmt.Errorf("stream copy %s -> %s: %w", srcName, req.DestName, err)
-	}
+		return nil
+	})
+}
 
-	movedSize, err := w.Place(ctx, placement)
-	if err != nil {
-		return 0, fmt.Errorf("place copy %s -> %s: %w", srcName, req.DestName, err)
+// landCopy claims the target of p's intent for its bytes, writes them there
+// through write, and places the copy: the steps a move and a rewrite share. A
+// write that fails discards the intent, so its bytes are cleaned up, and a
+// placement settles whatever it queued, recorded or not.
+func (w *Coordinator) landCopy(ctx context.Context, p *core.Placement, accepts core.BackendFlags, write func(context.Context) error) (int64, error) {
+	target := p.Intent.BackendName
+	if err := w.ClaimCopyTarget(ctx, p.Intent, accepts); err != nil {
+		return 0, fmt.Errorf("claim %s for %s: %w", target, p.Intent.ObjectKey, err)
 	}
-	return movedSize, nil
+	if err := write(ctx); err != nil {
+		w.Discard(ctx, p.Intent, p.Reasons.Orphan)
+		return 0, err
+	}
+	placed, err := w.Place(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("place copy %s -> %s: %w", p.Source.BackendName, target, err)
+	}
+	return placed, nil
 }
 
 // ClaimUploadTarget picks the backend a multipart upload will live on and

@@ -100,7 +100,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		EncStore:   store,
 		CompStore:  store,
 		Locker:     store,
-		Mover:      st.Coord,
+		Rewriter:   st.Coord,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Backlog:    store,
@@ -227,7 +227,7 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 		Ops: &ops.Services{Encryption: ops.NewEncryption(ops.EncryptionDeps{
 			Encryptor: enc,
 			Store:     store,
-			Mover:     opstest.NewMockMover(gomock.NewController(t)),
+			Rewriter:  opstest.NewMockRewriter(gomock.NewController(t)),
 			Locker:    testx.Locker{},
 		})},
 	}}
@@ -421,11 +421,11 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 			t.Parallel()
 			h := &Handler{log: slog.Default(), d: Deps{
 				Ops: &ops.Services{Compression: ops.NewCompression(&ops.CompressionDeps{
-					Codec:  codec,
-					Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-					Store:  store,
-					Mover:  opstest.NewMockMover(gomock.NewController(t)),
-					Locker: testx.Locker{},
+					Codec:    codec,
+					Config:   config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+					Store:    store,
+					Rewriter: opstest.NewMockRewriter(gomock.NewController(t)),
+					Locker:   testx.Locker{},
 				})},
 			}}
 
