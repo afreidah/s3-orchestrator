@@ -101,6 +101,7 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideUsageTracker)
 	do.Provide(inj, ProvideBreakerRegistry)
+	do.Provide(inj, ProvideAdmissionPools)
 	do.Provide(inj, ProvideBackendRuntime)
 	do.Provide(inj, ProvideMetricsCollector)
 	do.Provide(inj, ProvideWriteCoordinator)
@@ -164,6 +165,7 @@ func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
 	provideIf(inj, cfg.Redis != nil, ProvideRedisCounterBackend)
 	provideIf(inj, cfg.Cache.Enabled, ProvideObjectCache)
 	provideIf(inj, cfg.RateLimit.Enabled, ProvideRateLimiter)
+	provideIf(inj, cfg.Server.Admission().WriteCapacity() > 0, ProvideAdmission)
 	provideIf(inj, cfg.UI.Enabled, ProvideLoginThrottle)
 	provideIf(inj, cfg.UI.Enabled, ProvideUIHandler)
 	// The admin API authenticates credentials rather than a configured token, so

@@ -62,7 +62,23 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.187.x (current)
+### v0.188.x (current)
+
+**Admission shares a full pool between virtual buckets ([#1434](https://github.com/afreidah/s3-orchestrator/issues/1434), v0.188.0)**
+
+A request that found its admission pool full was refused at once, or after a brief `admission_wait`, so a virtual bucket running a bulk import that held the pool had every other virtual bucket's requests refused. A request that finds its pool full now waits in its virtual bucket's queue, and each slot that frees goes to the waiting virtual bucket holding the fewest. Requests naming a virtual bucket nobody declared share one queue. Background workers wait in a queue of their own beside the virtual buckets' and hold at most half the pool, instead of taking a free slot only below half full and waiting on a full pool one at a time.
+
+**Operator action items after upgrade:**
+
+- **`server.load_shed_threshold` is removed.** A config that still sets it, even to `0`, refuses to load. Delete the line.
+- **`server.admission_wait` defaults to `1s`,** and `0` takes the default, so a full pool always queues. A full pool used to refuse at once by default. Set a shorter wait to refuse sooner.
+- **A pool queues at most as many requests as it has slots.** Past that, the newest request of the virtual bucket with the most waiting is answered `503 SlowDown`.
+- **Workers get a turn beside each busy virtual bucket.** While clients keep the pool full, background work used to hold one slot. It now takes its turn at freed slots like any one virtual bucket, up to half the pool, so replication, drain and cleanup keep pace with a busy instance.
+- **`s3o_admission_rejections_total` gains `pool` and `reason` labels** (`queue_full`, `wait_expired`). Queries that `sum` it are unchanged.
+- **New metrics:** `s3o_admission_queued{pool}` and `s3o_admission_wait_seconds{pool}`.
+- **`s3o_load_shed_total` is removed.** The bundled dashboard's Load Shedding panel is now Admission Queue; update copies of the dashboard.
+
+### v0.187.x
 
 **A backend that signs `!` unescaped is learned and sent it literal ([#1945](https://github.com/afreidah/s3-orchestrator/issues/1945), v0.187.1)**
 

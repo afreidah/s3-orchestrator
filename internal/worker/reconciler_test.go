@@ -251,6 +251,6 @@ func declaredBuckets(names ...string) *provisioning.Declared {
 		buckets = append(buckets, provisioning.Bucket{Name: n, Source: provisioning.SourceStore})
 	}
 	d := provisioning.NewDeclared()
-	d.Store(&buckets)
+	d.Store(buckets)
 	return d
 }

@@ -62,7 +62,6 @@ func newTestCore(t *testing.T) *BackendRuntime {
 		Usage:           tracker,
 		RoutingStrategy: config.RoutingPack,
 		Profiles:        map[string]core.BackendProfile{"b2": {MaxObjectSize: 1024}},
-		AdmissionSem:    make(chan struct{}, 2),
 	})
 }
 
@@ -450,7 +449,6 @@ func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[str
 		BackendTimeout:  100 * time.Millisecond,
 		Usage:           tracker,
 		RoutingStrategy: config.RoutingPack,
-		AdmissionSem:    make(chan struct{}, 2),
 	})
 }
 
@@ -702,32 +700,4 @@ func TestCore_WithTimeout_ProducesUsableCancel(t *testing.T) {
 	if ctx.Err() == nil {
 		t.Error("cancel() did not cancel returned ctx")
 	}
-}
-
-// -------------------------------------------------------------------------
-// ADMISSION FORWARDERS
-// -------------------------------------------------------------------------
-
-func TestCore_AdmissionForwarders(t *testing.T) {
-	t.Parallel()
-	c := newTestCore(t)
-	if c.AdmissionSem() == nil {
-		t.Error("AdmissionSem() returned nil despite sem wired in config")
-	}
-	first, ok := c.AcquireAdmission(context.Background())
-	if !ok {
-		t.Fatal("first AcquireAdmission failed")
-	}
-	second, ok := c.AcquireAdmission(context.Background())
-	if !ok {
-		t.Fatal("second AcquireAdmission (sem cap 2) failed")
-	}
-	// Third should fail under a cancelled ctx.
-	cctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, ok := c.AcquireAdmission(cctx); ok {
-		t.Error("third AcquireAdmission succeeded against full sem with cancelled ctx")
-	}
-	first()
-	second()
 }

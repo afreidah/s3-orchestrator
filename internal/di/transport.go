@@ -79,7 +79,7 @@ func ProvideDeclared(i do.Injector) (*provisioning.Declared, error) {
 		return nil, err
 	}
 	declared := provisioning.NewDeclared()
-	declared.Store(new(p.buckets))
+	declared.Store(p.buckets)
 	return declared, nil
 }
 
@@ -118,6 +118,19 @@ func ProvideCORS(i do.Injector) (*cors.Policy, error) {
 	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
 	policy.SetRules(p.cors)
 	return policy, nil
+}
+
+// ProvideAdmission creates the S3 admission controller over the admission
+// pools, telling virtual buckets apart by the live declared set.
+func ProvideAdmission(i do.Injector) (*s3api.AdmissionController, error) {
+	r := NewResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	pools := r.Resolve[*AdmissionPools]()
+	declared := r.Resolve[*provisioning.Declared]()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return s3api.NewAdmissionController(pools.Reads, pools.Writes, declared, cfg.Server.AdmissionWait), nil
 }
 
 // ProvideRateLimiter creates the per-IP rate limiter.

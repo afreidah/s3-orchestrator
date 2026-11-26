@@ -2495,8 +2495,8 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(s3o_admission_rejections_total[5m]))",
-          "legendFormat": "rejections per 5m"
+          "expr": "sum by (pool, reason) (increase(s3o_admission_rejections_total[5m]))",
+          "legendFormat": "{{pool}} {{reason}} per 5m"
         }
       ],
       "options": {
@@ -2521,7 +2521,7 @@
     {
       "type": "timeseries",
       "id": 65,
-      "title": "Load Shedding",
+      "title": "Admission Queue",
       "gridPos": {
         "x": 0,
         "y": 113,
@@ -2534,8 +2534,8 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(s3o_load_shed_total[5m]))",
-          "legendFormat": "shed"
+          "expr": "sum by (pool) (s3o_admission_queued)",
+          "legendFormat": "{{pool}} waiting"
         }
       ],
       "options": {

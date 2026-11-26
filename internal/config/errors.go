@@ -196,6 +196,10 @@ var (
 	ErrRemovedProxyToken = errors.New(
 		"credential token has been removed: give the credential an " +
 			"access_key_id and secret_access_key instead")
+
+	ErrRemovedLoadShed = errors.New(
+		"server.load_shed_threshold has been removed: a full pool queues each " +
+			"request by virtual bucket for up to server.admission_wait; delete the line")
 )
 
 // Rate limit errors.

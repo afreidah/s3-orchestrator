@@ -211,8 +211,8 @@ scenario. Typical candidates:
   with low CPU on the orchestrator
 - **Cache thrashing** when cache-warm and cache-cold P95 converge
   (working set exceeds cache size)
-- **Admission control** kicks in via `s3o_admission_rejections_total`
-  and `s3o_load_shed_total` non-zero
+- **Admission control** kicks in via `s3o_admission_queued` and
+  `s3o_admission_rejections_total` non-zero
 - **Multipart Postgres contention** on the row lock each part takes on
   its upload's `multipart_uploads` row at high concurrency
 

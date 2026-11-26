@@ -79,6 +79,8 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"LiveRegistry", func(i do.Injector) error { _, err := ProvideLiveRegistry(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
 		{"RateLimiter", func(i do.Injector) error { _, err := ProvideRateLimiter(i); return err }},
+		{"AdmissionPools", func(i do.Injector) error { _, err := ProvideAdmissionPools(i); return err }},
+		{"Admission", func(i do.Injector) error { _, err := ProvideAdmission(i); return err }},
 		{"UIHandler", func(i do.Injector) error { _, err := ProvideUIHandler(i); return err }},
 		{"AdminHandler", func(i do.Injector) error { _, err := ProvideAdminHandler(i); return err }},
 		{"Notifier", func(i do.Injector) error { _, err := ProvideNotifier(i); return err }},

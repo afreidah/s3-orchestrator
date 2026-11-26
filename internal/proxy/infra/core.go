@@ -16,6 +16,7 @@ package infra
 import (
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/admission"
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -33,8 +34,8 @@ type StateChecker interface {
 
 // Config bundles every input *BackendRuntime needs at construction. Exposed so
 // callers (root proxy package, tests) can build a *BackendRuntime directly. A
-// nil AdmissionSem means unbounded admission, a zero BackendTimeout disables
-// the per-call timeout, and a nil Pressure judges no backend under pressure.
+// nil Admission admits without limit, a zero BackendTimeout disables the
+// per-call timeout, and a nil Pressure judges no backend under pressure.
 type Config struct {
 	Backends        map[string]backend.ObjectBackend
 	Order           []string
@@ -44,7 +45,7 @@ type Config struct {
 	Pressure        *counter.PressureTracker
 	RoutingStrategy config.RoutingStrategy
 	Profiles        map[string]core.BackendProfile
-	AdmissionSem    chan struct{}
+	Admission       *admission.Pool
 }
 
 // BackendRuntime holds the shared backend infrastructure. It holds no store:
@@ -52,19 +53,17 @@ type Config struct {
 // belong here, see docs/style-guide.md "Where new methods live". states is
 // wired after construction by SetStateChecker.
 type BackendRuntime struct {
-	cfg        Config
-	states     StateChecker
-	recorder   *accounting.Recorder
-	workerTurn chan struct{}
+	cfg      Config
+	states   StateChecker
+	recorder *accounting.Recorder
 }
 
 // New constructs a *BackendRuntime from cfg. The accounting Recorder is built
 // here so every consumer shares one instance over the same usage tracker.
 func New(cfg *Config) *BackendRuntime {
 	return &BackendRuntime{
-		cfg:        *cfg,
-		recorder:   accounting.New(cfg.Usage, cfg.Pressure, telemetry.ManagerOps.Record),
-		workerTurn: make(chan struct{}, 1),
+		cfg:      *cfg,
+		recorder: accounting.New(cfg.Usage, cfg.Pressure, telemetry.ManagerOps.Record),
 	}
 }
 

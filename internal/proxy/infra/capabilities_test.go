@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Focused tests for each concern *BackendRuntime covers - registry, usage
-// limits, timeouts, error classification, admission - each on a runtime
-// holding only the fields that concern reads, with no metrics collector or DB.
+// limits, timeouts, error classification - each on a runtime holding only the
+// fields that concern reads, with no metrics collector or DB.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -315,39 +315,5 @@ func TestErrorClassifier_PassesThroughUnknownErrors(t *testing.T) {
 	got := c.ClassifyWriteError(span, s3op.PutObject, in)
 	if !errors.Is(got, in) {
 		t.Errorf("got %v, want chain containing %v", got, in)
-	}
-}
-
-// -------------------------------------------------------------------------
-// admissionGate
-// -------------------------------------------------------------------------
-
-func TestAdmissionGate_NoSemAcquireAlwaysSucceeds(t *testing.T) {
-	t.Parallel()
-	g := &BackendRuntime{}
-	release, ok := g.AcquireAdmission(context.Background())
-	if !ok {
-		t.Fatal("AcquireAdmission returned false with no sem wired")
-	}
-	release() // must not panic
-}
-
-func TestAdmissionGate_BoundedSemBlocksWhenFull(t *testing.T) {
-	t.Parallel()
-	g := New(&Config{AdmissionSem: make(chan struct{}, 1)})
-	release, ok := g.AcquireAdmission(context.Background())
-	if !ok {
-		t.Fatal("first AcquireAdmission failed")
-	}
-	// A second acquire fails when ctx is already cancelled.
-	cctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, ok := g.AcquireAdmission(cctx); ok {
-		t.Error("AcquireAdmission succeeded against a full sem with cancelled ctx")
-	}
-	release()
-	// After a release the slot is reusable.
-	if _, ok := g.AcquireAdmission(context.Background()); !ok {
-		t.Error("AcquireAdmission after a release failed")
 	}
 }

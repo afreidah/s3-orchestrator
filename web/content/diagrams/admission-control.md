@@ -18,19 +18,21 @@ window.s3oDiagram = {
     'flowchart TD',
     '    REQ([S3 Request]):::start --> AC{Admission<br>Controller}:::decision',
     '    AC -->|no pool configured| RL',
-    '    AC -->|global pool| GSEM[Global<br>Semaphore]:::pool',
+    '    AC -->|global pool| GPOOL[Global<br>Pool]:::pool',
     '    AC -->|split pools| SPLIT{Write?}:::decision',
-    '    SPLIT -->|PUT/POST/DEL| WSEM[Write Sem]:::pool',
-    '    SPLIT -->|GET/HEAD| RSEM[Read Sem]:::pool',
-    '    GSEM --> SHED{Load Shed<br>Pressure}:::decision',
-    '    WSEM --> SHED',
-    '    RSEM --> SHED',
-    '    SHED -->|shed ramp| R503S[503 SlowDown<br>Shed]:::reject',
-    '    SHED -->|ok| TRY{Acquire<br>Slot}:::decision',
-    '    TRY -->|got slot| RL',
-    '    TRY -->|full| WAIT{Brief<br>Wait}:::decision',
-    '    WAIT -->|acquired| RL',
-    '    WAIT -->|timeout| R503H[503 SlowDown<br>Hard]:::reject',
+    '    SPLIT -->|PUT/POST/DEL| WPOOL[Write Pool]:::pool',
+    '    SPLIT -->|GET/HEAD| RPOOL[Read Pool]:::pool',
+    '    GPOOL --> FLOW[Request Flow<br>by Virtual Bucket]:::process',
+    '    WPOOL --> FLOW',
+    '    RPOOL --> FLOW',
+    '    FLOW --> TRY{Free Slot,<br>None Waiting?}:::decision',
+    '    TRY -->|yes| RL',
+    '    TRY -->|no| QFULL{Queue<br>Full?}:::decision',
+    '    QFULL -->|own request flow longest| R503Q[503 SlowDown<br>Queue Full]:::reject',
+    '    QFULL -->|room, or another pushed out| WAIT{Wait in<br>Queue}:::decision',
+    '    WAIT -->|slot handed over| RL',
+    '    WAIT -->|pushed out| R503Q',
+    '    WAIT -->|admission_wait ran out| R503H[503 SlowDown<br>Wait Expired]:::reject',
     '    RL{Rate<br>Limiter}:::decision',
     '    RL -->|disabled or ok| AUTH',
     '    RL -->|exceeded| R429[429 SlowDown]:::reject',
@@ -61,57 +63,62 @@ window.s3oDiagram = {
     REQ: {
       title: 'S3 Request',
       badge: 'process', badgeText: 'entry point',
-      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries an AWS SigV4 <code>Authorization</code> header or presigned URL query parameters, along with HTTP method and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) in <code>Server.ServeHTTP</code>, which runs inside the admission and rate-limit middleware. Load-shed, admission and rate-limit rejections therefore carry no <code>X-Amz-Request-Id</code>.</p>'
+      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries an AWS SigV4 <code>Authorization</code> header or presigned URL query parameters, along with HTTP method and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) in <code>Server.ServeHTTP</code>, which runs inside the admission and rate-limit middleware. Admission and rate-limit rejections therefore carry no <code>X-Amz-Request-Id</code>.</p>'
     },
     AC: {
       title: 'Admission Controller',
       badge: 'decision', badgeText: 'middleware',
-      body: '<p>Channel-based semaphore that caps concurrent in-flight operations. Prevents backend overload under burst traffic.</p><p><b>Global pool</b>: one <code>chan struct{}</code> for all requests, sized by <code>server.max_concurrent_requests</code> (default 1000). Used when split mode is not configured.<br><b>Split pools</b>: separate read and write channels, used when both <code>server.max_concurrent_reads</code> and <code>server.max_concurrent_writes</code> are above zero.</p><p>There is no switch to turn admission off. When all three settings are 0, <code>max_concurrent_requests</code> defaults to 1000. No middleware is installed only when exactly one of reads or writes is set and <code>max_concurrent_requests</code> is 0.</p><p>Background workers (cleanup, drainer, over_replication, pending_reaper, rebalancer, replicator) acquire from the same runtime semaphore. In global mode that is the one pool shared by everything. In split mode it is the write pool: HTTP writes share it with the workers, and the HTTP read pool is separate.</p>'
+      body: '<p>Caps concurrent in-flight S3 requests and shares the cap between virtual buckets. Prevents backend overload under burst traffic.</p><p><b>Global pool</b>: one pool for all requests, sized by <code>server.max_concurrent_requests</code> (default 1000). Used when neither split limit is set.<br><b>Split pools</b>: separate read and write pools, used when <code>server.max_concurrent_reads</code> or <code>server.max_concurrent_writes</code> is set. The one left unset takes <code>max_concurrent_requests</code>, or 1000 when that is unset too.</p><p>There is no switch to turn admission off. When all three settings are 0, <code>max_concurrent_requests</code> defaults to 1000.</p><p>Background workers (cleanup, drainer, over_replication, pending_reaper, rebalancer, replicator) are admitted from the runtime pool as a request flow of their own and hold at most half of it. In global mode that is the one pool shared by everything. In split mode it is the write pool: HTTP writes share it with the workers, and the HTTP read pool is separate.</p>'
     },
-    GSEM: {
-      title: 'Global Semaphore',
+    GPOOL: {
+      title: 'Global Pool',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Single buffered channel shared by all request types (GET, PUT, DELETE, HEAD, POST).</p><p>Capacity set by <code>server.max_concurrent_requests</code> (default 1000). Each in-flight request holds one slot; released on handler return via <code>defer</code>. Background workers draw from the same pool.</p>'
+      body: '<p>One pool shared by all request types (GET, PUT, DELETE, HEAD, POST).</p><p>Capacity set by <code>server.max_concurrent_requests</code> (default 1000). Each in-flight request holds one slot, given back when the handler returns. Background workers draw from the same pool.</p>'
     },
     SPLIT: {
       title: 'Write Check',
       badge: 'decision', badgeText: 'router',
-      body: '<p>Routes to the correct pool based on HTTP method.</p><p><b>Write</b>: PUT, POST, DELETE &rarr; write semaphore<br><b>Read</b>: GET, HEAD &rarr; read semaphore</p><p>Isolates write load so heavy uploads can\'t starve reads.</p>'
+      body: '<p>Routes to the correct pool based on HTTP method.</p><p><b>Write</b>: PUT, POST, DELETE &rarr; write pool<br><b>Read</b>: GET, HEAD &rarr; read pool</p><p>Isolates write load so heavy uploads can\'t starve reads.</p>'
     },
-    WSEM: {
-      title: 'Write Semaphore',
+    WPOOL: {
+      title: 'Write Pool',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Dedicated buffered channel for write operations (PUT/POST/DELETE).</p><p>Capacity set by <code>server.max_concurrent_writes</code>. This is the runtime semaphore that background workers also acquire from, so size it for HTTP writes and worker traffic together.</p>'
+      body: '<p>Dedicated pool for write operations (PUT/POST/DELETE).</p><p>Capacity set by <code>server.max_concurrent_writes</code>. Background workers are admitted from it too, so size it for HTTP writes and worker traffic together.</p>'
     },
-    RSEM: {
-      title: 'Read Semaphore',
+    RPOOL: {
+      title: 'Read Pool',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Dedicated buffered channel for read operations (GET/HEAD).</p><p>Capacity set by <code>server.max_concurrent_reads</code>. Used only by HTTP reads, so reads remain responsive under heavy write or worker load.</p>'
+      body: '<p>Dedicated pool for read operations (GET/HEAD).</p><p>Capacity set by <code>server.max_concurrent_reads</code>. Used only by HTTP reads, so reads remain responsive under heavy write or worker load.</p>'
     },
-    SHED: {
-      title: 'Load Shed Pressure',
-      badge: 'decision', badgeText: 'probabilistic',
-      body: '<p>Probabilistic early rejection before the hard concurrency limit, set by <code>server.load_shed_threshold</code> (e.g. 0.8 = 80%). Rejection probability ramps <b>linearly</b> from 0% at the threshold to 100% at full capacity.</p><p>In slots: <code>t = int(threshold * capacity)</code>, <code>p = (occupancy - t) / (capacity - t)</code>. Shedding starts when occupancy reaches <code>t</code>.</p><p>Uses a <code>math/rand/v2</code> <code>Float64()</code> coin flip. Set <code>server.load_shed_threshold: 0</code> (the default) to disable.</p>'
-    },
-    R503S: {
-      title: '503 SlowDown (Shed)',
-      badge: 'reject', badgeText: 'rejection',
-      body: '<p>Active load shedding rejection. The probabilistic ramp decided to shed this request before the hard limit.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code> and S3-formatted XML error body (<code>SlowDown</code>).</p><p class="ac-metric">Metric: s3o_load_shed_total</p>'
+    FLOW: {
+      title: 'Request Flow by Virtual Bucket',
+      badge: 'process', badgeText: 'classification',
+      body: '<p>Names the queue the request waits in if its pool is full: its virtual bucket when the bucket in the path is declared, in the config file or the store, and otherwise one request flow every other request shares, ListBuckets and names nobody declared included.</p><p>Admission runs before authentication, so a client sending made-up bucket names lands in that one shared queue instead of opening one per name. A virtual bucket provisioned at runtime gets its own request flow at once.</p>'
     },
     TRY: {
-      title: 'Acquire Slot',
-      badge: 'decision', badgeText: 'non-blocking',
-      body: '<p>Non-blocking <code>select</code> on the semaphore channel. If a slot is immediately available, the request passes through and the slot is held until the handler returns.</p><p>If the channel is full, falls through to the wait path (or instant rejection if <code>admission_wait</code> is 0).</p>'
+      title: 'Free Slot, None Waiting?',
+      badge: 'decision', badgeText: 'fast path',
+      body: '<p>A request takes a slot at once when one is free and nobody in its pool is waiting, and holds it until the handler returns.</p><p>Otherwise it joins its request flow\'s queue, so a request arriving just as a slot frees cannot take it ahead of the ones already waiting.</p>'
+    },
+    QFULL: {
+      title: 'Queue Full?',
+      badge: 'decision', badgeText: 'bounded queue',
+      body: '<p>A pool queues at most as many requests as it has slots.</p><p>When the queue is full, the newest request of the request flow with the most waiting is refused to make room, so one virtual bucket cannot fill the queue. If the arriving request\'s own request flow has as many waiting as any, it is refused instead.</p>'
+    },
+    R503Q: {
+      title: '503 SlowDown (Queue Full)',
+      badge: 'reject', badgeText: 'rejection',
+      body: '<p>The pool\'s queue was full and this request\'s virtual bucket had the most waiting: refused on arrival, or pushed out of the queue by a request from a virtual bucket with fewer waiting.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code> and an S3 XML <code>SlowDown</code> body.</p><p class="ac-metric">Metric: s3o_admission_rejections_total{reason="queue_full"}</p>'
     },
     WAIT: {
-      title: 'Brief Wait',
-      badge: 'decision', badgeText: 'timed wait',
-      body: '<p>When the semaphore is full, waits up to <code>admission_wait</code> duration for a slot to open.</p><p>Uses <code>time.NewTimer</code> with a three-way <code>select</code>: semaphore acquired, timer expired, or request context cancelled.</p><p>Default <code>admission_wait: 0</code> means instant rejection (no wait).</p>'
+      title: 'Wait in Queue',
+      badge: 'decision', badgeText: 'fair queueing',
+      body: '<p>Waits up to <code>server.admission_wait</code> (default 1s) in its request flow\'s queue.</p><p>Each slot that frees goes to the waiting request flow holding the fewest slots, and between request flows holding as many, to the request that has waited longest. A virtual bucket running a bulk import keeps what it holds, but the others are served before its next request. Background work takes its turn the same way while it holds under half the pool.</p><p class="ac-metric">Metrics: s3o_admission_queued, s3o_admission_wait_seconds</p>'
     },
     R503H: {
-      title: '503 SlowDown (Hard)',
+      title: '503 SlowDown (Wait Expired)',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Hard admission rejection: no slot was free, and the wait timer (if any) expired without acquiring one.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p>If the client disconnects during the wait, nothing is written and <code>s3o_admission_client_canceled_total</code> is incremented instead.</p><p class="ac-metric">Metric: s3o_admission_rejections_total</p>'
+      body: '<p>No slot reached the request within <code>admission_wait</code>.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p>If the client disconnects during the wait, nothing is written and <code>s3o_admission_client_canceled_total</code> is incremented instead.</p><p class="ac-metric">Metric: s3o_admission_rejections_total{reason="wait_expired"}</p>'
     },
     RL: {
       title: 'Rate Limiter',
@@ -228,7 +235,7 @@ window.s3oDiagram = {
 |------|---------|
 | <span class="dg-swatch dg-entry"></span> | Entry point |
 | <span class="dg-swatch dg-decision"></span> | Decision / routing |
-| <span class="dg-swatch dg-storage"></span> | Concurrency pool (semaphore) |
+| <span class="dg-swatch dg-storage"></span> | Concurrency pool |
 | <span class="dg-swatch dg-background"></span> | Processing step |
 | <span class="dg-swatch dg-reject"></span> | Rejection (4xx/5xx) |
 | <span class="dg-swatch dg-success"></span> | Success / read operation |

@@ -1,23 +1,26 @@
 // -------------------------------------------------------------------------------
-// Admission Controller - Concurrent Request Limiter with Read/Write Pools
+// Admission Controller - Concurrency Shared Fairly Between Virtual Buckets
 //
 // Author: Alex Freidah
 //
-// Server-level admission control using channel-based semaphores. Supports a
-// single global pool or separate read/write pools. Optional active load
-// shedding probabilistically rejects requests before the hard limit using a
-// linear ramp from a configurable pressure threshold to full capacity. When
-// the concurrency limit is reached, new requests are rejected with 503
-// SlowDown and a Retry-After header.
+// Server-level admission control over a read pool and a write pool, which are
+// one pool when they are not split. Each declared virtual bucket's requests
+// are a request flow of their own, and every request naming a virtual bucket
+// nobody declared shares one, so a name a client makes up cannot open a queue
+// of its own. A request that finds its pool full waits in its request flow's
+// queue, and a freed slot goes to the request flow holding the fewest, so one
+// virtual bucket's bulk import cannot keep the others waiting behind it. A
+// request refused a slot is answered 503 SlowDown with a Retry-After header.
 // -------------------------------------------------------------------------------
 
 package s3api
 
 import (
-	"math/rand/v2"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/admission"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -26,55 +29,59 @@ import (
 // TYPE
 // -------------------------------------------------------------------------
 
-// AdmissionController limits the number of concurrent in-flight requests.
-// When readSem and writeSem are set, reads and writes are tracked in
-// separate pools; otherwise the global sem is used for all requests.
-// shedThreshold is the pool fraction shedding starts at (0.8 sheds at 80%),
-// zero for none; admissionWait is how long a request waits for a slot, zero
-// to refuse at once.
+// BucketChecker reports whether a virtual bucket is declared, counting both
+// the config file and the store. *provisioning.Declared satisfies it.
+type BucketChecker interface {
+	Contains(name string) bool
+}
+
+// AdmissionController admits S3 reads from the reads pool and writes from the
+// writes pool. wait is how long a request waits for a slot before it is
+// refused.
 type AdmissionController struct {
-	sem           chan struct{}
-	readSem       chan struct{}
-	writeSem      chan struct{}
-	shedThreshold float64
-	admissionWait time.Duration
+	reads   *admission.Pool
+	writes  *admission.Pool
+	buckets BucketChecker
+	wait    time.Duration
+}
+
+// NewAdmissionController admits reads from reads and writes from writes, the
+// same pool when they are not split, telling virtual buckets apart by buckets.
+func NewAdmissionController(reads, writes *admission.Pool, buckets BucketChecker, wait time.Duration) *AdmissionController {
+	return &AdmissionController{reads: reads, writes: writes, buckets: buckets, wait: wait}
 }
 
 // -------------------------------------------------------------------------
-// CONSTRUCTORS AND CONFIG
+// MIDDLEWARE
 // -------------------------------------------------------------------------
 
-// AdmissionLimits shapes how a full pool is handled. ShedThreshold is the
-// fraction of pool capacity (0.0-1.0) past which requests are probabilistically
-// rejected before the hard limit; Wait is how long to hold a request at a full
-// semaphore before rejecting it. Both zero (the default) means no early
-// shedding and instant rejection. The limits are fixed at construction because
-// every request goroutine reads them without synchronization.
-type AdmissionLimits struct {
-	ShedThreshold float64
-	Wait          time.Duration
+// Middleware wraps an http.Handler with admission control. A request refused a
+// slot is answered 503 SlowDown with Retry-After, and one whose client gave up
+// while it waited is answered nothing and not counted as refused.
+func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pool := ac.reads
+		if isWriteMethod(r.Method) {
+			pool = ac.writes
+		}
+		slot, err := pool.Acquire(r.Context(), ac.requestFlowName(r.URL.Path), ac.wait)
+		switch {
+		case err == nil:
+			defer slot.Release()
+			next.ServeHTTP(w, r)
+		case r.Context().Err() != nil:
+			telemetry.AdmissionClientCanceledTotal.Inc()
+		default:
+			telemetry.AdmissionRejectionsTotal.WithLabelValues(pool.Name(), rejectionReason(err)).Inc()
+			httputil.RefuseThrottled(w, r, WriteS3Error, &admissionRejected)
+		}
+	})
 }
 
-// NewAdmissionControllerFromSem creates an admission controller backed by
-// an externally owned semaphore. Use this when background services should
-// share the same concurrency budget as HTTP requests.
-func NewAdmissionControllerFromSem(sem chan struct{}, lim AdmissionLimits) *AdmissionController {
-	return &AdmissionController{
-		sem:           sem,
-		shedThreshold: lim.ShedThreshold,
-		admissionWait: lim.Wait,
-	}
-}
-
-// NewSplitAdmissionControllerFromSem creates an admission controller backed
-// by externally owned read and write semaphores.
-func NewSplitAdmissionControllerFromSem(readSem, writeSem chan struct{}, lim AdmissionLimits) *AdmissionController {
-	return &AdmissionController{
-		readSem:       readSem,
-		writeSem:      writeSem,
-		shedThreshold: lim.ShedThreshold,
-		admissionWait: lim.Wait,
-	}
+// admissionRejected is how admission turns away a request that found its pool
+// full past its wait or its queue.
+var admissionRejected = httputil.Throttled{
+	Event: "s3.AdmissionRejected", Status: http.StatusServiceUnavailable, Message: "Server at capacity",
 }
 
 // isWriteMethod reports whether the HTTP method is a write operation.
@@ -84,95 +91,21 @@ func isWriteMethod(method string) bool {
 		method == http.MethodDelete
 }
 
-// -------------------------------------------------------------------------
-// MIDDLEWARE
-// -------------------------------------------------------------------------
-
-// Middleware wraps an http.Handler with admission control. Requests that
-// exceed the concurrency limit receive 503 SlowDown with Retry-After.
-// When a shed threshold is configured, requests may be probabilistically
-// rejected before the hard limit based on current pool pressure.
-func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sem := ac.semFor(r.Method)
-
-		if ac.shedThreshold > 0 && ac.shouldShed(sem) {
-			telemetry.LoadShedTotal.Inc()
-			httputil.RefuseThrottled(w, r, WriteS3Error, &loadShed)
-			return
-		}
-
-		select {
-		case sem <- struct{}{}:
-			defer func() { <-sem }()
-			next.ServeHTTP(w, r)
-			return
-		default:
-		}
-
-		if ac.admissionWait > 0 {
-			timer := time.NewTimer(ac.admissionWait)
-			defer timer.Stop()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				next.ServeHTTP(w, r)
-				return
-			case <-timer.C:
-				// Wait elapsed without admission. Fall through to capacity rejection.
-			case <-r.Context().Done():
-				// Client gave up before we could admit. Don't count this as a
-				// server-side rejection or write a response to a closed connection.
-				telemetry.AdmissionClientCanceledTotal.Inc()
-				return
-			}
-		}
-
-		telemetry.AdmissionRejectionsTotal.Inc()
-		httputil.RefuseThrottled(w, r, WriteS3Error, &admissionRejected)
-	})
+// rejectionReason labels why a request was refused a slot: its pool's queues
+// were full, or its wait ran out.
+func rejectionReason(err error) string {
+	if errors.Is(err, admission.ErrQueueFull) {
+		return "queue_full"
+	}
+	return "wait_expired"
 }
 
-// The two ways admission turns a request away: shed early under pressure, or
-// refused once the pool stayed full past the wait.
-var (
-	loadShed = httputil.Throttled{
-		Event: "s3.LoadShed", Status: http.StatusServiceUnavailable, Message: "Server at capacity",
+// requestFlowName names the request flow a request waits in: its virtual
+// bucket when one is declared, and otherwise the one every other request
+// shares.
+func (ac *AdmissionController) requestFlowName(path string) string {
+	if bucket, ok := BucketFromPath(path); ok && ac.buckets.Contains(bucket) {
+		return bucket
 	}
-	admissionRejected = httputil.Throttled{
-		Event: "s3.AdmissionRejected", Status: http.StatusServiceUnavailable, Message: "Server at capacity",
-	}
-)
-
-// -------------------------------------------------------------------------
-// LOAD SHEDDING
-// -------------------------------------------------------------------------
-
-// shouldShed returns true if the request should be probabilistically
-// rejected based on current pool pressure. Shedding probability ramps
-// linearly from 0% at the threshold to 100% at full capacity. The
-// threshold is computed with int() truncation, and shedding begins when
-// occupancy reaches or exceeds the threshold (not one above it).
-func (ac *AdmissionController) shouldShed(sem chan struct{}) bool {
-	occupancy := len(sem)
-	capacity := cap(sem)
-	threshold := int(ac.shedThreshold * float64(capacity))
-	if occupancy < threshold {
-		return false
-	}
-	p := float64(occupancy-threshold) / float64(capacity-threshold)
-	return rand.Float64() < p //nolint:gosec // G404: load shed probability does not require crypto-strength randomness
-}
-
-// semFor returns the appropriate semaphore for the given HTTP method.
-// When split pools are configured, writes use writeSem and reads use
-// readSem. Otherwise the global sem is returned.
-func (ac *AdmissionController) semFor(method string) chan struct{} {
-	if ac.sem != nil {
-		return ac.sem
-	}
-	if isWriteMethod(method) {
-		return ac.writeSem
-	}
-	return ac.readSem
+	return ""
 }

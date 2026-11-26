@@ -59,7 +59,6 @@ type fleetOpts struct {
 	Encryptor          *encryption.Encryptor    // turns on at-rest encryption for the upload
 	Codec              Codec                    // with Compression below, encodes the assembled object
 	Compression        config.CompressionConfig //
-	AdmissionSem       chan struct{}            // bounds concurrent backend writes, for admission tests
 	BackendTimeout     time.Duration            // overrides the per-call bound; defaults to fleetTimeout
 	EnforceMinPartSize bool                     // turns on the S3 5 MiB non-final part floor
 
@@ -118,7 +117,6 @@ func newFleet(
 		Usage:           usage,
 		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: config.RoutingPack,
-		AdmissionSem:    opts.AdmissionSem,
 	})
 
 	live := config.NewLive(&config.Config{})

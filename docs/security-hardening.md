@@ -336,11 +336,10 @@ server:
   max_concurrent_requests: 30    # default 1000 when no read/write split is set
   # max_concurrent_reads: 20     # separate read limit (optional)
   # max_concurrent_writes: 10    # separate write limit (optional)
-  # load_shed_threshold: 0.8     # probabilistic shedding at 80% capacity (optional)
-  # admission_wait: "50ms"       # brief wait before rejection (optional)
+  # admission_wait: "1s"         # longest a request waits for a slot (default: 1s)
 ```
 
-When the limit is reached, new requests receive `503 SlowDown` with a `Retry-After: 1` header. Split read/write pools prevent write storms from starving reads. Active load shedding provides smooth degradation before the hard limit. A good starting point for the global limit is 2-3x your `database.max_conns` value. See [Performance Tuning](performance-tuning.md#admission-control) for detailed guidance.
+When the limit is reached, a request waits in its virtual bucket's queue, and receives `503 SlowDown` with a `Retry-After: 1` header if no slot comes within `admission_wait` or the queue is full. Each declared virtual bucket has a queue of its own, and requests naming any other bucket share one, so a client sending made-up bucket names before authentication cannot crowd out the declared ones. Split read/write pools prevent write storms from starving reads. A good starting point for the global limit is 2-3x your `database.max_conns` value. See [Performance Tuning](performance-tuning.md#admission-control) for detailed guidance.
 
 ### Request header limits
 

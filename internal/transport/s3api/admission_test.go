@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Tests for server-level admission control middleware. Validates that requests
-// within the concurrency limit are allowed, excess requests receive 503 with
-// Retry-After, and slots are released after request completion. Covers both
-// global and split read/write admission pools.
+// Tests for server-level admission control middleware. Validates that slots
+// are given back, a full pool waits and then refuses with 503 and Retry-After,
+// split pools do not block each other, and a freed slot goes to the virtual
+// bucket holding the fewest.
 // -------------------------------------------------------------------------------
 
 package s3api
@@ -22,559 +22,262 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/afreidah/s3-orchestrator/internal/admission"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------
-// CONSTRUCTOR
+// HELPERS
 // -------------------------------------------------------------------------
 
-// newAdmissionFor builds a controller over a semaphore the test owns. Production
-// wires the semaphore externally (di.admissionSemFor) so background workers share
-// one budget with HTTP requests; these helpers keep that shape without each test
-// spelling out the channel.
-func newAdmissionFor(maxConcurrent int) *AdmissionController {
-	return newAdmissionWithLimits(maxConcurrent, AdmissionLimits{})
+// Names the test pools are labelled by, the paths the tests address, and a
+// wait short enough that a full pool refuses at once.
+const (
+	sharedPool = "shared"
+	readPool   = "read"
+	writePool  = "write"
+	heldPath   = "/test-bucket/key"
+	otherPath  = "/test-bucket/key2"
+	refuseWait = time.Millisecond
+)
+
+// declared is a BucketChecker over the virtual buckets a test declares.
+type declared map[string]bool
+
+// Contains reports whether the test declared name.
+func (d declared) Contains(name string) bool { return d[name] }
+
+// testBuckets are the virtual buckets these tests address.
+var testBuckets = declared{"test-bucket": true, "quiet": true}
+
+// testPool builds an admission pool of capacity slots named name, counted in
+// the process metrics as a production pool is.
+func testPool(name string, capacity int) *admission.Pool {
+	return admission.New(name, capacity, admission.Metrics{
+		Queued: telemetry.AdmissionQueued.WithLabelValues(name),
+		Waited: telemetry.AdmissionWaitSeconds.WithLabelValues(name),
+	})
 }
 
-// newAdmissionWithLimits is newAdmissionFor for the tests that exercise
-// shedding or the admission wait, which are constructor arguments rather than
-// something a test can set after the fact.
-func newAdmissionWithLimits(maxConcurrent int, lim AdmissionLimits) *AdmissionController {
-	return NewAdmissionControllerFromSem(make(chan struct{}, maxConcurrent), lim)
+// newAdmission builds a controller over one pool of capacity slots that a
+// request waits up to wait for.
+func newAdmission(capacity int, wait time.Duration) *AdmissionController {
+	pool := testPool(sharedPool, capacity)
+	return NewAdmissionController(pool, pool, testBuckets, wait)
 }
 
-// newSplitAdmissionFor is newAdmissionFor for the split read/write variant.
-func newSplitAdmissionFor(maxReads, maxWrites int) *AdmissionController {
-	return NewSplitAdmissionControllerFromSem(
-		make(chan struct{}, maxReads), make(chan struct{}, maxWrites), AdmissionLimits{})
+// blocking is a handler that holds each request until release is closed,
+// sending the request's path on entered as it arrives.
+type blocking struct {
+	entered chan string
+	release chan struct{}
+	wg      sync.WaitGroup
+}
+
+// newBlocking builds a blocking handler with nothing held.
+func newBlocking() *blocking {
+	return &blocking{entered: make(chan string, 8), release: make(chan struct{})}
+}
+
+// ServeHTTP holds the request until release is closed.
+func (b *blocking) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	b.entered <- r.URL.Path
+	<-b.release
+	w.WriteHeader(http.StatusOK)
+}
+
+// start sends a request through h on a goroutine of its own.
+func (b *blocking) start(h http.Handler, method, path string) {
+	b.wg.Go(func() { serve(context.Background(), h, method, path) })
+}
+
+// hold sends a request through h and waits for it to reach the handler.
+func (b *blocking) hold(h http.Handler, method, path string) {
+	b.start(h, method, path)
+	<-b.entered
+}
+
+// finish lets every held request return and waits for them.
+func (b *blocking) finish() {
+	close(b.release)
+	b.wg.Wait()
+}
+
+// serve sends one request through h and returns its answer.
+func serve(ctx context.Context, h http.Handler, method, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, method, path, nil))
+	return rec
 }
 
 // -------------------------------------------------------------------------
-// PUBLIC API
+// TESTS
 // -------------------------------------------------------------------------
 
-// TestAdmissionController_AllowsWithinLimit verifies the admission controller allows within limit contract.
-// Asserts that request : got , want 200.
-func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
+// TestAdmissionController_ReleasesEachSlot verifies a request gives its slot
+// back when it finishes, so a one-slot pool admits requests one after another.
+func TestAdmissionController_ReleasesEachSlot(t *testing.T) {
 	t.Parallel()
-	ac := newAdmissionFor(2)
-
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := newAdmission(1, refuseWait).Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-
-	// Send 2 sequential requests  -  both should succeed
-	for i := range 2 {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
+	for i := range 3 {
+		if rec := serve(t.Context(), h, http.MethodGet, heldPath); rec.Code != http.StatusOK {
 			t.Errorf("request %d: got %d, want 200", i+1, rec.Code)
 		}
 	}
 }
 
-// TestAdmissionController_RejectsOverLimit verifies the admission controller rejects over limit contract.
-// Asserts that second request: got , want 503.
-func TestAdmissionController_RejectsOverLimit(t *testing.T) {
+// TestAdmissionController_RefusesAFullPool verifies a request that finds the
+// pool full past its wait is answered 503 with Retry-After, and counted under
+// its pool and reason.
+func TestAdmissionController_RefusesAFullPool(t *testing.T) {
 	t.Parallel()
-	ac := newAdmissionFor(1)
+	b := newBlocking()
+	h := newAdmission(1, refuseWait).Middleware(b)
+	rejections := telemetry.AdmissionRejectionsTotal.WithLabelValues(sharedPool, "wait_expired")
+	before := testutil.ToFloat64(rejections)
 
-	// entered signals that the handler goroutine has acquired the semaphore.
-	// Buffered so the send always succeeds even if the test hasn't reached
-	// the receive yet  -  an unbuffered channel + non-blocking select would
-	// silently drop the signal under that schedule and deadlock main.
-	entered := make(chan struct{}, 1)
-	hold := make(chan struct{})
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
+	b.hold(h, http.MethodPut, heldPath)
+	rec := serve(t.Context(), h, http.MethodPut, otherPath)
+	b.finish()
 
-	// Start first request  -  will block inside handler
-	var wg sync.WaitGroup
-	firstDone := make(chan int, 1)
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-		firstDone <- rec.Code
-	})
-
-	// Wait for the first request to enter the handler
-	<-entered
-
-	// Second request should be rejected  -  semaphore is full
-	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec2, req2)
-
-	if rec2.Code != http.StatusServiceUnavailable {
-		t.Errorf("second request: got %d, want 503", rec2.Code)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Errorf("refused request = %d with Retry-After %q, want 503 with 1", rec.Code, rec.Header().Get("Retry-After"))
 	}
-	if ra := rec2.Header().Get("Retry-After"); ra != "1" {
-		t.Errorf("Retry-After = %q, want %q", ra, "1")
-	}
-
-	// Release the first request
-	close(hold)
-	wg.Wait()
-
-	code := <-firstDone
-	if code != http.StatusOK {
-		t.Errorf("first request: got %d, want 200", code)
-	}
-}
-
-// TestAdmissionController_ReleasesOnCompletion verifies the admission controller releases on completion contract.
-// Asserts that first request: got , want 200.
-func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
-	t.Parallel()
-	ac := newAdmissionFor(1)
-
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// First request completes, freeing the slot
-	rec1 := httptest.NewRecorder()
-	req1 := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-	handler.ServeHTTP(rec1, req1)
-	if rec1.Code != http.StatusOK {
-		t.Fatalf("first request: got %d, want 200", rec1.Code)
-	}
-
-	// Second request should succeed because the slot was released
-	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-	handler.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusOK {
-		t.Errorf("second request: got %d, want 200", rec2.Code)
-	}
-}
-
-// TestAdmissionController_IncrementsMetric verifies the admission controller increments metric contract.
-// Asserts that status = , want 503.
-func TestAdmissionController_IncrementsMetric(t *testing.T) {
-	t.Parallel()
-	ac := newAdmissionFor(1)
-
-	entered := make(chan struct{}, 1)
-	hold := make(chan struct{})
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	before := testutil.ToFloat64(telemetry.AdmissionRejectionsTotal)
-
-	// Start blocking request
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-	})
-
-	// Wait for the request to enter the handler
-	<-entered
-
-	// This request should be rejected
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec, req)
-
-	close(hold)
-	wg.Wait()
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
-	}
-
-	after := testutil.ToFloat64(telemetry.AdmissionRejectionsTotal)
-	if after <= before {
+	if after := testutil.ToFloat64(rejections); after <= before {
 		t.Errorf("AdmissionRejectionsTotal did not increment: before=%v, after=%v", before, after)
 	}
 }
 
-// TestSplitAdmission_WriteFull_ReadAllowed verifies the split admission write full read allowed contract.
-// Asserts that second write: got , want 503.
-func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
+// TestAdmissionController_SplitPools verifies reads and writes are admitted
+// from pools of their own, with DELETE counted as a write: filling one pool
+// refuses its next request and leaves the other free.
+func TestAdmissionController_SplitPools(t *testing.T) {
 	t.Parallel()
-	ac := newSplitAdmissionFor(2, 1)
+	for _, tc := range []struct {
+		name                    string
+		reads, writes           int
+		held, refused, admitted string
+	}{
+		{"writes full, reads free", 2, 1, http.MethodPut, http.MethodPut, http.MethodGet},
+		{"reads full, writes free", 1, 2, http.MethodGet, http.MethodGet, http.MethodPut},
+		{"delete fills the write pool", 2, 1, http.MethodDelete, http.MethodPut, http.MethodGet},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ac := NewAdmissionController(testPool(readPool, tc.reads), testPool(writePool, tc.writes), testBuckets, refuseWait)
+			b := newBlocking()
+			h := ac.Middleware(b)
+			defer b.finish()
 
-	entered := make(chan struct{}, 2)
-	hold := make(chan struct{})
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// Fill the write pool (capacity 1)
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-	})
-	<-entered
-
-	// Another write should be rejected
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("second write: got %d, want 503", rec.Code)
-	}
-
-	// A read should still succeed  -  separate pool
-	readDone := make(chan int, 1)
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-		readDone <- rec.Code
-	})
-	<-entered
-
-	close(hold)
-	wg.Wait()
-
-	if code := <-readDone; code != http.StatusOK {
-		t.Errorf("read while writes full: got %d, want 200", code)
+			b.hold(h, tc.held, heldPath)
+			if rec := serve(t.Context(), h, tc.refused, otherPath); rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("%s on the full pool: got %d, want 503", tc.refused, rec.Code)
+			}
+			b.hold(h, tc.admitted, heldPath)
+		})
 	}
 }
 
-// TestSplitAdmission_ReadFull_WriteAllowed verifies the split admission read full write allowed contract.
-// Asserts that second read: got , want 503.
-func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
-	t.Parallel()
-	ac := newSplitAdmissionFor(1, 2)
-
-	entered := make(chan struct{}, 2)
-	hold := make(chan struct{})
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// Fill the read pool (capacity 1)
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-	})
-	<-entered
-
-	// Another read should be rejected
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("second read: got %d, want 503", rec.Code)
-	}
-
-	// A write should still succeed  -  separate pool
-	writeDone := make(chan int, 1)
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-		writeDone <- rec.Code
-	})
-	<-entered
-
-	close(hold)
-	wg.Wait()
-
-	if code := <-writeDone; code != http.StatusOK {
-		t.Errorf("write while reads full: got %d, want 200", code)
-	}
-}
-
-// TestAdmissionController_LoadShedding verifies the admission controller load shedding contract.
-// Asserts that shed /1000 at 80 occupancy (threshold 50), expected ~600.
-func TestAdmissionController_LoadShedding(t *testing.T) {
-	t.Parallel()
-	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.5})
-
-	// Fill 8 of 10 slots -> 80% occupancy, above 50% threshold
-	for range 8 {
-		ac.sem <- struct{}{}
-	}
-
-	// shouldShed probability: (8-5)/(10-5) = 0.6
-	shed := 0
-	for range 1000 {
-		if ac.shouldShed(ac.sem) {
-			shed++
-		}
-	}
-
-	// Drain slots
-	for range 8 {
-		<-ac.sem
-	}
-
-	// Expect ~600/1000. Allow wide margin for randomness.
-	if shed < 400 || shed > 800 {
-		t.Errorf("shed %d/1000 at 80%% occupancy (threshold 50%%), expected ~600", shed)
-	}
-}
-
-// TestAdmissionController_NoSheddingBelowThreshold verifies the admission controller no shedding below threshold path by exercising the shed threshold.
-func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
-	t.Parallel()
-	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.8})
-
-	// 0% occupancy, well below 80% threshold  -  should never shed
-	for range 100 {
-		if ac.shouldShed(ac.sem) {
-			t.Fatal("shed at 0%% occupancy with 80%% threshold")
-		}
-	}
-}
-
-// TestAdmissionController_SheddingStartsAtThreshold verifies the admission controller shedding starts at threshold contract.
-// Asserts that shed /1000 at exactly threshold occupancy, expected 0.
-func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
-	t.Parallel()
-	// With capacity=10 and threshold=0.5, int(0.5*10) = 5.
-	// Shedding should start when occupancy reaches 5 (not 6).
-	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.5})
-
-	// Fill exactly to threshold (5 of 10)
-	for range 5 {
-		ac.sem <- struct{}{}
-	}
-
-	// At exactly the threshold, shedding probability is:
-	// (5-5)/(10-5) = 0.0  -  but since we use < (not <=), occupancy 5
-	// is now at-or-above threshold. The probability is 0%, so no
-	// shedding occurs at exactly the boundary.
-	shed := 0
-	for range 1000 {
-		if ac.shouldShed(ac.sem) {
-			shed++
-		}
-	}
-
-	// Drain
-	for range 5 {
-		<-ac.sem
-	}
-
-	// At exactly threshold, probability is 0/(10-5) = 0  -  no shedding
-	if shed != 0 {
-		t.Errorf("shed %d/1000 at exactly threshold occupancy, expected 0", shed)
-	}
-
-	// Fill to threshold + 1 (6 of 10)
-	for range 6 {
-		ac.sem <- struct{}{}
-	}
-
-	shed = 0
-	for range 1000 {
-		if ac.shouldShed(ac.sem) {
-			shed++
-		}
-	}
-
-	for range 6 {
-		<-ac.sem
-	}
-
-	// Probability: (6-5)/(10-5) = 0.2  -  expect ~200/1000
-	if shed < 100 || shed > 350 {
-		t.Errorf("shed %d/1000 at threshold+1 occupancy, expected ~200", shed)
-	}
-}
-
-// TestSplitAdmission_DeleteUsesWritePool verifies the split admission delete uses write pool contract.
-// Asserts that PUT while DELETE holds write pool: got , want 503.
-func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
-	t.Parallel()
-	ac := newSplitAdmissionFor(2, 1)
-
-	entered := make(chan struct{}, 1)
-	hold := make(chan struct{})
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// Fill the write pool with a DELETE
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "DELETE", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-	})
-	<-entered
-
-	// A PUT should be rejected  -  same pool
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("PUT while DELETE holds write pool: got %d, want 503", rec.Code)
-	}
-
-	close(hold)
-	wg.Wait()
-}
-
-// TestAdmissionController_WaitAcquiresSlot verifies the admission controller wait acquires slot contract.
-// Asserts that request after wait: got , want 200.
+// TestAdmissionController_WaitAcquiresSlot verifies a request that finds the
+// pool full is admitted when a slot frees within its wait.
 func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 200 * time.Millisecond})
-
-		hold := make(chan struct{})
-		entered := make(chan struct{}, 1)
-		handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			entered <- struct{}{}
-			<-hold
-			w.WriteHeader(http.StatusOK)
-		}))
-
-		// Fill the slot
-		var wg sync.WaitGroup
-		wg.Go(func() {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-			handler.ServeHTTP(rec, req)
-		})
-		<-entered
-
-		// Release the slot after 50ms  -  well within the 200ms wait window
-		secondDone := make(chan int, 1)
-		wg.Go(func() {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
-			handler.ServeHTTP(rec, req)
-			secondDone <- rec.Code
-		})
+		b := newBlocking()
+		h := newAdmission(1, 200*time.Millisecond).Middleware(b)
+		b.hold(h, http.MethodGet, heldPath)
+		second := make(chan int, 1)
+		go func() { second <- serve(t.Context(), h, http.MethodGet, otherPath).Code }()
 
 		time.Sleep(50 * time.Millisecond)
-		close(hold)
-		wg.Wait()
-
-		if code := <-secondDone; code != http.StatusOK {
+		b.finish()
+		if code := <-second; code != http.StatusOK {
 			t.Errorf("request after wait: got %d, want 200", code)
 		}
 	})
 }
 
-// TestAdmissionController_WaitTimesOut verifies the admission controller wait times out contract.
-// Asserts that timed-out request: got , want 503.
-func TestAdmissionController_WaitTimesOut(t *testing.T) {
-	t.Parallel()
-	ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 20 * time.Millisecond})
-
-	hold := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// Fill the slot
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
-	})
-	<-entered
-
-	// Second request  -  slot never frees, should timeout after 20ms
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("timed-out request: got %d, want 503", rec.Code)
-	}
-
-	close(hold)
-	wg.Wait()
-}
-
-// TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection verifies the admission controller client cancel during wait not counted as rejection contract.
-// Asserts that AdmissionClientCanceledTotal did not increment: before= after=.
+// TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection verifies
+// a client that gives up while waiting is counted as cancelled and sent
+// nothing.
 func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		// Generous wait so the test reliably observes the client-cancel branch
-		// rather than racing the timer.
-		ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 2 * time.Second})
+		b := newBlocking()
+		h := newAdmission(1, 2*time.Second).Middleware(b)
+		b.hold(h, http.MethodGet, heldPath)
+		before := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal)
 
-		hold := make(chan struct{})
-		entered := make(chan struct{}, 1)
-		handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			entered <- struct{}{}
-			<-hold
-			w.WriteHeader(http.StatusOK)
-		}))
-
-		// Fill the only slot.
-		var wg sync.WaitGroup
-		wg.Go(func() {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-			handler.ServeHTTP(rec, req)
-		})
-		<-entered
-
-		beforeCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal)
-
-		// Second request: cancel its context shortly after dispatch so it lands
-		// in the brief-wait branch and exits via r.Context().Done().
-		ctx, cancel := context.WithCancel(context.Background())
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(ctx, "GET", "/test-bucket/key2", nil)
-		done := make(chan struct{})
-		go func() {
-			handler.ServeHTTP(rec, req)
-			close(done)
-		}()
-		// synctest.Wait blocks until all goroutines (including the in-flight
-		// handler) are parked, so cancel() lands in the wait branch
-		// deterministically without a wall-clock sleep.
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() { done <- serve(ctx, h, http.MethodGet, otherPath) }()
 		synctest.Wait()
 		cancel()
-		<-done
+		rec := <-done
+		b.finish()
 
-		// The dedicated client-cancel counter must increment by exactly 1.
-		// (Asserting the rejection counter does NOT increment is unreliable here
-		// because other parallel tests share the global counter; the directly
-		// observable invariants are this delta and the empty response below.)
-		if afterCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal); afterCancel != beforeCancel+1 {
-			t.Errorf("AdmissionClientCanceledTotal did not increment: before=%v after=%v",
-				beforeCancel, afterCancel)
+		// Other parallel tests share the global counter, so only this delta and
+		// the empty response are asserted.
+		if after := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal); after != before+1 {
+			t.Errorf("AdmissionClientCanceledTotal did not increment: before=%v after=%v", before, after)
 		}
-		// No response should have been written for a cancelled client. httptest
-		// defaults Code to 200 when WriteHeader is never called, and Body is
-		// empty when Write is never called.
-		if rec.Code != http.StatusOK {
-			t.Errorf("response status was set despite client cancel: got %d, want 200 (default, not written)", rec.Code)
+		if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+			t.Errorf("a cancelled client was sent %d %q, want nothing written", rec.Code, rec.Body.String())
 		}
-		if rec.Body.Len() != 0 {
-			t.Errorf("response body was written despite client cancel: %q", rec.Body.String())
-		}
-
-		close(hold)
-		wg.Wait()
 	})
+}
+
+// TestAdmissionController_FreedSlotGoesToTheQuieterVirtualBucket verifies a
+// virtual bucket holding the whole pool does not get the next freed slot ahead
+// of one holding none, even though its request queued first.
+func TestAdmissionController_FreedSlotGoesToTheQuieterVirtualBucket(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBlocking()
+		h := newAdmission(2, time.Minute).Middleware(b)
+		b.hold(h, http.MethodPut, "/test-bucket/a")
+		b.hold(h, http.MethodPut, "/test-bucket/b")
+		b.start(h, http.MethodPut, "/test-bucket/c")
+		synctest.Wait()
+		b.start(h, http.MethodPut, "/quiet/d")
+		synctest.Wait()
+
+		b.release <- struct{}{}
+		synctest.Wait()
+		if got := <-b.entered; got != "/quiet/d" {
+			t.Errorf("freed slot went to %s, want the virtual bucket holding none", got)
+		}
+		b.finish()
+	})
+}
+
+// TestAdmissionController_RequestFlowName verifies each declared virtual
+// bucket waits in a request flow of its own, and every other request in one
+// they share.
+func TestAdmissionController_RequestFlowName(t *testing.T) {
+	t.Parallel()
+	ac := newAdmission(1, refuseWait)
+	for path, want := range map[string]string{
+		heldPath:       "test-bucket",
+		"/quiet":       "quiet",
+		"/made-up/key": "",
+		"/":            "",
+	} {
+		if got := ac.requestFlowName(path); got != want {
+			t.Errorf("requestFlowName(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestRejectionReason verifies a refusal is labelled by why it happened.
+func TestRejectionReason(t *testing.T) {
+	t.Parallel()
+	if got := rejectionReason(admission.ErrQueueFull); got != "queue_full" {
+		t.Errorf("rejectionReason(ErrQueueFull) = %q, want queue_full", got)
+	}
+	if got := rejectionReason(admission.ErrWaitExpired); got != "wait_expired" {
+		t.Errorf("rejectionReason(ErrWaitExpired) = %q, want wait_expired", got)
+	}
 }

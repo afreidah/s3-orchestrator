@@ -48,36 +48,39 @@ server:
   max_concurrent_requests: 1000  # default: 1000 (applied when split pools are not configured)
   # max_concurrent_reads: 0     # separate limit for GET/HEAD (0 = global limit)
   # max_concurrent_writes: 0    # separate limit for PUT/POST/DELETE (0 = global limit)
-  # load_shed_threshold: 0      # 0.0-1.0, start shedding at this capacity ratio (0 = disabled)
-  # admission_wait: "0s"        # brief wait before rejection (0 = instant)
+  # admission_wait: "1s"        # longest a request waits for a slot (default: 1s)
 ```
 
-Limits the number of S3 requests being processed concurrently. When the limit is reached, new requests are rejected with `503 SlowDown` and a `Retry-After: 1` header instead of queueing and potentially exhausting backend connections and goroutines.
+Limits the number of S3 requests being processed concurrently. A request that finds the limit reached waits up to `admission_wait` for a slot, and is rejected with `503 SlowDown` and a `Retry-After: 1` header if none comes, instead of exhausting backend connections and goroutines.
 
 ### Global vs split pools
 
-By default, `max_concurrent_requests` applies a single limit to all operations. For workloads where write storms should not starve reads, set `max_concurrent_reads` and `max_concurrent_writes` instead. Setting either one gives reads (GET, HEAD) and writes (PUT, POST, DELETE) independent semaphores that cannot block each other; the one left at `0` takes `max_concurrent_requests`, or 1000 when that is unset too.
+By default, `max_concurrent_requests` applies a single limit to all operations. For workloads where write storms should not starve reads, set `max_concurrent_reads` and `max_concurrent_writes` instead. Setting either one gives reads (GET, HEAD) and writes (PUT, POST, DELETE) independent pools that cannot block each other; the one left at `0` takes `max_concurrent_requests`, or 1000 when that is unset too.
 
-### Active load shedding
+### Sharing a pool between virtual buckets
 
-When `load_shed_threshold` is set (e.g. `0.8`), the server begins probabilistically rejecting requests before the hard limit. The rejection probability ramps linearly from 0% at the threshold to 100% at full capacity. This provides a smooth degradation curve instead of a cliff at the admission limit.
+A full pool queues each request by virtual bucket: every declared virtual bucket has a queue of its own, and every request naming a virtual bucket nobody declared shares one. When a slot frees, it goes to the waiting virtual bucket holding the fewest slots, and between virtual buckets holding as many, to the request that has waited longest. A virtual bucket running a bulk import keeps the slots it holds, but every other virtual bucket's next request is served before its next one, so they share the pool instead of queueing behind it. On an idle pool any virtual bucket can use every slot.
+
+A pool queues at most as many requests as it has slots. A request arriving at a full queue pushes out the newest request of the virtual bucket with the most waiting, so one virtual bucket cannot fill the queue either; if its own virtual bucket has as many waiting as any, it is refused instead.
+
+Background workers are admitted from the write pool, or the one pool when they are not split, as one more queue beside the virtual buckets. They take their turn at freed slots the same way and never hold more than half the pool, so background work keeps going however busy clients are and leaves clients at least half.
 
 ### Admission wait
 
-When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to free up before being rejected. This smooths micro-bursts where a slot opens up within milliseconds. The request's context deadline is also respected - whichever fires first wins. Set to `0` (default) for instant rejection.
+`admission_wait` bounds how long a request waits in its queue. The request's context is also respected: a client that gives up first is not counted as a rejection and is sent no response. A waiting request costs its connection and goroutine, and nothing else, since admission runs before the body is read.
 
 ### When to set this
 
-- **Default**: 1000 concurrent requests when no read/write split is set. Fine for low-traffic single-instance deployments.
+- **Default**: 1000 concurrent requests when no read/write split is set, and a 1s wait. Fine for low-traffic single-instance deployments.
 - **Recommended starting point**: set to 2-3x your `database.max_conns` value. Every S3 operation needs at least one database query, so there's no benefit admitting more requests than the connection pool can serve.
 - **Split pools**: if your workload is read-heavy, set `max_concurrent_reads` higher than `max_concurrent_writes` to protect read availability during upload bursts.
-- **Load shedding**: start with `load_shed_threshold: 0.8` and adjust based on `s3o_load_shed_total` rates.
-- **Admission wait**: `50ms` to `100ms` is a good starting point for smoothing bursts without adding noticeable latency.
+- **Admission wait**: keep it well under the clients' request timeout. A shorter wait refuses sooner under sustained overload and hands the retry to the client's backoff; a longer one rides out longer bursts.
 
 ### Monitoring
 
-- `s3o_admission_rejections_total` - requests rejected at the hard admission limit
-- `s3o_load_shed_total` - requests probabilistically shed before the hard limit
+- `s3o_admission_rejections_total{pool, reason}` - requests refused a slot, because the queue was full (`queue_full`) or the wait ran out (`wait_expired`)
+- `s3o_admission_queued{pool}` - requests waiting for a slot
+- `s3o_admission_wait_seconds{pool}` - how long the requests that waited did, whether or not a slot came
 - `s3o_early_rejections_total` - uploads rejected before body transmission (no backend capacity)
 - `s3o_inflight_requests` - gauge of currently processing requests by method. Use this to find the right limit value.
 
@@ -464,7 +467,7 @@ make loadtest-get LOADTEST_RATE=500 LOADTEST_SEED=1000
 # Mixed PUT/GET workload
 make loadtest-mixed LOADTEST_RATE=300 LOADTEST_DURATION=2m
 
-# k6 burst test (admission control / load shedding)
+# k6 burst test (admission control)
 make loadtest-burst
 
 # k6 mixed CRUD workflow

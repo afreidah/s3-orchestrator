@@ -72,7 +72,7 @@ func TestRegisterS3Handler_RateLimiterFailedFallsBack(t *testing.T) {
 	overrideFailingRateLimiter(inj)
 
 	mux := http.NewServeMux()
-	if err := registerS3Handler(mux, inj, cfg); err != nil {
+	if err := registerS3Handler(mux, inj); err != nil {
 		t.Fatalf("registerS3Handler: %v", err)
 	}
 }
@@ -114,41 +114,33 @@ func TestRegisterUIHandler_InvokeFails(t *testing.T) {
 	}
 }
 
-// TestRegisterS3Handler_BackendRuntimeInvokeFails drives the
-// "initialize backend runtime" wrapped-error path against a bare
-// injector with no BackendRuntime provider.
-func TestRegisterS3Handler_BackendRuntimeInvokeFails(t *testing.T) {
-	err := registerS3Handler(http.NewServeMux(), do.New(), &config.Config{})
-	if err == nil {
-		t.Fatal("expected error when BackendRuntime is not registered")
-	}
-	if !strings.Contains(err.Error(), "initialize backend runtime") {
-		t.Errorf("err = %q, want wrap mentioning backend runtime", err)
-	}
-}
+// TestRegisterS3Handler_ProviderFails verifies a failing S3 server or
+// admission provider is propagated wrapped, rather than mounting a broken
+// handler or one without admission control.
+func TestRegisterS3Handler_ProviderFails(t *testing.T) {
+	boom := errors.New("provider boom")
+	for _, tc := range []struct {
+		name     string
+		override func(do.Injector)
+		wrap     string
+	}{
+		{"S3 server", func(inj do.Injector) {
+			do.Override(inj, func(do.Injector) (*s3api.Server, error) { return nil, boom })
+		}, "initialize S3 server"},
+		{"admission control", func(inj do.Injector) {
+			do.Override(inj, func(do.Injector) (*s3api.AdmissionController, error) { return nil, boom })
+		}, "initialize admission control"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := loadCfg(t, validTestConfigYAML)
+			inj, cleanup := resolvedInjector(t, cfg, "all")
+			defer cleanup()
+			tc.override(inj)
 
-// TestRegisterS3Handler_S3ServerInvokeFails drives the
-// "initialize S3 server" wrapped-error path: the backend runtime resolves
-// cleanly but the s3api.Server provider errors, so registerS3Handler
-// must propagate the wrapped error rather than mount a broken handler.
-func TestRegisterS3Handler_S3ServerInvokeFails(t *testing.T) {
-	cfg := loadCfg(t, validTestConfigYAML)
-	inj, cleanup := resolvedInjector(t, cfg, "all")
-	defer cleanup()
-
-	s3Boom := errors.New("s3 server boom")
-	do.Override(inj, func(do.Injector) (*s3api.Server, error) {
-		return nil, s3Boom
-	})
-
-	err := registerS3Handler(http.NewServeMux(), inj, cfg)
-	if err == nil {
-		t.Fatal("expected error when s3api.Server provider fails")
-	}
-	if !strings.Contains(err.Error(), "initialize S3 server") {
-		t.Errorf("err = %q, want wrap mentioning S3 server", err)
-	}
-	if !errors.Is(err, s3Boom) {
-		t.Errorf("err = %v, want wrap of s3Boom", err)
+			err := registerS3Handler(http.NewServeMux(), inj)
+			if err == nil || !strings.Contains(err.Error(), tc.wrap) || !errors.Is(err, boom) {
+				t.Errorf("err = %v, want %q wrapping the provider's error", err, tc.wrap)
+			}
+		})
 	}
 }

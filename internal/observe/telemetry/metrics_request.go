@@ -91,9 +91,19 @@ var (
 	RateLimitRejectionsTotal = counter("s3o_rate_limit_rejections_total",
 		"Total requests rejected due to per-IP rate limiting")
 
-	// AdmissionRejectionsTotal counts requests rejected by server-level admission control.
-	AdmissionRejectionsTotal = counter("s3o_admission_rejections_total",
-		"Total requests rejected due to server-level admission control")
+	// AdmissionRejectionsTotal counts requests admission refused, by pool and
+	// reason: queue_full or wait_expired.
+	AdmissionRejectionsTotal = counterVec("s3o_admission_rejections_total",
+		"Total requests rejected due to server-level admission control", "pool", "reason")
+
+	// AdmissionQueued counts the requests waiting for an admission slot, by
+	// pool.
+	AdmissionQueued = gaugeVec("s3o_admission_queued", "Requests waiting for an admission slot", "pool")
+
+	// AdmissionWaitSeconds times the requests that waited for an admission
+	// slot, by pool, whether or not one came.
+	AdmissionWaitSeconds = histogramVec("s3o_admission_wait_seconds", "Time requests waited for an admission slot",
+		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}, "pool")
 
 	// AdmissionClientCanceledTotal counts requests where the client closed
 	// or cancelled their context while waiting for an admission slot. These
@@ -101,14 +111,10 @@ var (
 	AdmissionClientCanceledTotal = counter("s3o_admission_client_canceled_total",
 		"Total admission waits aborted by client context cancellation")
 
-	// WorkerAdmissionRejectionsTotal counts background worker tasks that were
-	// skipped because the admission semaphore was full.
+	// WorkerAdmissionRejectionsTotal counts background worker tasks skipped
+	// because their context ended before an admission slot came.
 	WorkerAdmissionRejectionsTotal = counterVec("s3o_worker_admission_rejections_total",
 		"Background worker tasks skipped due to admission control", "worker")
-
-	// LoadShedTotal counts requests probabilistically rejected by active
-	// load shedding before reaching the hard admission limit.
-	LoadShedTotal = counter("s3o_load_shed_total", "Requests shed by active load shedding before hard admission limit")
 
 	// EarlyRejectionsTotal counts uploads rejected before body transmission
 	// via Expect: 100-Continue pre-flight capacity checks.

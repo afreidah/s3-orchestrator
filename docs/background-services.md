@@ -36,7 +36,7 @@ Lifecycle is the one where this matters most in practice. Its tick is hourly and
 
 ## Concurrency
 
-Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations. A worker takes a free slot while the pool is under half full. Past that, one worker at a time waits on it and keeps that turn until its item finishes, so background work holds one slot however busy clients are and the rest go to them. Replication, drain and cleanup slow down while the pool stays at least half full.
+Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission pool with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations. Background work waits for slots in a queue of its own beside each virtual bucket's, takes its turn at freed slots the same way, and never holds more than half the pool. On a busy pool it gets a share like any one virtual bucket, and the rest go to clients. Replication, drain and cleanup slow down while clients keep the pool full.
 
 ## Multi-instance behavior
 
