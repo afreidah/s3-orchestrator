@@ -216,8 +216,8 @@ Key metrics to alert on:
 | `s3o_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3o_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
 | `s3o_cors_preflight_total{result="rejected"}` | Browser preflights refused. Climbing with no matching `result="allowed"` means the bucket's CORS rules do not cover the origin the application is served from, and every browser upload from it is failing |
-| `s3o_admission_rejections_total` | Requests rejected at the hard admission limit |
-| `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
+| `s3o_admission_rejections_total{pool, reason}` | Requests refused an admission slot: `queue_full` when the pool's queue was full, `wait_expired` when `admission_wait` ran out |
+| `s3o_admission_queued{pool}` | Requests waiting for an admission slot. A floor that stays up means the pool is too small for the load |
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
 | `s3o_cleanup_queue_depth` | Alert when consistently > 0 - orphaned objects are failing cleanup. Rows the request path is settling show up briefly |
 | `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries - graduated to the DLQ |
@@ -325,9 +325,11 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_pending_intents_depth` | Gauge | - | Current number of unresolved pending intents |
 | `s3o_rate_limit_rejections_total` | Counter | - | Requests rejected by per-IP rate limiting |
 | `s3o_cors_preflight_total` | Counter | result | Browser CORS preflights by outcome (allowed, rejected). A preflight is answered before the S3 handler, so it appears in no other request metric |
-| `s3o_admission_rejections_total` | Counter | - | Requests rejected by server-level admission control |
+| `s3o_admission_rejections_total` | Counter | pool, reason | Requests refused an admission slot, by pool (`shared`, `read`, `write`) and reason (`queue_full`, `wait_expired`) |
+| `s3o_admission_queued` | Gauge | pool | Requests waiting for an admission slot |
+| `s3o_admission_wait_seconds` | Histogram | pool | Time the requests that waited for an admission slot waited, whether or not one came |
 | `s3o_admission_client_canceled_total` | Counter | - | Admission waits abandoned because the client cancelled first |
-| `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated, by the worker's name |
+| `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because their context ended before an admission slot came, by the worker's name |
 | `s3o_lifecycle_deleted_total` | Counter | - | Objects deleted by lifecycle expiration |
 | `s3o_lifecycle_failed_total` | Counter | - | Objects that failed lifecycle deletion |
 | `s3o_worker_ticks_total` | Counter | service, result | Ticks of each periodic service by outcome: `success`, `error`, or `skipped` when the lock was held elsewhere, the service was turned off, or the database was unavailable |

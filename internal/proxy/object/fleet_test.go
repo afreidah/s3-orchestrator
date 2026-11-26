@@ -64,7 +64,6 @@ type fleetOpts struct {
 	Routing        config.RoutingStrategy      // defaults to pack
 	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
 	BackendTimeout time.Duration               // overrides the per-call bound
-	AdmissionSem   chan struct{}               // bounds concurrent backend writes
 	Encryptor      *encryption.Encryptor       // turns on at-rest encryption
 	Codec          Codec                       // with Compression below, turns on at-rest compression
 	Compression    config.CompressionConfig
@@ -138,7 +137,6 @@ func newFleet(
 		Usage:           usage,
 		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: cmp.Or(opts.Routing, config.RoutingPack),
-		AdmissionSem:    opts.AdmissionSem,
 	})
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))

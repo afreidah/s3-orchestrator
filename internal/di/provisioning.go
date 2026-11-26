@@ -86,7 +86,7 @@ func (p *Provisioned) Install(ctx context.Context, i do.Injector) error {
 	if r.err != nil {
 		return r.err
 	}
-	declared.Store(new(p.buckets))
+	declared.Store(p.buckets)
 	logAssemblyNotices(ctx, p.registry.Notices())
 	policy.SetRules(p.cors)
 	registry.Store(p.registry)

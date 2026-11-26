@@ -91,7 +91,7 @@ func New(deps Deps) (*Server, error) {
 		if err := registerUIHandler(mux, deps.Injector, deps.Cfg); err != nil {
 			return nil, err
 		}
-		if err := registerS3Handler(mux, deps.Injector, deps.Cfg); err != nil {
+		if err := registerS3Handler(mux, deps.Injector); err != nil {
 			return nil, err
 		}
 	}

@@ -59,7 +59,6 @@ type RuntimeOptions struct {
 	UsageLimits     map[string]core.UsageLimits
 	RoutingStrategy config.RoutingStrategy
 	Profiles        map[string]core.BackendProfile
-	AdmissionSem    chan struct{}
 	Backend         counter.Backend
 	QuotaBaselines  map[string]core.QuotaStat
 }
@@ -126,7 +125,6 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		Quota:           NewQuotaTracker(names, opts.QuotaBaselines),
 		RoutingStrategy: opts.RoutingStrategy,
 		Profiles:        opts.Profiles,
-		AdmissionSem:    opts.AdmissionSem,
 	})
 }
 

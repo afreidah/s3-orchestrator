@@ -9,8 +9,7 @@
 // says - an operator would believe a token still guards a surface that no longer
 // reads it.
 //
-// Each key is named alongside what replaces it, because the fix is never to
-// delete the line: it is to declare a credential instead.
+// Each key is named alongside what replaces it.
 // -------------------------------------------------------------------------------
 
 package config
@@ -25,6 +24,9 @@ import (
 // from the same document as Config, which is what lets a key that no longer maps
 // to a field still be seen.
 type removedConfig struct {
+	Server struct {
+		LoadShedThreshold *float64 `yaml:"load_shed_threshold"`
+	} `yaml:"server"`
 	UI struct {
 		AdminToken  string `yaml:"admin_token"`
 		AdminKey    string `yaml:"admin_key"`
@@ -51,6 +53,9 @@ func checkRemovedKeys(doc []byte) []error {
 	}
 
 	var errs []error
+	if r.Server.LoadShedThreshold != nil {
+		errs = append(errs, ErrRemovedLoadShed)
+	}
 	if r.UI.AdminToken != "" {
 		errs = append(errs, ErrRemovedAdminToken)
 	}

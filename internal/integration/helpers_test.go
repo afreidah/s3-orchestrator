@@ -1026,6 +1026,6 @@ func virtualBucketFor(accessKey, secret string) config.BucketConfig {
 // assembly performs before publishing it.
 func declaredForConfig(buckets []config.BucketConfig) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Store(new(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets))
+	d.Store(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
 	return d
 }

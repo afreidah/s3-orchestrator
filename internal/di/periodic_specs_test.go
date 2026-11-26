@@ -53,7 +53,7 @@ func lockedTickerServices(t *testing.T, locker testx.Locker) []*tickrunner.Servi
 	t.Helper()
 	f := newServicesFixture(t)
 	declared := provisioning.NewDeclared()
-	declared.Store(&[]provisioning.Bucket{{Name: "photos", Source: provisioning.SourceConfig}})
+	declared.Store([]provisioning.Bucket{{Name: "photos", Source: provisioning.SourceConfig}})
 
 	runners := []lifecycle.Runner{
 		multipart.NewCleanupService(f.stack.Multipart, locker, 0),

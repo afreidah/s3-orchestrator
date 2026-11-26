@@ -38,7 +38,7 @@ The rebalancer's `interval` and the replicator's `worker_interval` are read when
 
 **What requires a restart:**
 
-- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `server.tls` (the certificate and key files themselves are re-read on SIGHUP), `server.max_concurrent_requests`/`reads`/`writes`, `server.max_header_bytes`, `server.max_header_value_count`, `server.load_shed_threshold`, `server.admission_wait`
+- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `server.tls` (the certificate and key files themselves are re-read on SIGHUP), `server.max_concurrent_requests`/`reads`/`writes`, `server.max_header_bytes`, `server.max_header_value_count`, `server.admission_wait`
 - `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`, `compression`, `circuit_breaker`, `backend_circuit_breaker`, `redis`
 - Backend structural changes (endpoint, S3 credentials, `max_object_size`, adding/removing backends)
 

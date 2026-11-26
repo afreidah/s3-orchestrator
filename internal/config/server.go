@@ -5,8 +5,8 @@
 //
 // Defines ServerConfig - the HTTP listener block - plus the TLS, admin
 // API, request-id, admission control, and timeout sub-blocks. Carries
-// the listen address, optional Unix socket, hard admission cap, load-
-// shedding threshold, request-header limits, and read/write/header
+// the listen address, optional Unix socket, admission pools and wait,
+// request-header limits, and read/write/header
 // timeouts. Validators enforce
 // that admission limits are non-zero when configured and that the TLS
 // cert and key are both present (or both absent) so partial TLS
@@ -38,8 +38,7 @@ type ServerConfig struct {
 	MaxConcurrentWrites   int           `yaml:"max_concurrent_writes"`   // Max concurrent write requests; splits the pools (0 = global limit)
 	MaxHeaderBytes        int           `yaml:"max_header_bytes"`        // Max total request header size in bytes (default: 1MB)
 	MaxHeaderValueCount   int           `yaml:"max_header_value_count"`  // Max number of header values per request (default: 500)
-	LoadShedThreshold     float64       `yaml:"load_shed_threshold"`     // Active shedding threshold (0.0-1.0, 0 = disabled)
-	AdmissionWait         time.Duration `yaml:"admission_wait"`          // Brief wait before rejection (0 = instant reject)
+	AdmissionWait         time.Duration `yaml:"admission_wait"`          // Longest a request waits for an admission slot (default: 1s)
 	BackendTimeout        time.Duration `yaml:"backend_timeout"`         // Per-operation timeout for backend S3 calls (default: 30s)
 	ReadHeaderTimeout     time.Duration `yaml:"read_header_timeout"`     // Max time to read request headers (default: 10s)
 	ReadTimeout           time.Duration `yaml:"read_timeout"`            // Max time to read entire request including body (default: 5m)
@@ -62,6 +61,10 @@ type TLSConfig struct {
 // DefaultMaxConcurrentRequests is the shared admission pool when none of the
 // three limits is set, and the size of a pool a split leaves unset.
 const DefaultMaxConcurrentRequests = 1000
+
+// DefaultAdmissionWait is how long a request waits for an admission slot when
+// admission_wait is unset.
+const DefaultAdmissionWait = time.Second
 
 // AdmissionPools is the concurrency the S3 listener admits: one shared pool,
 // or a read pool and a write pool when the operator set either of those. A
@@ -148,8 +151,8 @@ func (s *ServerConfig) validateSpillDir() []error {
 	return nil
 }
 
-// validateConcurrency checks concurrency-limit fields and applies the
-// combined-request default when all three are zero.
+// validateConcurrency checks concurrency-limit fields, applies the
+// combined-request default when all three are zero, and defaults the wait.
 func (s *ServerConfig) validateConcurrency() []error {
 	errs := failed(
 		nonNegative("server.max_concurrent_requests", s.MaxConcurrentRequests),
@@ -160,10 +163,7 @@ func (s *ServerConfig) validateConcurrency() []error {
 	if s.MaxConcurrentRequests == 0 && s.MaxConcurrentReads == 0 && s.MaxConcurrentWrites == 0 {
 		s.MaxConcurrentRequests = DefaultMaxConcurrentRequests
 	}
-	if s.LoadShedThreshold != 0 && (s.LoadShedThreshold < 0 || s.LoadShedThreshold >= 1) {
-		errs = append(errs, fmt.Errorf("server.load_shed_threshold %w: want 0 (off), or above 0 and below 1 (got %v)",
-			ErrOutOfRange, s.LoadShedThreshold))
-	}
+	s.AdmissionWait = cmp.Or(s.AdmissionWait, DefaultAdmissionWait)
 	return errs
 }
 

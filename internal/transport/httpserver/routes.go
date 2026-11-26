@@ -4,10 +4,9 @@
 // Author: Alex Freidah
 //
 // Mounts admin, UI, and S3 handlers on the main mux with the configured
-// middleware stack: rate limiting (optional), admission control (split or
-// single-channel), request shedding, and browser CORS. Route registration is
-// gated by daemon mode so the worker-only mode does not expose S3 or UI
-// surfaces.
+// middleware stack: rate limiting (optional), admission control, and browser
+// CORS. Route registration is gated by daemon mode so the worker-only mode
+// does not expose S3 or UI surfaces.
 // -------------------------------------------------------------------------------
 
 package httpserver
@@ -23,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -92,29 +90,13 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 }
 
 // registerS3Handler mounts the S3 proxy on / with optional rate limiting
-// and admission control.
-//
-// Admission model (config.ServerConfig.Admission decides the pools):
-//
-//   - Split mode (MaxConcurrentReads or MaxConcurrentWrites): reads get a
-//     fresh semaphore created here, local to the HTTP read path. Writes reuse
-//     the runtime's AdmissionSem(), which is also the budget every background
-//     worker acquires from, so HTTP writes share their ceiling with worker
-//     activity and operators should size it for both.
-//   - Merged mode (MaxConcurrentRequests): AdmissionSem() is one global pool
-//     that HTTP reads, HTTP writes and workers all contend for.
-//   - No pool, which only a config built in code has: no admission middleware
-//     is installed.
-//
-// Either form respects LoadShedThreshold and AdmissionWait when set.
+// and admission control. Admission is registered whenever the config has a
+// pool, which only a config built in code lacks; di.ProvideAdmissionPools
+// decides the pools.
 //
 // CORS sits inside both the rate limiter and admission control, so
 // unauthenticated preflights are bounded by them too.
-func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
-	rt, err := do.Invoke[*infra.BackendRuntime](inj)
-	if err != nil {
-		return fmt.Errorf("initialize backend runtime: %w", err)
-	}
+func registerS3Handler(mux *http.ServeMux, inj do.Injector) error {
 	s3Server, err := do.Invoke[*s3api.Server](inj)
 	if err != nil {
 		return fmt.Errorf("initialize S3 server: %w", err)
@@ -126,25 +108,11 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 
 	s3Handler := withRateLimit(inj, "s3", s3api.WriteS3Error, corsPolicy.Middleware(s3Server))
 
-	limits := s3api.AdmissionLimits{
-		ShedThreshold: cfg.Server.LoadShedThreshold,
-		Wait:          cfg.Server.AdmissionWait,
+	acRes := di.Optional[*s3api.AdmissionController](inj)
+	if acRes.Failed() {
+		return fmt.Errorf("initialize admission control: %w", acRes.Err)
 	}
-
-	var ac *s3api.AdmissionController
-	switch pools := cfg.Server.Admission(); {
-	case pools.Split():
-		// Split-pool: dedicate a fresh read sem (HTTP-only) and reuse
-		// the runtime's sem as the write+workers pool. See the func
-		// doc above for the full model.
-		readSem := make(chan struct{}, pools.Reads)
-		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, rt.AdmissionSem(), limits)
-	case pools.Shared > 0:
-		// Merged-pool: every request and every worker shares the
-		// runtime's sem.
-		ac = s3api.NewAdmissionControllerFromSem(rt.AdmissionSem(), limits)
-	}
-	if ac != nil {
+	if ac := acRes.Value; ac != nil {
 		s3Handler = ac.Middleware(s3Handler)
 	}
 

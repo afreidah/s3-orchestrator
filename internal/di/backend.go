@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/admission"
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
@@ -31,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
@@ -386,6 +388,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	live := r.Resolve[*config.Live]()
 	br := r.Resolve[*BackendsResult]()
 	usage := r.Resolve[*counter.UsageTracker]()
+	pools := r.Resolve[*AdmissionPools]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -401,7 +404,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Pressure:        counter.NewPressureTracker(br.Order, live.BackendPressure()),
 		RoutingStrategy: cfg.RoutingStrategy,
 		Profiles:        br.Profiles,
-		AdmissionSem:    admissionSemFor(&cfg.Server),
+		Admission:       pools.Writes,
 	}), nil
 }
 
@@ -533,13 +536,43 @@ func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 	return usage.New(&usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}), nil
 }
 
-// admissionSemFor returns the shared admission semaphore, or nil when uncapped.
-// In split mode it is the write pool, shared by HTTP writes and the background
-// workers, since they do write-like work; otherwise it is the one pool shared
-// by everything.
-func admissionSemFor(s *config.ServerConfig) chan struct{} {
-	if n := s.Admission().WriteCapacity(); n > 0 {
-		return make(chan struct{}, n)
+// AdmissionPools are the pools S3 requests are admitted from: reads and writes
+// apart when the pools are split, and one pool as both otherwise. Background
+// work is admitted from Writes, since it does write-like work. Both are nil
+// when admission is uncapped, which only a config built in code has.
+type AdmissionPools struct {
+	Reads  *admission.Pool
+	Writes *admission.Pool
+}
+
+// ProvideAdmissionPools builds the admission pools the server config decides.
+func ProvideAdmissionPools(i do.Injector) (*AdmissionPools, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return admissionPoolsFor(&cfg.Server), nil
+}
+
+// admissionPoolsFor builds the pools config.ServerConfig.Admission decides,
+// each labelled in the metrics by its name.
+func admissionPoolsFor(s *config.ServerConfig) *AdmissionPools {
+	pools := s.Admission()
+	switch {
+	case pools.Split():
+		return &AdmissionPools{Reads: newAdmissionPool("read", pools.Reads), Writes: newAdmissionPool("write", pools.Writes)}
+	case pools.Shared > 0:
+		shared := newAdmissionPool("shared", pools.Shared)
+		return &AdmissionPools{Reads: shared, Writes: shared}
+	}
+	return &AdmissionPools{}
+}
+
+// newAdmissionPool builds an admission pool of capacity slots whose waiting
+// requests and waits are counted under name.
+func newAdmissionPool(name string, capacity int) *admission.Pool {
+	return admission.New(name, capacity, admission.Metrics{
+		Queued: telemetry.AdmissionQueued.WithLabelValues(name),
+		Waited: telemetry.AdmissionWaitSeconds.WithLabelValues(name),
+	})
 }

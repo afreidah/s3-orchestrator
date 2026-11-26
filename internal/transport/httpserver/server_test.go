@@ -735,13 +735,12 @@ ui:
 }
 
 // TestNew_SingleAdmission drives the registerS3Handler MaxConcurrentRequests
-// branch with LoadShedThreshold and AdmissionWait set.
+// branch with AdmissionWait set.
 func TestNew_SingleAdmission(t *testing.T) {
 	yaml := `
 server:
   listen_addr: ":0"
   max_concurrent_requests: 8
-  load_shed_threshold: 0.9
   admission_wait: "50ms"
 database:
   driver: sqlite

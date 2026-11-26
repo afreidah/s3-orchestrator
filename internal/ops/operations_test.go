@@ -1581,7 +1581,7 @@ func TestDeclaredBuckets_UpdateReachesOperations(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidKey before the bucket exists", err)
 	}
 
-	declared.Store(&[]provisioning.Bucket{{Name: "later", Source: provisioning.SourceStore}})
+	declared.Store([]provisioning.Bucket{{Name: "later", Source: provisioning.SourceStore}})
 
 	if err := objects.Delete(context.Background(), "later/file.txt"); errors.Is(err, ErrInvalidKey) {
 		t.Error("key still rejected after the bucket was declared")

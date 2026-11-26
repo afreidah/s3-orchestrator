@@ -101,9 +101,6 @@ func TestConfigValidation_FieldRules(t *testing.T) {
 			c.Server.MaxHeaderBytes = 8192
 			c.Server.MaxHeaderValueCount = 64
 		}, false},
-		{"load_shed_threshold at or above 1.0", func(c *Config) { c.Server.LoadShedThreshold = 1.5 }, true},
-		{"negative load_shed_threshold", func(c *Config) { c.Server.LoadShedThreshold = -0.5 }, true},
-		{"load_shed_threshold in range", func(c *Config) { c.Server.LoadShedThreshold = 0.8 }, false},
 		{"negative admission_wait", func(c *Config) { c.Server.AdmissionWait = -1 * time.Second }, true},
 		{"negative api_request_limit", func(c *Config) { c.Backends[0].APIRequestLimit = -1 }, true},
 		{"negative egress_byte_limit", func(c *Config) { c.Backends[0].EgressByteLimit = -1 }, true},
@@ -207,6 +204,21 @@ func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) 
 	}
 	if cfg.Server.MaxConcurrentRequests != 1000 {
 		t.Errorf("expected default 1000, got %d", cfg.Server.MaxConcurrentRequests)
+	}
+	if cfg.Server.AdmissionWait != DefaultAdmissionWait {
+		t.Errorf("admission_wait default = %v, want %v", cfg.Server.AdmissionWait, DefaultAdmissionWait)
+	}
+}
+
+// TestLoadConfig_RefusesLoadShedThreshold verifies a config still setting the
+// removed load_shed_threshold fails to load, even at 0, and says so.
+func TestLoadConfig_RefusesLoadShedThreshold(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"0", "0.8"} {
+		path := writeTempConfig(t, "server:\n  listen_addr: \":9000\"\n  load_shed_threshold: "+value+"\n")
+		if _, err := LoadConfig(path); !errors.Is(err, ErrRemovedLoadShed) {
+			t.Errorf("load_shed_threshold: %s loaded with %v, want ErrRemovedLoadShed", value, err)
+		}
 	}
 }
 
@@ -955,7 +967,6 @@ func TestNonReloadableFieldsChanged(t *testing.T) {
 			[]string{"server.max_concurrent_reads"}},
 		{"write pool and the in-flight ceiling it sets", nil, func(c *Config) { c.Server.MaxConcurrentRequests, c.Server.MaxConcurrentWrites = 1000, 25 },
 			[]string{"server.max_concurrent_writes", "write_path.parallel_copies.max_in_flight"}},
-		{"load shed threshold", nil, func(c *Config) { c.Server.LoadShedThreshold = 0.8 }, []string{"server.load_shed_threshold"}},
 		{"header bytes", nil, func(c *Config) { c.Server.MaxHeaderBytes = 8192 }, []string{"server.max_header_bytes"}},
 		{"header value count", nil, func(c *Config) { c.Server.MaxHeaderValueCount = 64 }, []string{"server.max_header_value_count"}},
 		{"admission wait", nil, func(c *Config) { c.Server.AdmissionWait = 100 * time.Millisecond }, []string{"server.admission_wait"}},

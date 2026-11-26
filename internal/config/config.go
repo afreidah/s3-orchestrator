@@ -96,7 +96,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Checked against the document rather than the parsed struct: the fields are
 	// gone, and YAML drops what it cannot map, so a removed key would otherwise
-	// be ignored and the deployment would run with authentication it thinks it
+	// be ignored and the deployment would run without what it thinks it
 	// configured.
 	if errs := checkRemovedKeys([]byte(expanded)); len(errs) > 0 {
 		return nil, wrappedPath(ErrInvalidConfig, path, errors.Join(errs...))

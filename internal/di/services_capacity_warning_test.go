@@ -173,6 +173,7 @@ func newCollector(t *testing.T, shared *memoryRedis) *metrics.Collector {
 	do.ProvideValue(inj, instanceid.ID(t.Name()))
 	do.Provide(inj, ProvideSharedState)
 	do.Provide(inj, ProvideUsageTracker)
+	do.Provide(inj, ProvideAdmissionPools)
 	do.Provide(inj, ProvideBackendRuntime)
 
 	mc, err := ProvideMetricsCollector(inj)

@@ -288,6 +288,7 @@ internal/
   runtime/                   Daemon Runtime: assembles DI, manages HTTP + background lifecycle
   reload/                    SIGHUP reload coordinator + change classifier
   breaker/                   Generic circuit breaker state machine + watchdog
+  admission/                 Concurrency slots shared fairly between request flows (S3 admission pools)
   config/                    YAML config loading + validation (sub-files per top-level block)
   encryption/                Envelope encryption: chunked AES-256-GCM + Vault Transit / static-key providers
   counter/                   UsageTracker + LocalCounterBackend + RedisCounterBackend

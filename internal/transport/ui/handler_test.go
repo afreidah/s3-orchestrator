@@ -574,8 +574,8 @@ func TestDashboard_ListsStoreBuckets(t *testing.T) {
 	if !ok {
 		t.Fatalf("buckets = %T, want *provisioning.Declared", h.d.Buckets)
 	}
-	declared.Store(new(append(slices.Clone(declared.Buckets()),
-		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore})))
+	declared.Store(append(slices.Clone(declared.Buckets()),
+		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore}))
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
 	w := httptest.NewRecorder()
@@ -1815,7 +1815,7 @@ func TestAPICleanExcessStatus_RequiresAuth(t *testing.T) {
 // assembly applies before publishing it.
 func declaredFrom(cfg *config.Config) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Store(new(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets))
+	d.Store(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
 	return d
 }
 
