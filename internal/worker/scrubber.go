@@ -311,12 +311,14 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 // BackfillRequest bounds one backfill run. BatchSize copies are hashed per
 // page, with Pause between pages to rate-limit backend reads. MaxObjects
 // caps the copies hashed, and zero drains the whole backlog. Backend, when
-// set, limits the run to that backend's copies.
+// set, limits the run to that backend's copies, and Buckets to the buckets it
+// scopes.
 type BackfillRequest struct {
 	BatchSize  int
 	MaxObjects int
 	Pause      time.Duration
 	Backend    string
+	Buckets    core.BucketScope
 }
 
 // BackfillResult reports one backfill run: Succeeded counts the copies hashed
@@ -343,6 +345,7 @@ func (s *Scrubber) Backfill(ctx context.Context, req BackfillRequest, observer p
 // hashed complete.
 func (s *Scrubber) backfill(ctx context.Context, req BackfillRequest, observer progress.Observer) (BackfillResult, error) {
 	unhashed := core.UnhashedCopies(req.Backend, new(true))
+	unhashed.Buckets = req.Buckets
 	pager := core.CopyPager(s.d.Store, &unhashed, req.BatchSize)
 	var res BackfillResult
 	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {

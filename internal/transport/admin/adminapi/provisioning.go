@@ -15,27 +15,25 @@
 
 package adminapi
 
+import "github.com/afreidah/s3-orchestrator/internal/config"
+
 // Source values an entry carries, naming which of the two places declared it.
 const (
 	SourceConfig = "config"
 	SourceStore  = "store"
 )
 
-// Bucket is one virtual bucket as the API reports it.
+// Bucket is one virtual bucket as the API reports it, with the settings the
+// config file and the store both carry. The settings are listed rather than
+// embedded because a listing always carries the upload limit, which a request
+// may leave out.
 type Bucket struct {
-	Name                string     `json:"name"`
-	MaxMultipartUploads int        `json:"max_multipart_uploads"`
-	CORS                []CORSRule `json:"cors,omitempty"`
-	Source              string     `json:"source"`
-}
-
-// CORSRule mirrors the S3 CORSRule shape a bucket carries.
-type CORSRule struct {
-	AllowedOrigins []string `json:"allowed_origins"`
-	AllowedMethods []string `json:"allowed_methods"`
-	AllowedHeaders []string `json:"allowed_headers,omitempty"`
-	ExposeHeaders  []string `json:"expose_headers,omitempty"`
-	MaxAge         int      `json:"max_age,omitempty"`
+	Name                string            `json:"name"`
+	MaxMultipartUploads int               `json:"max_multipart_uploads"`
+	CORS                []config.CORSRule `json:"cors,omitempty"`
+	StoredForm          *[]string         `json:"stored_form,omitempty"`
+	ReplicationFactor   int               `json:"replication_factor"`
+	Source              string            `json:"source"`
 }
 
 // User is one identity as the API reports it, with what it reaches. Buckets is
@@ -86,20 +84,18 @@ type ProvisioningResponse struct {
 	Notices     []Notice     `json:"notices,omitempty"`
 }
 
-// CreateBucketRequest declares a virtual bucket. MaxMultipartUploads of 0 means
-// unlimited, matching the config field it mirrors.
+// CreateBucketRequest declares a virtual bucket and the settings it carries,
+// the same ones a config bucket does.
 type CreateBucketRequest struct {
-	Name                string     `json:"name"`
-	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
-	CORS                []CORSRule `json:"cors,omitempty"`
+	Name string `json:"name"`
+	config.BucketSettings
 }
 
 // UpdateBucketRequest declares what a bucket carries; the name is in the path
 // and cannot change. The bucket is replaced, not merged: omitting CORS removes
-// its rules, and MaxMultipartUploads of 0 means unlimited.
+// its rules, and omitting stored_form gives it the deployment's.
 type UpdateBucketRequest struct {
-	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
-	CORS                []CORSRule `json:"cors,omitempty"`
+	config.BucketSettings
 }
 
 // CreateUserRequest declares an identity credentials can be issued against. The

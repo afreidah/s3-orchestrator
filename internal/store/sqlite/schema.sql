@@ -360,7 +360,10 @@ CREATE TABLE IF NOT EXISTS buckets (
     name                  TEXT PRIMARY KEY,
     max_multipart_uploads INTEGER NOT NULL DEFAULT 0,
     cors                  TEXT,
-    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- See migrations/0038_bucket_storage_settings.sql.
+    stored_form           INTEGER,
+    replication_factor    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -459,4 +462,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (37);
+INSERT INTO schema_version (version) VALUES (38);

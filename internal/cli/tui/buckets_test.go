@@ -82,11 +82,32 @@ func TestBucketsTable_ShowsWhoReachesEach(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	if rows[0][3] != "" {
-		t.Errorf("from-config reached by %q, want nothing", rows[0][3])
+	reached := len(bucketColumns) - 1
+	if rows[0][reached] != "" {
+		t.Errorf("from-config reached by %q, want nothing", rows[0][reached])
 	}
-	if rows[1][3] != "ci" {
-		t.Errorf("from-store reached by %q, want ci", rows[1][3])
+	if rows[1][reached] != "ci" {
+		t.Errorf("from-store reached by %q, want ci", rows[1][reached])
+	}
+}
+
+// TestBucketsTable_ShowsTheStoredForm verifies a bucket with no stored form of
+// its own reads as taking the deployment's, one with an empty form as storing
+// no layer, and one naming layers as those layers.
+func TestBucketsTable_ShowsTheStoredForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		form *[]string
+		want string
+	}{
+		{nil, "default"},
+		{&[]string{}, "none"},
+		{&[]string{"compressed", "hashed"}, "compressed,hashed"},
+	} {
+		entry := &bucketEntry{Bucket: adminapi.Bucket{Name: "b", StoredForm: tc.form}}
+		if got := bucketRow(entry)[2]; got != tc.want {
+			t.Errorf("stored form %v renders %q, want %q", tc.form, got, tc.want)
+		}
 	}
 }
 

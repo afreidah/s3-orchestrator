@@ -67,14 +67,16 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 
 // CreateBucket inserts a bucket.
 func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := core.EncodeCORS(b.CORS)
+	cols, err := core.EncodeBucket(&b.BucketSettings)
 	if err != nil {
 		return err
 	}
 	if err := s.queries.CreateBucket(ctx, db.CreateBucketParams{
 		Name:                b.Name,
-		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
-		Cors:                cors,
+		MaxMultipartUploads: int32(cols.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
+		Cors:                cols.CORS,
+		StoredForm:          cols.StoredForm,
+		ReplicationFactor:   int32(cols.ReplicationFactor), //nolint:gosec // G115: bounded by config.ValidateBucket
 	}); err != nil {
 		return fmt.Errorf("create bucket %s: %w", b.Name, err)
 	}
@@ -127,14 +129,16 @@ func grantParams(g *core.Grant) db.CreateGrantParams {
 // UpdateBucket writes what a bucket carries. The name identifies it and its
 // objects, so it is the lookup rather than something this can change.
 func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := core.EncodeCORS(b.CORS)
+	cols, err := core.EncodeBucket(&b.BucketSettings)
 	if err != nil {
 		return err
 	}
 	if err := s.queries.UpdateBucket(ctx, db.UpdateBucketParams{
 		Name:                b.Name,
-		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
-		Cors:                cors,
+		MaxMultipartUploads: int32(cols.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
+		Cors:                cols.CORS,
+		StoredForm:          cols.StoredForm,
+		ReplicationFactor:   int32(cols.ReplicationFactor), //nolint:gosec // G115: bounded by config.ValidateBucket
 	}); err != nil {
 		return fmt.Errorf("update bucket %s: %w", b.Name, err)
 	}
@@ -200,16 +204,14 @@ func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource)
 
 // bucketFromRow converts a sqlc buckets row into the canonical core.Bucket.
 func bucketFromRow(r *db.Bucket) (core.Bucket, error) {
-	cors, err := core.DecodeCORS(r.Cors)
+	settings, err := core.DecodeBucket(&core.BucketColumns{
+		MaxMultipartUploads: int(r.MaxMultipartUploads), ReplicationFactor: int(r.ReplicationFactor),
+		CORS: r.Cors, StoredForm: r.StoredForm,
+	})
 	if err != nil {
 		return core.Bucket{}, err
 	}
-	return core.Bucket{
-		Name:                r.Name,
-		MaxMultipartUploads: int(r.MaxMultipartUploads),
-		CORS:                cors,
-		CreatedAt:           r.CreatedAt.Time,
-	}, nil
+	return core.Bucket{Name: r.Name, BucketSettings: settings, CreatedAt: r.CreatedAt.Time}, nil
 }
 
 // userFromRow converts a sqlc users row into the canonical type.

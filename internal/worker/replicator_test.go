@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // copyReq matches the *backend.CopyRequest a StreamCopy is handed. These tests
@@ -414,6 +415,33 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 	}
 	if sum.CopiesCreated != 0 {
 		t.Errorf("created = %d, want 0", sum.CopiesCreated)
+	}
+}
+
+// TestReplicator_ReplicatesWhileAnyKeyHasCopiesToKeep verifies the workers run
+// at a deployment factor above one, and at one once any bucket sets a factor
+// of its own, since that bucket's keys, or the rest, may need copies trimmed.
+func TestReplicator_ReplicatesWhileAnyKeyHasCopiesToKeep(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	for _, tc := range []struct {
+		deployment int
+		buckets    map[string]int
+		want       bool
+	}{
+		{1, nil, false},
+		{2, nil, true},
+		{1, map[string]int{"photos": 2}, true},
+	} {
+		ms := &mockMetadataStore{}
+		ms.UseReplicationFactors(func() core.ReplicationFactors { return core.ReplicationFactors{Buckets: tc.buckets} })
+		r := NewReplicator(&ReplicatorDeps{
+			Fleet: fleetOf(newMockOps(ctrl), NewMockPlacement(ctrl)), Store: ms, Queue: NewReplicationQueue(ms),
+			Config: syncutil.Fixed(&config.ReplicationConfig{Factor: tc.deployment}), Integrity: defaultIntegrity,
+		})
+		if got := r.Replicates(); got != tc.want {
+			t.Errorf("Replicates at %d with buckets %v = %v, want %v", tc.deployment, tc.buckets, got, tc.want)
+		}
 	}
 }
 

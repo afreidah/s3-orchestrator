@@ -80,12 +80,22 @@ type CORSRule struct {
 	MaxAge         int      `json:"max_age,omitempty"`
 }
 
+// BucketSettings is what a bucket carries besides its name. StoredForm names
+// the layers its new objects are stored with; nil takes the deployment's, and
+// an empty list stores them with none. ReplicationFactor of zero takes the
+// deployment's.
+type BucketSettings struct {
+	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
+	CORS                []CORSRule `json:"cors,omitempty"`
+	StoredForm          *[]string  `json:"stored_form,omitempty"`
+	ReplicationFactor   int        `json:"replication_factor,omitempty"`
+}
+
 // Bucket is a virtual bucket either source declares.
 type Bucket struct {
-	Name                string     `json:"name"`
-	MaxMultipartUploads int        `json:"max_multipart_uploads"`
-	CORS                []CORSRule `json:"cors,omitempty"`
-	Source              string     `json:"source"`
+	Name string `json:"name"`
+	BucketSettings
+	Source string `json:"source"`
 }
 
 // Provisioning is everything the deployment declares, from both sources at
@@ -98,16 +108,14 @@ type Provisioning struct {
 
 // CreateBucketRequest declares a virtual bucket.
 type CreateBucketRequest struct {
-	Name                string     `json:"name"`
-	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
-	CORS                []CORSRule `json:"cors,omitempty"`
+	Name string `json:"name"`
+	BucketSettings
 }
 
 // UpdateBucketRequest replaces what a bucket carries. The name is in the path,
-// and omitting CORS clears the rules rather than leaving them.
+// and omitting CORS or the stored form clears it rather than leaving it.
 type UpdateBucketRequest struct {
-	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
-	CORS                []CORSRule `json:"cors,omitempty"`
+	BucketSettings
 }
 
 // CreateUserRequest declares an identity.

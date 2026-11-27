@@ -102,7 +102,7 @@ Each changed copy is recorded as a `storage.ConversionRaced` audit event naming 
 
 `POST /admin/api/object-scrub?key=...` reads every recorded copy of one key and compares it against the stored content hash, without waiting for the scrub queue to reach it. The response reports one verdict per copy -- `verified`, `mismatch`, `unreadable`, `not_hashed`, or `declined` -- so a replicated object with one good copy and one bad one names the backend at fault. Each read is admitted against the backend's egress limit as a client read is, without the scrub sweep's reserve; a copy the limit refuses is reported `declined` and left unchecked.
 
-A `mismatch` is acted on, not just reported: the bad copy is discarded and replication rebuilds it from a good one. The endpoint returns `404` when no copies of the key are recorded and `409` when integrity verification is disabled.
+A `mismatch` is acted on, not just reported: the bad copy is discarded and replication rebuilds it from a good one. The endpoint returns `404` when no copies of the key are recorded.
 
 ## Reading and writing objects
 
@@ -205,6 +205,19 @@ the instance.
 `PATCH /admin/api/provisioning/users/{id}` changes the name an identity is read
 by. The ID does not move, because credentials and grants reference it. This is
 the only way to correct a name: a delete is refused while the user holds either.
+
+A bucket created with `POST /admin/api/provisioning/buckets`, or replaced with
+`PATCH /admin/api/provisioning/buckets/{name}`, carries the settings a config
+bucket does: `max_multipart_uploads`, `cors`, `stored_form`, the layers its
+new objects are stored with, and `replication_factor`, the copies each of its
+objects is kept at. An omitted `stored_form` gives the bucket the
+deployment's, and an empty one stores its objects with no layer; see
+[Stored form](configuration.md#stored-form). An omitted or zero
+`replication_factor` takes the deployment's; see
+[Replication factor](configuration.md#replication-factor). A form naming
+anything but `compressed`, `encrypted` and `hashed`, a form naming `encrypted`
+on a deployment that does not encrypt, or a factor past the number of backends
+is refused with `400`.
 
 Every change takes effect on the next request. The registry the request path
 authenticates against is rebuilt before the call returns, so a credential

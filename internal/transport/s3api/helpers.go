@@ -73,9 +73,9 @@ const headerCopySourceRange = "x-amz-copy-source-range"
 // checkSize refuses a body of size bytes over the configured object ceiling.
 // what names the body in the message: an object, a part, or an assembly.
 func (s *Server) checkSize(size int64, what string) error {
-	if s.MaxObjectSize > 0 && size > s.MaxObjectSize {
+	if s.d.MaxObjectSize > 0 && size > s.d.MaxObjectSize {
 		return fmt.Errorf("%w (%d bytes, limit %d)", s3Err(http.StatusRequestEntityTooLarge,
-			"EntityTooLarge", what+" size exceeds the maximum allowed size"), size, s.MaxObjectSize)
+			"EntityTooLarge", what+" size exceeds the maximum allowed size"), size, s.d.MaxObjectSize)
 	}
 	return nil
 }
@@ -89,8 +89,8 @@ func (s *Server) acceptBody(w http.ResponseWriter, r *http.Request, what string)
 	if err := s.checkSize(r.ContentLength, what); err != nil {
 		return err
 	}
-	if s.MaxObjectSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, s.MaxObjectSize)
+	if s.d.MaxObjectSize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.d.MaxObjectSize)
 	}
 	return nil
 }

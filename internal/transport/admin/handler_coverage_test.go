@@ -534,7 +534,7 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 		t.Errorf("done = %v, want false (backlog not drained)", resp["done"])
 	}
 	want := worker.BackfillRequest{BatchSize: 10, MaxObjects: 25, Pause: time.Millisecond}
-	if scrubs.backfillReq != want {
+	if !reflect.DeepEqual(scrubs.backfillReq, want) {
 		t.Errorf("backfill ran with %+v, want %+v", scrubs.backfillReq, want)
 	}
 }
@@ -1133,21 +1133,6 @@ func TestHandleScrubKey_UnknownKeyIs404(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleScrubKey_IntegrityDisabled refuses rather than reporting an empty
-// result, so a caller cannot read "nothing wrong" from a feature that is off.
-func TestHandleScrubKey_IntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	h := newCoverageHandler(t)
-	integrityWith(t, h, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}}, &scrubberStub{})
-
-	w := httptest.NewRecorder()
-	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
-
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409; body=%s", w.Code, w.Body.String())
 	}
 }
 

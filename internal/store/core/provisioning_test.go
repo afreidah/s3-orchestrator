@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Both engines read and write bucket CORS rules and grant rows through these
+// Both engines read and write bucket settings and grant rows through these
 // helpers, so the cases here hold for either store.
 // -------------------------------------------------------------------------------
 
@@ -17,56 +17,74 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// TestEncodeCORS_EmptyIsNull verifies a bucket with no rules encodes to nil,
-// which both engines store as NULL rather than an empty array.
-func TestEncodeCORS_EmptyIsNull(t *testing.T) {
+// TestEncodeBucket_EmptyIsNull verifies a bucket with no rules and no stored
+// form of its own encodes both columns to nil, which both engines store as
+// NULL, while an empty stored form is a set with no layer rather than none.
+func TestEncodeBucket_EmptyIsNull(t *testing.T) {
 	t.Parallel()
 
 	for _, rules := range [][]config.CORSRule{nil, {}} {
-		got, err := EncodeCORS(rules)
+		cols, err := EncodeBucket(&config.BucketSettings{CORS: rules})
 		if err != nil {
-			t.Fatalf("EncodeCORS(%v): %v", rules, err)
+			t.Fatalf("EncodeBucket(%v): %v", rules, err)
 		}
-		if got != nil {
-			t.Errorf("EncodeCORS(%v) = %q, want nil", rules, got)
+		if cols.CORS != nil || cols.StoredForm != nil {
+			t.Errorf("EncodeBucket(%v) = %+v, want both nil", rules, cols)
 		}
+	}
+	cols, err := EncodeBucket(&config.BucketSettings{StoredForm: &[]string{}})
+	if err != nil || cols.StoredForm == nil || *cols.StoredForm != 0 {
+		t.Errorf("EncodeBucket(empty form) = (%+v, %v), want a zero form", cols, err)
 	}
 }
 
-// TestCORS_RoundTrip verifies a rule set reads back as written.
-func TestCORS_RoundTrip(t *testing.T) {
+// TestBucket_RoundTrip verifies a bucket's settings read back as written, its
+// stored form as the bits object_locations.form uses.
+func TestBucket_RoundTrip(t *testing.T) {
 	t.Parallel()
 
-	rules := []config.CORSRule{{
-		AllowedOrigins: []string{"https://example.com"},
-		AllowedMethods: []string{"GET", "PUT"},
-		MaxAge:         600,
-	}}
-	encoded, err := EncodeCORS(rules)
-	if err != nil {
-		t.Fatalf("EncodeCORS: %v", err)
+	settings := config.BucketSettings{
+		MaxMultipartUploads: 5,
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://example.com"},
+			AllowedMethods: []string{"GET", "PUT"},
+			MaxAge:         600,
+		}},
+		StoredForm:        &[]string{config.LayerCompressed, config.LayerHashed},
+		ReplicationFactor: 2,
 	}
-	got, err := DecodeCORS(encoded)
+	cols, err := EncodeBucket(&settings)
 	if err != nil {
-		t.Fatalf("DecodeCORS: %v", err)
+		t.Fatalf("EncodeBucket: %v", err)
 	}
-	if !reflect.DeepEqual(got, rules) {
-		t.Errorf("round trip = %+v, want %+v", got, rules)
+	if got := StoredFlags(*cols.StoredForm); got != StoredCompressed|StoredHashed {
+		t.Errorf("stored form column = %v, want compressed,hashed", got)
+	}
+	got, err := DecodeBucket(&cols)
+	if err != nil {
+		t.Fatalf("DecodeBucket: %v", err)
+	}
+	if !reflect.DeepEqual(got, settings) {
+		t.Errorf("round trip = %+v, want %+v", got, settings)
 	}
 }
 
-// TestDecodeCORS_RejectsGarbage verifies a column holding something that is not
-// a rule set is an error rather than a bucket with no CORS, and that an empty
-// column reads as no rules.
-func TestDecodeCORS_RejectsGarbage(t *testing.T) {
+// TestBucketColumns_RejectGarbage verifies a CORS column holding something that
+// is not a rule set is an error rather than a bucket with no CORS, that empty
+// columns read as no rules and the deployment's form, and that a stored form
+// naming something other than a layer is refused before it is written.
+func TestBucketColumns_RejectGarbage(t *testing.T) {
 	t.Parallel()
 
-	if _, err := DecodeCORS([]byte("{not json")); err == nil {
-		t.Error("DecodeCORS accepted a value that is not a rule set")
+	if _, err := DecodeBucket(&BucketColumns{CORS: []byte("{not json")}); err == nil {
+		t.Error("DecodeBucket accepted a value that is not a rule set")
 	}
-	got, err := DecodeCORS(nil)
-	if err != nil || got != nil {
-		t.Errorf("DecodeCORS(nil) = (%v, %v), want (nil, nil)", got, err)
+	got, err := DecodeBucket(&BucketColumns{})
+	if err != nil || got.CORS != nil || got.StoredForm != nil {
+		t.Errorf("DecodeBucket(NULL) = (%+v, %v), want no rules and no form", got, err)
+	}
+	if _, err := EncodeBucket(&config.BucketSettings{StoredForm: &[]string{"gzipped"}}); err == nil {
+		t.Error("EncodeBucket accepted a layer nothing names")
 	}
 }
 

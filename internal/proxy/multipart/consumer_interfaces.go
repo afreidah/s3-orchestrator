@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // Codec is the compression surface assembly uses: the assembled stream is
@@ -27,6 +28,12 @@ import (
 type Codec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	Decompress(rs io.ReadSeeker) (io.ReadCloser, error)
+}
+
+// StoredFormSource reports the layers a bucket's new objects are stored with.
+// *provisioning.Declared satisfies it.
+type StoredFormSource interface {
+	Form(bucket string) core.StoredFlags
 }
 
 // Runtime is the subset of *infra.BackendRuntime the multipart Manager needs.

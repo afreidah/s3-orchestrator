@@ -535,7 +535,8 @@ type CompressionStat struct {
 // and none of Without. Backend and KeyID narrow the page to one value when set,
 // ExceptKeyID leaves out copies under that key, and Managed, when set, keeps
 // only the managed copies or only the unmanaged ones. Candidates, when set,
-// keeps only copies a compression pass would still try to encode.
+// keeps only copies a compression pass would still try to encode. Buckets
+// narrows the page by the bucket a copy's key is under.
 type FormFilter struct {
 	With        StoredFlags
 	Without     StoredFlags
@@ -544,6 +545,15 @@ type FormFilter struct {
 	ExceptKeyID string
 	Managed     *bool
 	Candidates  *CompressionThresholds
+	Buckets     BucketScope
+}
+
+// BucketScope narrows a listing by the bucket a key is under: with Only, to
+// the buckets Names lists, and otherwise to every bucket but those. The zero
+// value takes every bucket.
+type BucketScope struct {
+	Names []string
+	Only  bool
 }
 
 // UnreadableCopies selects copies encrypted with no key, which nothing can

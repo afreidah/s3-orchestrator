@@ -19,8 +19,10 @@ package storedform
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
@@ -111,12 +113,14 @@ type Layers struct {
 // Reformed is a copy's bytes in a new stored form, buffered so every copy that
 // takes them is sent the same bytes: the buffer, how many bytes it holds, and
 // the form describing them. Release frees the buffer and must run once the
-// uploads are done, whether or not they succeeded.
+// uploads are done, whether or not they succeeded. source releases what the
+// reform read from, once a later stage holds the bytes.
 type Reformed struct {
 	Body    *materialize.Body
 	Size    int64
 	Form    *core.StoredForm
 	release []func()
+	source  func()
 }
 
 // Declined reports a reform whose encoding did not meet the configured ratio,
@@ -166,11 +170,12 @@ func WithStreamMetric(r io.Reader, op string) io.Reader {
 	return &streamMetricReader{Reader: r, op: op}
 }
 
-// ShouldCompress reports whether a write of size bytes is encoded under cfg.
-// Objects under the minimum are stored verbatim, since a seek table and frame
-// headers cost more than a small object saves; that decline is counted.
-func ShouldCompress(cfg *config.CompressionConfig, codec Encoder, size int64) bool {
-	if codec == nil || !cfg.Enabled {
+// ShouldCompress reports whether a write of size bytes whose bucket stores the
+// layers in want is encoded. Objects under the minimum are stored verbatim,
+// since a seek table and frame headers cost more than a small object saves;
+// that decline is counted.
+func ShouldCompress(want core.StoredFlags, cfg *config.CompressionConfig, codec Encoder, size int64) bool {
+	if codec == nil || !want.Has(core.StoredCompressed) {
 		return false
 	}
 	if size < cfg.MinSize {
@@ -220,9 +225,18 @@ func Describe(form *core.StoredForm, level string, logicalSize int64) *core.Stor
 	return form
 }
 
+// ContentHasher returns the hasher a write stored in the layers of want
+// computes its content hash in, or nil when those layers record no hash.
+func ContentHasher(want core.StoredFlags) hash.Hash {
+	if !want.Has(core.StoredHashed) {
+		return nil
+	}
+	return sha256.New()
+}
+
 // WithContentHash records on form the integrity hash over what the client
 // sent, allocating a form when the caller has none yet. An empty digest, from
-// a deployment with integrity hashing off, leaves form as it is.
+// a write that records no hash, leaves form as it is.
 func WithContentHash(form *core.StoredForm, digest string) *core.StoredForm {
 	if digest == "" {
 		return form
@@ -339,8 +353,13 @@ func Open(ctx context.Context, enc *encryption.Encryptor, codec Decompressor, bo
 // since it covers the bytes the client wrote. The result is buffered, reusing
 // the encoding's buffer when encoding was the last stage. An encoding that
 // misses the ratio is a *Declined error and nothing is returned to release.
-func (l *Layers) Reform(ctx context.Context, body io.Reader, storedSize int64, from *core.StoredForm, want core.StoredFlags) (*Reformed, error) {
-	out := &Reformed{Form: &core.StoredForm{ContentHash: from.ContentHash}}
+//
+// done, when set, releases what body reads from. It runs as soon as a later
+// stage holds the bytes, so a buffered source is not held beside two more, and
+// never for a declined encoding, which leaves the caller its source to store
+// without one.
+func (l *Layers) Reform(ctx context.Context, body io.Reader, storedSize int64, from *core.StoredForm, want core.StoredFlags, done func()) (*Reformed, error) {
+	out := &Reformed{Form: &core.StoredForm{ContentHash: from.ContentHash}, source: done}
 	r, size, err := l.unsealFor(ctx, body, storedSize, from)
 	if err != nil {
 		return nil, err
@@ -423,6 +442,7 @@ func (l *Layers) encode(r io.Reader, logical int64, out *Reformed) (io.Reader, i
 		enc.Body.Cleanup()
 		return nil, 0, &Declined{EncodedSize: enc.Size}
 	}
+	out.dropSource()
 	out.Body = enc.Body
 	out.release = append(out.release, enc.Body.Cleanup)
 	Describe(out.Form, l.Compression.Level, logical)
@@ -461,6 +481,15 @@ func (r *Reformed) buffer(src io.Reader, size int64) error {
 		body.Cleanup()
 		return fmt.Errorf("reformed object came to %d bytes, expected %d", body.Size(), size)
 	}
+	r.dropSource()
 	r.Body, r.release = body, []func(){body.Cleanup}
 	return nil
+}
+
+// dropSource releases what the reform read from, once and only once.
+func (r *Reformed) dropSource() {
+	if r.source != nil {
+		r.source()
+		r.source = nil
+	}
 }

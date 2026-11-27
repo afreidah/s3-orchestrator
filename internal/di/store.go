@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/engine"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
@@ -63,8 +64,12 @@ func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The deployment's factor until ProvideDeclared names each bucket's, since
+	// the declared set is assembled from this store.
 	replication := live.Replication()
-	cs.UseReplicationFactor(func() int { return replication.Config().Factor })
+	cs.UseReplicationFactors(func() core.ReplicationFactors {
+		return core.ReplicationFactors{Default: replication.Config().Factor}
+	})
 	if err := store.Prepare(ctx, cs, cfg.Backends); err != nil {
 		return nil, err
 	}

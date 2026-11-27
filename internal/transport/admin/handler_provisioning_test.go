@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,13 +206,14 @@ func TestHandleCreateBucket(t *testing.T) {
 		adminapi.CreateBucketRequest{
 			Name:                "photos",
 			MaxMultipartUploads: 3,
-			CORS: []adminapi.CORSRule{{
+			CORS: []config.CORSRule{{
 				AllowedOrigins: []string{"https://example.com"},
 				AllowedMethods: []string{"GET"},
 				AllowedHeaders: []string{"*"},
 				ExposeHeaders:  []string{"ETag"},
 				MaxAge:         60,
 			}},
+			StoredForm: &[]string{config.LayerHashed},
 		}))
 
 	if w.Code != http.StatusCreated {
@@ -222,6 +224,25 @@ func TestHandleCreateBucket(t *testing.T) {
 	}
 	if len(stored.CORS) != 1 || stored.CORS[0].MaxAge != 60 {
 		t.Errorf("stored CORS = %+v, want the submitted rule", stored.CORS)
+	}
+	if stored.StoredForm == nil || !slices.Equal(*stored.StoredForm, []string{config.LayerHashed}) {
+		t.Errorf("stored form = %v, want the submitted layers", stored.StoredForm)
+	}
+}
+
+// TestHandleCreateBucket_RefusesAnUnusableStoredForm verifies a stored form
+// naming encryption on a deployment that does not encrypt is the caller's
+// fault, and is refused before anything is stored.
+func TestHandleCreateBucket_RefusesAnUnusableStoredForm(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	provisioningWith(t, h, nil, &provRows{})
+
+	w := httptest.NewRecorder()
+	h.handleCreateBucket(w, jsonRequest(t, http.MethodPost, "/admin/api/provisioning/buckets",
+		adminapi.CreateBucketRequest{Name: "photos", StoredForm: &[]string{config.LayerEncrypted}}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -257,7 +278,7 @@ func TestHandleUpdateBucket(t *testing.T) {
 	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/buckets/photos",
 		adminapi.UpdateBucketRequest{
 			MaxMultipartUploads: 7,
-			CORS: []adminapi.CORSRule{{
+			CORS: []config.CORSRule{{
 				AllowedOrigins: []string{"https://example.com"},
 				AllowedMethods: []string{"GET"},
 			}},

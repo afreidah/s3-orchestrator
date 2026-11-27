@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -79,18 +78,6 @@ func newProvFixtureCfg(t *testing.T, cfg *config.Config, rows *provStore) *provF
 		Config:   config.NewLive(cfg),
 	})
 	return f
-}
-
-// declaredBuckets builds the live bucket set an operation resolves a key
-// against, holding the named buckets.
-func declaredBuckets(names ...string) *provisioning.Declared {
-	buckets := make([]provisioning.Bucket, 0, len(names))
-	for _, n := range names {
-		buckets = append(buckets, provisioning.Bucket{Name: n, Source: provisioning.SourceStore})
-	}
-	d := provisioning.NewDeclared()
-	d.Store(buckets)
-	return d
 }
 
 // expectRepublish states that the operation under test must rebuild the

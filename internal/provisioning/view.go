@@ -54,10 +54,9 @@ type Snapshot struct {
 
 // Bucket is one virtual bucket in the merged view.
 type Bucket struct {
-	Name                string
-	MaxMultipartUploads int
-	CORS                []config.CORSRule
-	Source              Source
+	Name string
+	config.BucketSettings
+	Source Source
 }
 
 // User is one identity in the merged view, with the buckets it reaches. A
@@ -163,12 +162,7 @@ func mergeBuckets(v *View, cfgBuckets []config.BucketConfig, stored []core.Bucke
 	for i := range cfgBuckets {
 		b := &cfgBuckets[i]
 		declared[b.Name] = struct{}{}
-		v.Buckets = append(v.Buckets, Bucket{
-			Name:                b.Name,
-			MaxMultipartUploads: b.MaxMultipartUploads,
-			CORS:                b.CORS,
-			Source:              SourceConfig,
-		})
+		v.Buckets = append(v.Buckets, Bucket{Name: b.Name, BucketSettings: b.BucketSettings, Source: SourceConfig})
 	}
 	for i := range stored {
 		b := &stored[i]
@@ -188,7 +182,7 @@ func mergeBuckets(v *View, cfgBuckets []config.BucketConfig, stored []core.Bucke
 
 // storedBucket is a bucket the store declares, as the merged view carries it.
 func storedBucket(b *core.Bucket) Bucket {
-	return Bucket{Name: b.Name, MaxMultipartUploads: b.MaxMultipartUploads, CORS: b.CORS, Source: SourceStore}
+	return Bucket{Name: b.Name, BucketSettings: b.BucketSettings, Source: SourceStore}
 }
 
 // mergeConfigUsers turns each config-declared credential into a user reaching

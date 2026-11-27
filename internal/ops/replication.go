@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// The two halves of keeping copy counts at the configured factor: a cycle that
+// The two halves of keeping copy counts at each key's factor: a cycle that
 // creates the copies under-replicated objects are missing, and a cycle that
 // removes the surplus copies over-replicated objects carry. Both run under the
 // replicator's lock, so one never overlaps the replication service's drain, and
-// decline when replication is meaningless at the running factor.
+// decline when replication is meaningless at the running factors.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -34,8 +34,9 @@ const maxCleanBatchSize = 10000
 // TYPES
 // -------------------------------------------------------------------------
 
-// Backlog reports the queued replication backlog at the running factor: how
-// many objects hold fewer copies than it calls for, and how many hold more.
+// Backlog reports the queued replication backlog: how many objects hold fewer
+// copies than their factor calls for, and how many hold more. Factor is the
+// deployment's, which a bucket may set its own beside.
 type Backlog struct {
 	Factor int
 	Under  int64
@@ -92,12 +93,11 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	})
 }
 
-// CountBacklog reports the queued replication backlog at the running factor.
-// With replication disabled it reports the factor alone, with
-// ErrReplicationDisabled.
+// CountBacklog reports the queued replication backlog. With replication
+// disabled it reports the factor alone, with ErrReplicationDisabled.
 func (r *Replication) CountBacklog(ctx context.Context) (Backlog, error) {
 	factor := r.d.Config.Load().Replication.Factor
-	if factor <= 1 {
+	if !r.d.Replicator.Replicates() {
 		return Backlog{Factor: factor}, ErrReplicationDisabled
 	}
 	backlog, err := r.d.Backlog.CountReplicationQueue(ctx)
@@ -138,12 +138,11 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 }
 
 // runConfig returns the running config for one manual cycle, whose defaults
-// the config loader filled. Reports ErrReplicationDisabled when the factor
-// leaves nothing to replicate.
+// the config loader filled. Reports ErrReplicationDisabled when no key's factor
+// leaves anything to replicate.
 func (r *Replication) runConfig() (config.ReplicationConfig, error) {
-	runCfg := r.d.Config.Load().Replication
-	if runCfg.Factor <= 1 {
+	if !r.d.Replicator.Replicates() {
 		return config.ReplicationConfig{}, ErrReplicationDisabled
 	}
-	return runCfg, nil
+	return r.d.Config.Load().Replication, nil
 }

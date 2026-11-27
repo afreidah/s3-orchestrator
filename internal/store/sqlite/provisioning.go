@@ -16,7 +16,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -31,7 +30,7 @@ import (
 // rather than ordering.
 func (s *Store) ListBuckets(ctx context.Context) ([]core.Bucket, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, max_multipart_uploads, cors, created_at
+		`SELECT name, max_multipart_uploads, cors, stored_form, replication_factor, created_at
 		 FROM buckets
 		 ORDER BY name`,
 	)
@@ -92,16 +91,17 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 //
 // created_at is written here rather than left to the column default, as every
 // other timestamp write is: the default renders milliseconds while these render
-// nanoseconds, and the two widths do not compare as text.
+// nanoseconds, and the two widths do not compare as text. The CORS rules are
+// bound as text, since the column is TEXT and bytes would store a BLOB.
 func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := marshalCORS(b.CORS)
+	cols, err := core.EncodeBucket(&b.BucketSettings)
 	if err != nil {
 		return err
 	}
 	return s.exec(ctx, "create bucket "+b.Name,
-		`INSERT INTO buckets (name, max_multipart_uploads, cors, created_at)
-		 VALUES (?, ?, ?, ?)`,
-		b.Name, b.MaxMultipartUploads, cors, now(),
+		`INSERT INTO buckets (name, max_multipart_uploads, cors, stored_form, replication_factor, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		b.Name, cols.MaxMultipartUploads, nullableString(string(cols.CORS)), cols.StoredForm, cols.ReplicationFactor, now(),
 	)
 }
 
@@ -110,13 +110,13 @@ func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
 //
 // created_at is left alone: a bucket whose limit changed is the same bucket.
 func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := marshalCORS(b.CORS)
+	cols, err := core.EncodeBucket(&b.BucketSettings)
 	if err != nil {
 		return err
 	}
 	return s.exec(ctx, "update bucket "+b.Name,
-		`UPDATE buckets SET max_multipart_uploads = ?, cors = ? WHERE name = ?`,
-		b.MaxMultipartUploads, cors, b.Name,
+		`UPDATE buckets SET max_multipart_uploads = ?, cors = ?, stored_form = ?, replication_factor = ? WHERE name = ?`,
+		cols.MaxMultipartUploads, nullableString(string(cols.CORS)), cols.StoredForm, cols.ReplicationFactor, b.Name,
 	)
 }
 
@@ -208,14 +208,16 @@ func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource)
 func scanBucket(rows *sql.Rows) (core.Bucket, error) {
 	var (
 		b       core.Bucket
+		cols    core.BucketColumns
 		cors    sql.NullString
 		created string
 	)
-	if err := rows.Scan(&b.Name, &b.MaxMultipartUploads, &cors, &created); err != nil {
+	if err := rows.Scan(&b.Name, &cols.MaxMultipartUploads, &cors, &cols.StoredForm, &cols.ReplicationFactor, &created); err != nil {
 		return core.Bucket{}, fmt.Errorf("scan bucket: %w", err)
 	}
+	cols.CORS = []byte(nullStringValue(cors))
 	var err error
-	if b.CORS, err = unmarshalCORS(cors); err != nil {
+	if b.BucketSettings, err = core.DecodeBucket(&cols); err != nil {
 		return core.Bucket{}, err
 	}
 	if b.CreatedAt, err = parseTime(created); err != nil {
@@ -275,23 +277,4 @@ func scanGrant(rows *sql.Rows) (core.Grant, error) {
 		return core.Grant{}, fmt.Errorf("parse grant created_at: %w", err)
 	}
 	return core.GrantFromColumns(userID, kind, name, perms, createdAt)
-}
-
-// -------------------------------------------------------------------------
-// HELPERS
-// -------------------------------------------------------------------------
-
-// marshalCORS encodes a bucket's browser rules as text. The cors column is
-// TEXT, and passing the encoded bytes would store a BLOB instead.
-func marshalCORS(rules []config.CORSRule) (sql.NullString, error) {
-	encoded, err := core.EncodeCORS(rules)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-	return nullableString(string(encoded)), nil
-}
-
-// unmarshalCORS reads a bucket's browser rules back from the text column.
-func unmarshalCORS(s sql.NullString) ([]config.CORSRule, error) {
-	return core.DecodeCORS([]byte(nullStringValue(s)))
 }

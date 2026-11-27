@@ -48,6 +48,7 @@ database:
 buckets:
   - name: default
     # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
+    # stored_form: ["hashed"]     # optional; layers new objects are stored with (omit for the deployment's)
     credentials:
       - access_key_id: ${BUCKET_ACCESS_KEY}
         secret_access_key: ${BUCKET_SECRET_KEY}

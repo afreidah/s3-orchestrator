@@ -67,26 +67,35 @@ func (a *sqliteTxAdapter) QueueOffFactor(ctx context.Context, factor int, keys .
 // REBUILD
 // -------------------------------------------------------------------------
 
-// RebuildReplicationQueue queues every key the ledger holds off factor in one
-// grouped pass and reports how many it queued.
-func (s *Store) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+// RebuildReplicationQueue queues every key the ledger holds off its factor in
+// one grouped pass and reports how many it queued. A key is kept at the factor
+// its bucket sets, and otherwise at the default.
+func (s *Store) RebuildReplicationQueue(ctx context.Context, factors *core.ReplicationFactors, excluded []string) (int64, error) {
+	names, bucketFactors := factors.Overrides()
 	return withTxVal(ctx, s, func(a *sqliteTxAdapter) (int64, error) {
 		return a.execRows(ctx, "rebuild replication queue",
 			`INSERT INTO replication_queue (object_key, direction, next_retry)
-			 SELECT object_key, CASE WHEN live < ?1 THEN -1 ELSE 1 END, ?3
+			 SELECT object_key, CASE WHEN live < factor THEN -1 ELSE 1 END, ?3
 			 FROM (
-			     SELECT ol.object_key,
-			            SUM(ol.backend_name NOT IN (SELECT value FROM json_each(?2))) + COALESCE(i.copies, 0) AS live,
-			            COUNT(*) AS held
-			     FROM object_locations ol
+			     SELECT c.object_key, c.live, c.held, COALESCE(o.factor, ?1) AS factor
+			     FROM (
+			         SELECT ol.object_key,
+			                SUM(ol.backend_name NOT IN (SELECT value FROM json_each(?2))) + COALESCE(i.copies, 0) AS live,
+			                COUNT(*) AS held
+			         FROM object_locations ol
+			         LEFT JOIN (
+			             SELECT object_key, COUNT(*) AS copies FROM pending_objects GROUP BY object_key
+			         ) i ON i.object_key = ol.object_key
+			         WHERE ol.managed
+			         GROUP BY ol.object_key, i.copies
+			     ) c
 			     LEFT JOIN (
-			         SELECT object_key, COUNT(*) AS copies FROM pending_objects GROUP BY object_key
-			     ) i ON i.object_key = ol.object_key
-			     WHERE ol.managed
-			     GROUP BY ol.object_key, i.copies
+			         SELECT b.value AS bucket, f.value AS factor
+			         FROM json_each(?4) b JOIN json_each(?5) f ON f.key = b.key
+			     ) o ON o.bucket = `+bucketOf("c.object_key")+`
 			 )
-			 WHERE live < ?1 OR held > ?1`+queueUpsert,
-			factor, jsonList(excluded), now())
+			 WHERE live < factor OR held > factor`+queueUpsert,
+			factors.Default, jsonList(excluded), now(), jsonList(names), jsonList(bucketFactors))
 	})
 }
 

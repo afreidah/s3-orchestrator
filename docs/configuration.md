@@ -113,6 +113,8 @@ openssl rand -base64 30
 - Each bucket must have at least one credential set.
 - Each credential needs both halves: `access_key_id` and `secret_access_key`.
 - Each CORS rule needs at least one origin and one method, methods must be ones the S3 surface implements, an origin may carry at most one `*`, and `max_age` must not be negative.
+- `stored_form` may name only `compressed`, `encrypted` and `hashed`, and names `encrypted` only when `encryption.enabled` is set.
+- `replication_factor` is 0 or between 1 and the number of backends.
 
 Multiple credentials on the same bucket let different services share a namespace with independent keys. Every credential reaching a bucket has identical access to it - there is no read-only credential, and both keys above can list, upload, overwrite and delete everything under `app2-files`. The names say which service holds each key, not what it may do with it.
 
@@ -161,6 +163,46 @@ Rules are matched in the order written, and the first admitting the origin, meth
 A preflight is answered from these rules alone, before authentication, because a browser cannot sign one. It grants nothing on its own: the request that follows authenticates exactly as any other does. Refused preflights are counted in `s3o_cors_preflight_total{result="rejected"}` - a climbing rejected count with no allowed count means the rules do not cover the origin your application is served from.
 
 `Access-Control-Allow-Credentials` is deliberately not supported. Authentication here travels in SigV4 headers or a presigned query string, never in cookies, so credentialed CORS mode buys nothing and would forbid wildcard origins.
+
+#### Stored form
+
+A bucket's `stored_form` names the layers its new objects are stored with: `compressed`, `encrypted` and `hashed`. A bucket that leaves it out takes the deployment's, which is `compressed` when `compression.enabled` is set, `encrypted` when `encryption.enabled` is set, and `hashed` when `integrity.enabled` is set. A bucket that sets it gets exactly the layers it lists and nothing from the deployment, and an empty list stores its objects with no layer at all.
+
+```yaml
+buckets:
+  - name: "restic"
+    credentials:
+      - access_key_id: "AKID_RESTIC"
+        secret_access_key: "secret4"
+    # restic compresses and encrypts before uploading. Doing either again
+    # buys nothing and holds two more copies of every pack in memory.
+    stored_form: ["hashed"]
+
+  - name: "traces"
+    credentials:
+      - access_key_id: "AKID_TEMPO"
+        secret_access_key: "secret5"
+    stored_form: []
+```
+
+`compressed` still declines an object under `compression.min_size` or one that does not reach `compression.min_ratio`, as it does for the deployment. `encrypted` needs the key source an enabled `encryption` block loads, so it is refused while encryption is off; a stored bucket asking for it after encryption is turned off has its writes refused rather than stored as plaintext.
+
+A change applies to new writes only. Objects already stored keep the form they were written in, and the scrubber keeps verifying those that carry a hash. `compress-existing`, `encrypt-existing` and `backfill-checksums` bring existing objects up to their bucket's layers and leave a bucket that does not carry the layer alone; `decompress-existing` and `decrypt-existing` run on every bucket.
+
+#### Replication factor
+
+A bucket's `replication_factor` is how many copies each of its objects is kept at, from 1 to the number of backends. Zero, the default, takes `replication.factor`. Expendable data kept at 1 stores half as much as it would at 2 and stays out of the replicator's work.
+
+```yaml
+buckets:
+  - name: "traces"
+    credentials:
+      - access_key_id: "AKID_TEMPO"
+        secret_access_key: "secret5"
+    replication_factor: 1
+```
+
+Unlike the stored form, a change reconciles existing objects: the replicator copies a bucket's objects up to a raised factor, and the over-replication cleaner removes copies past a lowered one, including down to 1. A deployment at `replication.factor: 1` with no bucket setting its own runs neither.
 
 ### database
 
@@ -495,7 +537,7 @@ replication:
   unhealthy_threshold: "10m"     # grace period before replacing copies on backends refusing reads (default: 10m)
 ```
 
-The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
+The replication factor must be `<= number of backends`. A bucket can keep its objects at a factor of its own with [`replication_factor`](#replication-factor). The worker runs while the factor is above 1 or any bucket sets one of its own, once at startup to catch up on any pending replicas and then at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
 Replication is **asynchronous by default** - writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
 
@@ -515,7 +557,7 @@ write_path:
     max_in_flight: 256           # writes whose copies may outlive their response (default: server.max_concurrent_writes)
 ```
 
-The replicator makes a copy by reading the object back off a backend that holds it and writing it elsewhere, which costs a full GET plus that backend's egress. A write already has the bytes, so placing the copy itself costs one more upload and no read at all. `count` may never exceed `replication.factor` - copies past the factor are removed by the over-replication cleaner about as fast as writes could create them - and a factor of `1` leaves the setting inert.
+The replicator makes a copy by reading the object back off a backend that holds it and writing it elsewhere, which costs a full GET plus that backend's egress. A write already has the bytes, so placing the copy itself costs one more upload and no read at all. A write places `count` copies or its bucket's factor, whichever is fewer, since copies past the factor would be removed by the over-replication cleaner about as fast as writes could create them; a bucket at factor `1` places one.
 
 The tradeoff is shape rather than total. Total work goes down, but the extra copy's bytes are sent at write time instead of spread across replicator cycles, so a deployment whose uplink is the bottleneck can see PUT throughput fall even as its backend bill does. Measure before leaving it on.
 
@@ -764,7 +806,7 @@ lifecycle:
 
 ### encryption
 
-Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects are encrypted before being stored on backends and decrypted transparently on read. Exactly one key source is required.
+Server-side envelope encryption with chunked AES-256-GCM. When enabled, the key source is loaded and every bucket without a [stored form](#stored-form) of its own encrypts its new objects before they are stored on backends; reads decrypt transparently. Exactly one key source is required.
 
 ```yaml
 encryption:
@@ -828,7 +870,7 @@ After updating the config, call the `rotate-encryption-key` admin API with `all_
 
 ### compression
 
-At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
+At-rest compression. When enabled, every bucket without a [stored form](#stored-form) of its own stores its new objects on backends as chunked zstd, served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object. A bucket naming `compressed` in its stored form compresses whether or not this is enabled, and the settings below apply to it either way.
 
 Every read, write, worker and recovery path honours this. It stays off by default, and enabling it affects new writes; `s3-orchestrator admin compress-existing` rewrites objects already stored.
 
@@ -857,7 +899,7 @@ Decompression speed does not degrade as the level rises, so the trade is entirel
 Larger chunks compress marginally better and make a small range read pull more than it needs; smaller chunks do the reverse and grow the seek table. 
 
 **Important notes:**
-- Compression is **not reloadable** - changing any field requires a restart.
+- `enabled` is reloadable, since it only decides which buckets compress by default. Every other field requires a restart.
 - `chunk_size` and `level` apply to newly written objects only. Existing objects carry their own layout in their seek table and stay readable after either changes.
 - `min_size` exists because a small object can come out larger than it went in: every stored object carries frame headers and a seek table, and below a few kilobytes that overhead can exceed anything compression saves.
 - `min_ratio` catches what `min_size` cannot: an object of any size whose content will not compress. The object is encoded, measured, and stored raw when the result is not at least this much smaller. Lower the value to demand a bigger saving before paying for a decode on every read; `1.0` keeps any saving at all.
@@ -865,7 +907,7 @@ Larger chunks compress marginally better and make a small range read pull more t
 
 ### integrity
 
-SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in the metadata database. `verify_on_read` and `verify_on_replicate` both default to `false`. `s3o_integrity_checks_total{operation}` and `s3o_integrity_errors_total{operation}` count the verifications performed and the mismatches found.
+SHA-256 content hashing for data integrity verification. When enabled, every bucket without a [stored form](#stored-form) of its own checksums its new objects on write, and the hash is stored alongside the object location in the metadata database. A bucket naming `hashed` in its stored form hashes whether or not this is enabled. Verification works on whichever copies carry a hash: `verify_on_read`, `verify_on_replicate` and the scrubber run as they are set, with or without `enabled`. `verify_on_read` and `verify_on_replicate` both default to `false`. `s3o_integrity_checks_total{operation}` and `s3o_integrity_errors_total{operation}` count the verifications performed and the mismatches found.
 
 ```yaml
 integrity:
@@ -884,7 +926,7 @@ integrity:
 - **Read path (`verify_on_read`):** The hash is computed as the response streams to the client and compared only once every byte has been delivered. On a mismatch the corrupted copy is enqueued for cleanup. A download cut short, by `backend_timeout` or a client disconnect, is never compared, since a prefix of the object cannot match its hash.
 - **Replication (`verify_on_replicate`):** Each new copy is read back from its target, decoded to plaintext, and checked against the source's hash before the ledger row that makes it count toward the replication factor is written. A copy whose hash disagrees is deleted and another target is tried.
 - **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
-- **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
+- **Backfill:** Objects written before their bucket hashed have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes; it works through the buckets that hash and leaves the others alone.
 
 **What `verify_on_replicate` costs, and why it is off by default.** Hashing on write is nearly free, because the digest is computed during a buffering pass the write path already performs. Verifying a replica is not: it reads the whole copy back, so every replica costs its size in egress twice instead of once. Enabling integrity therefore does not enable this on its own. Turn it on when the window it closes matters to you - a corrupt copy counts toward the replication factor from the moment its row exists, and until the scrubber reaches it the object reads as fully replicated when it is not.
 
@@ -1003,6 +1045,8 @@ kill -HUP $(pidof s3-orchestrator)
 | `buckets` (credentials, limits) | Yes | Credentials and `max_multipart_uploads` take effect immediately |
 | `auth.root` | Yes | The registry is rebuilt from config merged with the store, so the new keypair takes effect on the next request |
 | `buckets[].cors` | Yes | The new rule set takes effect on the next request; a rule the matcher cannot read aborts the whole reload before anything is applied |
+| `buckets[].stored_form` | Yes | The next write to the bucket is stored with the new layers |
+| `buckets[].replication_factor` | Yes | The next replication cycle rebuilds the queue and brings the bucket's objects to the new factor |
 | `rate_limit.requests_per_sec`, `rate_limit.burst` | Yes | Every client gets the new rate at once: the per-IP limiters are discarded |
 | `rate_limit` (other fields) | No | `enabled`, `trusted_proxies` and the cleanup settings need a restart |
 | `backends[].quota_bytes` | Yes | Synced to database on reload |
@@ -1037,8 +1081,9 @@ kill -HUP $(pidof s3-orchestrator)
 | `circuit_breaker` | No | Requires restart |
 | `backend_circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
-| `encryption` | No | Requires restart |
-| `compression` | No | Requires restart |
+| `encryption` | No | Requires restart; a bucket's encrypted layer follows the encryptor the process started with |
+| `compression.enabled` | Yes | Decides which buckets compress by default |
+| `compression` (other fields) | No | Requires restart |
 | `cache` | No | Requires restart |
 | `redis` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |

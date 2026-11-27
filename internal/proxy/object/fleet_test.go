@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -101,12 +102,13 @@ type fleet struct {
 	Runtime  *infra.BackendRuntime
 	Coord    *writepath.Coordinator
 	Config   *config.Live
+	Declared *provisioning.Declared
 	Detached *writepath.DetachedUploads
 }
 
 // SetIntegrityConfig swaps the integrity settings the manager reads on write.
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) {
-	f.Config.Store(&config.Config{Integrity: *cfg})
+	f.Config.Update(func(c *config.Config) { c.Integrity = *cfg })
 }
 
 // -------------------------------------------------------------------------
@@ -146,7 +148,13 @@ func newFleet(
 		rt.SetStateChecker(d)
 	}
 
-	live := config.NewLive(&config.Config{})
+	// The copy count defaults to the factor, so the factor follows it here.
+	live := config.NewLive(&config.Config{
+		Compression: opts.Compression,
+		Replication: config.ReplicationConfig{Factor: max(opts.CopiesPerWrite, 1)},
+	})
+	forms := provisioning.NewDeclared()
+	forms.UseDeployment(live, opts.Encryptor != nil)
 	coord := writepath.New(rt, store)
 	// Generous unless a test is about the ceiling itself, so a fan-out test is
 	// never refused a slot for a reason it did not ask for.
@@ -155,6 +163,7 @@ func newFleet(
 		Core:                         rt,
 		Coord:                        coord,
 		Stores:                       store,
+		Buckets:                      forms,
 		Encryptor:                    opts.Encryptor,
 		Codec:                        opts.Codec,
 		Compression:                  opts.Compression,
@@ -170,7 +179,7 @@ func newFleet(
 	})
 	// Stops the cache's eviction goroutine, as proxytest.New does for a stack.
 	t.Cleanup(om.LocationCache().Close)
-	return &fleet{Manager: om, Runtime: rt, Coord: coord, Config: live, Detached: detached}
+	return &fleet{Manager: om, Runtime: rt, Coord: coord, Config: live, Declared: forms, Detached: detached}
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already

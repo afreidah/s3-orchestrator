@@ -18,3 +18,18 @@ resource "s3orchestrator_bucket" "assets" {
     max_age         = 600
   }
 }
+
+# A client that compresses and encrypts before uploading, such as restic, gains
+# nothing from the orchestrator doing either again. stored_form replaces the
+# deployment's layers for the bucket's new objects; omit it to keep them.
+resource "s3orchestrator_bucket" "restic" {
+  name        = "restic"
+  stored_form = ["hashed"]
+}
+
+# Expendable data is kept at one copy whatever the deployment's factor, which
+# halves what it stores and keeps it out of the replicator's work.
+resource "s3orchestrator_bucket" "traces" {
+  name               = "traces"
+  replication_factor = 1
+}

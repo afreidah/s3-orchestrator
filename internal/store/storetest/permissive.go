@@ -49,8 +49,9 @@ func Permissive(m *MockMetadataStore) {
 	r.ListReplicationQueue(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.SettleReplicationQueue(a, a).Return(nil).AnyTimes()
 	r.RetryReplicationQueue(a, a, a).Return(nil).AnyTimes()
-	r.UseReplicationFactor(a).AnyTimes()
-	r.ReplicationFactor().Return(0).AnyTimes()
+	var factors core.FactorsHolder
+	r.UseReplicationFactors(a).Do(factors.Use).AnyTimes()
+	r.ReplicationFactors().DoAndReturn(factors.Load).AnyTimes()
 	r.CreateMultipartUpload(a, a).Return(true, nil).AnyTimes()
 	r.DeleteBackendData(a, a).Return(nil).AnyTimes()
 	r.DeleteMultipartUpload(a, a, a, a).Return(nil, nil).AnyTimes()

@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -93,6 +94,32 @@ func TestPutObject_ParallelCopies_PlacesEveryCopy(t *testing.T) {
 	}
 }
 
+// TestPutObject_ParallelCopies_StopsAtTheBucketsFactor asserts a write to a
+// bucket kept at fewer copies than the fan-out places only its bucket's
+// factor, since the over-replication cleaner would remove the rest.
+func TestPutObject_ParallelCopies_StopsAtTheBucketsFactor(t *testing.T) {
+	t.Parallel()
+	b1, b2, b3 := backendtest.NewInMemory(), backendtest.NewInMemory(), backendtest.NewInMemory()
+	store, c := eligibleStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}, &fleetOpts{
+		Order:          []string{"b1", "b2", "b3"},
+		CopiesPerWrite: 3,
+	})
+	mgr.Declared.Store([]provisioning.Bucket{{Name: "photos", ReplicationFactor: 2}})
+
+	payload := []byte("two copies, as the bucket keeps")
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+		Key: "photos/key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	settle(t, mgr)
+
+	if recorded, companions, _ := c.snapshot(); len(recorded) != 1 || len(companions) != 1 {
+		t.Fatalf("recorded %d objects and %d further copies, want 1 and 1", len(recorded), len(companions))
+	}
+}
+
 // TestCopyIntents_OnePrimaryTheRestCompanions asserts a write claims its first
 // copy as the primary, which a reaper promotes, and the rest as companions,
 // which it discards.
@@ -104,7 +131,7 @@ func TestCopyIntents_OnePrimaryTheRestCompanions(t *testing.T) {
 	})
 
 	plan := &putPlan{uploadSize: 100, etagDigest: "d"}
-	intents := mgr.copyIntents(&PutObjectRequest{Key: "k"}, plan)
+	intents := mgr.copyIntents(&PutObjectRequest{Key: "k"}, plan, 3)
 
 	if len(intents) != 3 {
 		t.Fatalf("built %d intents, want one per copy", len(intents))

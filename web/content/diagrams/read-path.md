@@ -225,7 +225,7 @@ window.s3oDiagram = {
     INTEG: {
       title: 'Integrity Verify?',
       badge: 'decision', badgeText: 'integrity check',
-      body: '<p>Checks if <code>integrity.enabled</code> and <code>integrity.verify_on_read</code> are true, the request is not ranged, and the object has a stored content hash.</p><p>If all conditions are met, the body is hashed as it streams. If not, the body passes through directly. Ranged reads are never verified, because the stored hash covers the whole object; the scrubber covers them.</p>'
+      body: '<p>Checks if <code>integrity.verify_on_read</code> is true, the request is not ranged, and the copy has a stored content hash. <code>integrity.enabled</code> does not enter into it: it only decides whether a bucket hashes new objects by default, and a copy that carries a hash is verified whichever bucket it is in.</p><p>If all conditions are met, the body is hashed as it streams. If not, the body passes through directly. Ranged reads are never verified, because the stored hash covers the whole object; the scrubber covers them.</p>'
     },
     VERIFY: {
       title: 'Hash on Complete Read',

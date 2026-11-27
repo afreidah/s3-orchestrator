@@ -186,31 +186,34 @@ func TestReplicationQueue_FailedReleaseEndsTheRead(t *testing.T) {
 }
 
 // TestReplicationQueue_PrepareRebuildsOnlyWhenItsBasisChanged verifies the
-// queue rebuilds on its first pass and after the excluded backends or the
-// fleet changed, and on every pass at a factor the store's writes are not
-// queueing against.
+// queue rebuilds on its first pass and after the factors, the excluded
+// backends or the fleet changed, and on every pass at factors the store's
+// writes are not queueing against.
 func TestReplicationQueue_PrepareRebuildsOnlyWhenItsBasisChanged(t *testing.T) {
 	t.Parallel()
-	ms := &mockMetadataStore{replicationFactor: 2}
+	ms := &mockMetadataStore{}
+	kept := core.ReplicationFactors{Default: 2}
+	ms.UseReplicationFactors(func() core.ReplicationFactors { return kept })
 	q := NewReplicationQueue(ms)
 	two := map[string]backend.ObjectBackend{"b1": nil, "b2": nil}
 	three := map[string]backend.ObjectBackend{"b1": nil, "b2": nil, "b3": nil}
+	photos := core.ReplicationFactors{Default: 2, Buckets: map[string]int{"photos": 1}}
 	steps := []struct {
 		name     string
-		factor   int
+		factors  core.ReplicationFactors
 		excluded []string
 		backends map[string]backend.ObjectBackend
 		rebuilds int
 	}{
-		{"first pass", 2, nil, two, 1},
-		{"same basis", 2, nil, two, 1},
-		{"excluded changed", 2, []string{"b2"}, two, 2},
-		{"fleet changed", 2, []string{"b2"}, three, 3},
-		{"factor the writes do not keep", 3, []string{"b2"}, three, 4},
-		{"same ad hoc factor", 3, []string{"b2"}, three, 5},
+		{"first pass", kept, nil, two, 1},
+		{"same basis", kept, nil, two, 1},
+		{"excluded changed", kept, []string{"b2"}, two, 2},
+		{"fleet changed", kept, []string{"b2"}, three, 3},
+		{"factors the writes do not keep", photos, []string{"b2"}, three, 4},
+		{"same ad hoc factors", photos, []string{"b2"}, three, 5},
 	}
 	for _, s := range steps {
-		if err := q.prepare(t.Context(), s.factor, s.excluded, s.backends); err != nil {
+		if err := q.prepare(t.Context(), &s.factors, s.excluded, s.backends); err != nil {
 			t.Fatalf("%s: prepare: %v", s.name, err)
 		}
 		if ms.rebuilds != s.rebuilds {
@@ -225,7 +228,7 @@ func TestReplicationQueue_PrepareRebuildsOnlyWhenItsBasisChanged(t *testing.T) {
 func TestReplicator_RebuildQueueAlwaysRebuilds(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().RebuildReplicationQueue(gomock.Any(), 2, gomock.Any()).Return(int64(3), nil).Times(2)
+	store.EXPECT().RebuildReplicationQueue(gomock.Any(), &core.ReplicationFactors{Default: 2}, gomock.Any()).Return(int64(3), nil).Times(2)
 	storetest.Permissive(store)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 	for range 2 {

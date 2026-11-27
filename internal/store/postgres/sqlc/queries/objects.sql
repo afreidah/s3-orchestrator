@@ -220,7 +220,8 @@ DELETE FROM object_locations WHERE backend_name = $1;
 -- page to what the pass will act on, so row_limit is not spent on rows it
 -- would decline: an empty backend_filter, key_id or except_key_id matches every
 -- value, and a NULL managed matches copies whether or not the orchestrator
--- manages them.
+-- manages them. bucket_names leaves out the copies under those buckets, or with
+-- buckets_only keeps only them, so an empty list without it matches every key.
 --
 -- Paged by cursor rather than offset, since a pass usually takes the copies it
 -- acts on out of its own predicate, and an offset would step over the rows
@@ -241,6 +242,7 @@ WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (sqlc.arg(key_id)::text = '' OR key_id = sqlc.arg(key_id)::text)
   AND (sqlc.arg(except_key_id)::text = '' OR key_id IS DISTINCT FROM sqlc.arg(except_key_id)::text)
+  AND (split_part(object_key, '/', 1) = ANY(sqlc.arg(bucket_names)::text[])) = sqlc.arg(buckets_only)::boolean
   AND object_size >= sqlc.arg(min_size)::bigint
   AND (sqlc.arg(probe_level)::text = ''
        OR compression_probe_size IS NULL

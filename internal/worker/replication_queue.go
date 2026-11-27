@@ -6,12 +6,12 @@
 // The replicator and the over-replication cleaner work through the replication
 // queue instead of scanning the ledger: every write that leaves a key off the
 // factor queues it in its own transaction, so a pass reads a batch of due keys,
-// brings each back to the factor, and settles it or holds it for a later retry.
+// brings each back to its factor, and settles it or holds it for a later retry.
 // Passes run one at a time under the replicator's lock, so a pass that stops
 // partway leaves its unfinished keys due as they were. Both sides share one
 // ReplicationQueue, which rebuilds the queue from the ledger when it was not
-// kept against what a pass needs: on the first pass, after the factor, the
-// excluded backends or the fleet changed, and on any pass at a factor the
+// kept against what a pass needs: on the first pass, after the factors, the
+// excluded backends or the fleet changed, and on any pass at factors the
 // store's writes are not queueing against.
 // -------------------------------------------------------------------------------
 
@@ -61,43 +61,52 @@ func NewReplicationQueue(store ReplicationQueueStore) *ReplicationQueue {
 	return &ReplicationQueue{store: store, log: logfmt.Logger(string(audit.WorkloadReplication))}
 }
 
+// Factors returns the factors a pass at the deployment's factor brings keys
+// to: that one, and each bucket's own as the store's writes queue them.
+func (q *ReplicationQueue) Factors(deployment int) core.ReplicationFactors {
+	factors := q.store.ReplicationFactors()
+	factors.Default = deployment
+	return factors
+}
+
 // prepare rebuilds the queue unless the store's writes queue keys against
-// factor and nothing it was last rebuilt against has changed.
-func (q *ReplicationQueue) prepare(ctx context.Context, factor int, excluded []string, backends map[string]backend.ObjectBackend) error {
+// factors and nothing it was last rebuilt against has changed.
+func (q *ReplicationQueue) prepare(ctx context.Context, factors *core.ReplicationFactors, excluded []string, backends map[string]backend.ObjectBackend) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	basis := basisOf(factor, excluded, backends)
-	if q.store.ReplicationFactor() == factor && basis == q.basis {
+	basis := basisOf(factors, excluded, backends)
+	kept := q.store.ReplicationFactors()
+	if kept.Equal(factors) && basis == q.basis {
 		return nil
 	}
-	_, err := q.rebuildLocked(ctx, factor, excluded, basis)
+	_, err := q.rebuildLocked(ctx, factors, excluded, basis)
 	return err
 }
 
-// rebuild queues every key the ledger holds off factor, whatever the queue was
-// last rebuilt against, and reports how many it queued.
-func (q *ReplicationQueue) rebuild(ctx context.Context, factor int, excluded []string, backends map[string]backend.ObjectBackend) (int64, error) {
+// rebuild queues every key the ledger holds off its factor, whatever the queue
+// was last rebuilt against, and reports how many it queued.
+func (q *ReplicationQueue) rebuild(ctx context.Context, factors *core.ReplicationFactors, excluded []string, backends map[string]backend.ObjectBackend) (int64, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return q.rebuildLocked(ctx, factor, excluded, basisOf(factor, excluded, backends))
+	return q.rebuildLocked(ctx, factors, excluded, basisOf(factors, excluded, backends))
 }
 
 // rebuildLocked rebuilds the queue and records basis as what it was rebuilt
 // against. The caller holds mu.
-func (q *ReplicationQueue) rebuildLocked(ctx context.Context, factor int, excluded []string, basis string) (int64, error) {
-	queued, err := q.store.RebuildReplicationQueue(ctx, factor, excluded)
+func (q *ReplicationQueue) rebuildLocked(ctx context.Context, factors *core.ReplicationFactors, excluded []string, basis string) (int64, error) {
+	queued, err := q.store.RebuildReplicationQueue(ctx, factors, excluded)
 	if err != nil {
 		return 0, fmt.Errorf("rebuild replication queue: %w", err)
 	}
 	q.basis = basis
-	audit.Log(ctx, "replication.queue_rebuilt", slog.Int("factor", factor), slog.Int64("queued", queued))
+	audit.Log(ctx, "replication.queue_rebuilt", slog.String("factors", factors.String()), slog.Int64("queued", queued))
 	return queued, nil
 }
 
-// basisOf names the factor, excluded backends and fleet a rebuild counts
+// basisOf names the factors, excluded backends and fleet a rebuild counts
 // against, so a change to any of them shows as a different basis.
-func basisOf(factor int, excluded []string, backends map[string]backend.ObjectBackend) string {
-	return fmt.Sprintf("%d|%s|%s", factor, strings.Join(slices.Sorted(slices.Values(excluded)), ","),
+func basisOf(factors *core.ReplicationFactors, excluded []string, backends map[string]backend.ObjectBackend) string {
+	return fmt.Sprintf("%s|%s|%s", factors, strings.Join(slices.Sorted(slices.Values(excluded)), ","),
 		strings.Join(slices.Sorted(maps.Keys(backends)), ","))
 }
 

@@ -100,7 +100,7 @@ func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
 // until the config entry is removed, which lets a bucket move out of config
 // without a gap. Only a second store row is refused.
 func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
-	if err := validateBucket(b); err != nil {
+	if err := p.validateBucket(b); err != nil {
 		return err
 	}
 	view, err := p.View(ctx)
@@ -121,7 +121,7 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 // stored under it alone. The bucket is replaced, not merged, so an empty CORS
 // set removes the rules it had.
 func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
-	if err := validateBucket(b); err != nil {
+	if err := p.validateBucket(b); err != nil {
 		return err
 	}
 	view, err := p.View(ctx)
@@ -493,9 +493,9 @@ func (p *Provisioning) republish(ctx context.Context) error {
 // validateBucket refuses a bucket config would refuse before it is stored,
 // rather than at assembly: a CORS rule the matcher cannot read would otherwise
 // store cleanly and then fail every registry rebuild, including a reload's.
-func validateBucket(b *core.Bucket) error {
-	bkt := config.BucketConfig{Name: b.Name, MaxMultipartUploads: b.MaxMultipartUploads, CORS: b.CORS}
-	if errs := config.ValidateBucket(&bkt); len(errs) > 0 {
+func (p *Provisioning) validateBucket(b *core.Bucket) error {
+	bkt := config.BucketConfig{Name: b.Name, BucketSettings: b.BucketSettings}
+	if errs := config.ValidateBucket(&bkt, p.d.Config.Load().BucketLimits()); len(errs) > 0 {
 		return fmt.Errorf("%w: %w", ErrInvalidBucket, errors.Join(errs...))
 	}
 	return nil

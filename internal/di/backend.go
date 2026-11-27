@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
@@ -298,6 +299,7 @@ type writePathDeps struct {
 	rt           *infra.BackendRuntime
 	coord        *writepath.Coordinator
 	stores       metadataStore
+	forms        *provisioning.Declared
 	integrityCfg syncutil.Section[config.IntegrityConfig]
 	codec        *compression.Codec
 	enc          *encryption.Encryptor
@@ -314,6 +316,7 @@ func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
 		rt:           r.Resolve[*infra.BackendRuntime](),
 		coord:        r.Resolve[*writepath.Coordinator](),
 		stores:       r.Resolve[metadataStore](),
+		forms:        r.Resolve[*provisioning.Declared](),
 		integrityCfg: r.Resolve[*config.Live]().Integrity(),
 		codec:        r.Resolve[*compression.Codec](),
 	}
@@ -344,11 +347,11 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 		Core:               d.rt,
 		Coord:              d.coord,
 		Stores:             d.stores,
+		Forms:              d.forms,
 		Encryptor:          d.enc,
 		Codec:              d.codec,
 		Compression:        d.cfg.Compression,
 		DEKCacheTTL:        dekCacheTTL,
-		IntegrityCfg:       d.integrityCfg,
 		EnforceMinPartSize: d.cfg.WritePath.Multipart.IsMinPartSizeEnforced(),
 	}), nil
 }
@@ -450,6 +453,7 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		Core:                         d.rt,
 		Coord:                        d.coord,
 		Stores:                       d.stores,
+		Buckets:                      d.forms,
 		Encryptor:                    d.enc,
 		Codec:                        d.codec,
 		Compression:                  d.cfg.Compression,

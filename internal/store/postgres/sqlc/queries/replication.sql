@@ -46,12 +46,17 @@ ON CONFLICT (object_key) DO UPDATE
 SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1;
 
 -- name: RebuildReplicationQueue :execrows
--- One grouped pass over the ledger that queues every key off factor, for a
--- factor or excluded set the queue was not kept against.
+-- One grouped pass over the ledger that queues every key off its factor, for
+-- factors or an excluded set the queue was not kept against. A key is kept at
+-- the factor its bucket sets in bucket_names and bucket_factors, and otherwise
+-- at default_factor.
 WITH inflight AS (
     SELECT object_key, COUNT(*) AS copies
     FROM pending_objects
     GROUP BY object_key
+),
+overrides AS (
+    SELECT unnest(@bucket_names::text[]) AS bucket, unnest(@bucket_factors::bigint[]) AS factor
 ),
 counted AS (
     SELECT ol.object_key,
@@ -61,11 +66,16 @@ counted AS (
     LEFT JOIN inflight i ON i.object_key = ol.object_key
     WHERE ol.managed
     GROUP BY ol.object_key, i.copies
+),
+factored AS (
+    SELECT c.object_key, c.live, c.held, COALESCE(o.factor, @default_factor::bigint) AS factor
+    FROM counted c
+    LEFT JOIN overrides o ON o.bucket = split_part(c.object_key, '/', 1)
 )
 INSERT INTO replication_queue (object_key, direction)
-SELECT object_key, (CASE WHEN live < @factor::bigint THEN -1 ELSE 1 END)::smallint
-FROM counted
-WHERE live < @factor::bigint OR held > @factor::bigint
+SELECT object_key, (CASE WHEN live < factor THEN -1 ELSE 1 END)::smallint
+FROM factored
+WHERE live < factor OR held > factor
 ON CONFLICT (object_key) DO UPDATE
 SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1;
 

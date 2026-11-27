@@ -19,7 +19,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -53,11 +52,7 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
-	b := core.Bucket{
-		Name:                req.Name,
-		MaxMultipartUploads: req.MaxMultipartUploads,
-		CORS:                configCORS(req.CORS),
-	}
+	b := core.Bucket{Name: req.Name, BucketSettings: req.BucketSettings}
 	if err := h.d.Ops.Provision.CreateBucket(r.Context(), &b); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "create bucket failed")
 		return
@@ -74,11 +69,7 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue(adminapi.ParamName)
-	b := core.Bucket{
-		Name:                name,
-		MaxMultipartUploads: req.MaxMultipartUploads,
-		CORS:                configCORS(req.CORS),
-	}
+	b := core.Bucket{Name: name, BucketSettings: req.BucketSettings}
 	if err := h.d.Ops.Provision.UpdateBucket(r.Context(), &b); err != nil {
 		httputil.WriteOpError(w, r, h.log, err, "update bucket failed")
 		return
@@ -280,7 +271,9 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 		out.Buckets = append(out.Buckets, adminapi.Bucket{
 			Name:                b.Name,
 			MaxMultipartUploads: b.MaxMultipartUploads,
-			CORS:                wireCORS(b.CORS),
+			CORS:                b.CORS,
+			StoredForm:          b.StoredForm,
+			ReplicationFactor:   b.ReplicationFactor,
 			Source:              string(b.Source),
 		})
 	}
@@ -348,31 +341,6 @@ func wireGrants(u *provisioning.User) []adminapi.Grant {
 			Name:        resource.Name,
 			Permissions: u.Admin[resource].Names(),
 		})
-	}
-	return out
-}
-
-// wireCORS converts a bucket's rules onto the wire. The two rule types differ
-// only in tags, so a field added to one and not the other fails to compile.
-func wireCORS(rules []config.CORSRule) []adminapi.CORSRule {
-	if len(rules) == 0 {
-		return nil
-	}
-	out := make([]adminapi.CORSRule, len(rules))
-	for i := range rules {
-		out[i] = adminapi.CORSRule(rules[i])
-	}
-	return out
-}
-
-// configCORS converts submitted rules into the config shape a bucket stores.
-func configCORS(rules []adminapi.CORSRule) []config.CORSRule {
-	if len(rules) == 0 {
-		return nil
-	}
-	out := make([]config.CORSRule, len(rules))
-	for i := range rules {
-		out[i] = config.CORSRule(rules[i])
 	}
 	return out
 }

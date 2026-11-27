@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // testMasterKey is a 256-bit AES key used for integration test encryption.
@@ -97,7 +96,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 	workers := proxytest.BuildWorkers(st, stores)
 
 	registry := auth.NewLiveRegistry(mustBucketRegistry(t, []config.BucketConfig{virtualBucketFor("test", "test")}))
-	proxyAddr := serveHTTP(t, s3api.NewServer(st.Objects, st.Multipart, registry, 0))
+	proxyAddr := serveHTTP(t, stackServer(st, registry))
 	opsSvc := ops.New(&ops.Deps{
 		Objects:      st.Objects,
 		Store:        testStore,
@@ -112,7 +111,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Scrubber:     workers.Scrubber,
 		CopyStore:    testStore,
 		Provisioning: testStore,
-		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
+		Declared:     declareConfig(st, []config.BucketConfig{{Name: virtualBucket}}),
 		Config:       config.NewLive(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),
 	})
 	adminAddr := serveHTTP(t, newAdminMux(t, opsSvc, st, registry))

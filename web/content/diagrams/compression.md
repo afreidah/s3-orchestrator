@@ -21,12 +21,13 @@ Splitting into independently decodable frames gives one entry point per chunk, a
 
 #### Writing an object
 
-1. **Check the size floor**: objects below `min_size` are stored verbatim, because a seek table and per-frame headers cost more than a small object saves.
-2. **Encode**: the buffered body is encoded into a second buffer, one frame per `chunk_size`, with the seek table appended.
-3. **Check the ratio floor**: an encoding above `min_ratio` of the original size is discarded and the object stored verbatim. The decision is made by encoding and measuring, not by sampling, because entropy is not uniform across an object.
-4. **Encrypt, if enabled**: compression runs first, in that order only, because ciphertext does not compress. A verbatim object is encrypted the same way.
-5. **Admit against the final upload size**: unlike encryption, whose overhead is a fixed function of the size, an encoder only reports its output once it has run. A write that reached the encoder is therefore admitted after its body is prepared, against the bytes that will be uploaded (encoded, then enveloped when encrypted). Each upload attempt then claims capacity on its target backend.
-6. **Upload and record the stored form**: `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size`. A NULL algorithm is the ledger's way of saying the bytes are verbatim, so no separate boolean can drift out of step with it.
+1. **Check the bucket**: only a bucket whose stored form carries `compressed` encodes, which is every bucket without a stored form of its own while `compression.enabled` is on.
+2. **Check the size floor**: objects below `min_size` are stored verbatim, because a seek table and per-frame headers cost more than a small object saves.
+3. **Encode**: the buffered body is encoded into a second buffer, one frame per `chunk_size`, with the seek table appended.
+4. **Check the ratio floor**: an encoding above `min_ratio` of the original size is discarded and the object stored verbatim. The decision is made by encoding and measuring, not by sampling, because entropy is not uniform across an object.
+5. **Encrypt, if the bucket does**: compression runs first, in that order only, because ciphertext does not compress. A verbatim object is encrypted the same way.
+6. **Admit against the final upload size**: unlike encryption, whose overhead is a fixed function of the size, an encoder only reports its output once it has run. A write that reached the encoder is therefore admitted after its body is prepared, against the bytes that will be uploaded (encoded, then enveloped when encrypted). Each upload attempt then claims capacity on its target backend.
+7. **Upload and record the stored form**: `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size`. A NULL algorithm is the ledger's way of saying the bytes are verbatim, so no separate boolean can drift out of step with it.
 
 #### Reading an object
 
@@ -49,7 +50,9 @@ Each fetch is charged its own API call and egress, on the bytes that actually le
 window.s3oDiagram = {
   source: [
     'flowchart TD',
-    '    PUT([PutObject or<br>Multipart Complete]):::entry --> MINSIZE{size at least<br>min_size?}:::filter',
+    '    PUT([PutObject or<br>Multipart Complete]):::entry --> BUCKET{Bucket<br>Compresses?}:::decision',
+    '    BUCKET -->|no| VERBATIM',
+    '    BUCKET -->|yes| MINSIZE{size at least<br>min_size?}:::filter',
     '',
     '    MINSIZE -->|no: admitted on enveloped<br>size before buffering| VERBATIM[Store Verbatim]:::process',
     '    MINSIZE -->|yes| ENCODE[Encode: one zstd frame<br>per chunk_size]:::process',
@@ -58,7 +61,7 @@ window.s3oDiagram = {
     '',
     '    RATIO -->|no| DISCARD[Discard Encoding]:::reject',
     '    DISCARD --> VERBATIM',
-    '    RATIO -->|yes| ENCRYPT{Encryption<br>Enabled?}:::decision',
+    '    RATIO -->|yes| ENCRYPT{Bucket<br>Encrypts?}:::decision',
     '    VERBATIM --> ENCRYPT',
     '',
     '    ENCRYPT -->|yes| ENVELOPE[Encrypt the<br>Prepared Body]:::process',
@@ -91,7 +94,12 @@ window.s3oDiagram = {
     PUT: {
       title: 'PutObject or Multipart Complete',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Both write paths encode, and both encode once. A single PUT encodes and encrypts once, ahead of the failover loop, so a retry rewinds and resends the same materialized ciphertext (or encoded bytes when encryption is off).</p><p>A multipart upload is encoded when its parts are assembled, not part by part as they arrive. Its chunk layout therefore owes nothing to the part sizes the client chose, which matters because those are arbitrary: a client picking 8 MiB parts and one picking 500 MiB parts produce identically seekable objects.</p><p><a href="../write-path/">Write path diagram &rarr;</a></p>'
+      body: '<p>Both write paths encode, and both encode once. A single PUT encodes and encrypts once, ahead of the failover loop, so a retry rewinds and resends the same materialized ciphertext (or encoded bytes when its bucket does not encrypt).</p><p>A multipart upload is encoded when its parts are assembled, not part by part as they arrive. Its chunk layout therefore owes nothing to the part sizes the client chose, which matters because those are arbitrary: a client picking 8 MiB parts and one picking 500 MiB parts produce identically seekable objects.</p><p><a href="../write-path/">Write path diagram &rarr;</a></p>'
+    },
+    BUCKET: {
+      title: 'Bucket Compresses?',
+      badge: 'decision', badgeText: 'stored form',
+      body: '<p>A write is encoded only when its bucket\'s stored form carries <code>compressed</code>: the bucket\'s own <code>stored_form</code>, or the deployment\'s when it sets none, which carries it while <code>compression.enabled</code> is on.</p><p>A bucket whose clients compress before uploading, such as a restic repository, leaves the layer out and skips the encode, and the buffer it would fill, on every write.</p><p><a href="../../docs/configuration/#stored-form">Stored form &rarr;</a></p>'
     },
     MINSIZE: {
       title: 'Size Floor (min_size)',
@@ -124,7 +132,7 @@ window.s3oDiagram = {
       body: '<p>Usage admission (<code>EligibleForWrite</code>) runs against <code>plan.uploadSize</code>, the bytes that will actually be uploaded: the encoding, enveloped when encryption is on. The same call also drops backends that are not write targets (cordoned, drain-flagged, or not serving <code>PutObject</code> and <code>GetObject</code>) and those whose <code>max_object_size</code> is below the upload.</p><p>This is the one asymmetry with encryption. An envelope is a header plus a tag per chunk, a fixed function of the size, so a write below <code>min_size</code> is admitted on its enveloped size before its body is buffered. An encoder only reports its output size once it has run, so a write that reaches the encoder cannot be - and admitting it on the logical size would turn away a write that fits.</p><p>That is why buffering, encoding, the ratio check and encryption all run before this point. The per-backend capacity claim happens later, on each upload attempt, in <code>ClaimWriteTarget</code>.</p>'
     },
     ENCRYPT: {
-      title: 'Encryption Enabled?',
+      title: 'Bucket Encrypts?',
       badge: 'decision', badgeText: 'layer check',
       body: '<p>Compression runs before encryption, in that order only, because ciphertext does not compress.</p><p>That ordering makes the compressed stream the encryptor\'s input, which is what <code>plaintext_size</code> records - the pre-encryption size, not the object the client wrote. The client\'s own size lives in <code>logical_size</code>.</p><p><a href="../encryption/">Encryption flow diagram &rarr;</a></p>'
     },

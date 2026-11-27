@@ -24,6 +24,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -132,10 +133,12 @@ func emptyState(t *testing.T) tfsdk.State {
 	return tfsdk.State{Schema: resourceSchema(t)}
 }
 
-// configOf renders a model as data source configuration. Config carries no
-// setter, so the value is built through a state holding the same schema.
+// configOf renders a model as data source configuration naming one bucket.
+// Config carries no setter, so the value is built through a state holding the
+// same schema, with the computed set typed as configuration leaves it.
 func configOf(t *testing.T, m bucketDataSourceModel) tfsdk.Config {
 	t.Helper()
+	m.StoredForm = types.SetNull(types.StringType)
 	s := tfsdk.State{Schema: dataSourceSchema(t)}
 	if diags := s.Set(context.Background(), m); diags.HasError() {
 		t.Fatalf("building config: %v", diags)
@@ -148,6 +151,8 @@ func simpleModel() bucketModel {
 	return bucketModel{
 		Name:                types.StringValue("photos"),
 		MaxMultipartUploads: types.Int64Value(4),
+		StoredForm:          types.SetNull(types.StringType),
+		ReplicationFactor:   types.Int64Value(0),
 	}
 }
 
@@ -229,6 +234,8 @@ func TestBucketImportState(t *testing.T) {
 	resp := resource.ImportStateResponse{State: stateOf(t, bucketModel{
 		Name:                types.StringNull(),
 		MaxMultipartUploads: types.Int64Null(),
+		StoredForm:          types.SetNull(types.StringType),
+		ReplicationFactor:   types.Int64Null(),
 	})}
 	(&bucketResource{}).ImportState(context.Background(),
 		resource.ImportStateRequest{ID: "photos"}, &resp)
@@ -551,6 +558,31 @@ func TestCORSEmptyIsNil(t *testing.T) {
 	}
 	if out, _ := corsRulesFromAPI(ctx, nil); out != nil {
 		t.Errorf("corsRulesFromAPI(nil) = %v, want nil", out)
+	}
+}
+
+// TestStoredFormRoundTrip covers each meaning a stored form has surviving the
+// trip out to the API and back: null for the deployment's, an empty set for no
+// layer, and the layers named. Null and empty must stay apart, since they ask
+// the orchestrator for different things.
+func TestStoredFormRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	for _, layers := range []*[]string{nil, {}, {"compressed", "hashed"}} {
+		var diags diag.Diagnostics
+		m := bucketModel{StoredForm: storedFormFromAPI(ctx, layers, &diags)}
+		back, d := settingsToAPI(ctx, &m)
+		diags.Append(d...)
+		if diags.HasError() {
+			t.Fatalf("stored form %v: %v", layers, diags)
+		}
+		switch {
+		case layers == nil && back.StoredForm != nil:
+			t.Errorf("a null stored form came back as %v, want it left out", *back.StoredForm)
+		case layers != nil && (back.StoredForm == nil || len(*back.StoredForm) != len(*layers)):
+			t.Errorf("stored form %v came back as %v", *layers, back.StoredForm)
+		}
 	}
 }
 

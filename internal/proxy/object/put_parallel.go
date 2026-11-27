@@ -77,13 +77,13 @@ type copyFanout struct {
 // FAN-OUT
 // -------------------------------------------------------------------------
 
-// putCopiesInParallel claims a backend per copy, uploads to all of them at
-// once, and answers the client as soon as one copy is committed. The remaining
-// uploads continue on a context that outlives the request and commit as they
-// finish, so the slowest backend stays off the write's critical path. A copy
-// that does not land is left for the replicator. A client that goes away gets
-// its context's error and the write carries on.
-func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req *PutObjectRequest, plan *putPlan, eligible []string, start time.Time) (string, error) {
+// putCopiesInParallel claims a backend for each of copies, uploads to all of
+// them at once, and answers the client as soon as one copy is committed. The
+// remaining uploads continue on a context that outlives the request and commit
+// as they finish, so the slowest backend stays off the write's critical path.
+// A copy that does not land is left for the replicator. A client that goes
+// away gets its context's error and the write carries on.
+func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req *PutObjectRequest, plan *putPlan, eligible []string, start time.Time, copies int) (string, error) {
 	const operation = s3op.PutObject
 
 	// The slot is taken before anything is claimed, so a refused write has
@@ -97,7 +97,7 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 		return "", errFanoutUnavailable
 	}
 
-	claimed, err := o.d.Coord.ClaimWriteCopies(ctx, span, operation, o.copyIntents(req, plan), eligible)
+	claimed, err := o.d.Coord.ClaimWriteCopies(ctx, span, operation, o.copyIntents(req, plan, copies), eligible)
 	if err != nil {
 		release()
 		return "", err
@@ -137,15 +137,15 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 	return out.etag, nil
 }
 
-// copyIntents builds one intent per copy the write will place. The first is the
-// primary, which a reaper promotes if this process dies before anything
-// commits; the rest are companions, which it discards, because bytes no copy
-// was recorded for cannot be told apart from an older object at the same path.
-// The role only says what an abandoned intent means: whichever upload lands
-// first records the object, which may be a companion.
-func (o *Manager) copyIntents(req *PutObjectRequest, plan *putPlan) []*core.PendingObject {
+// copyIntents builds one intent for each of the copies the write will place.
+// The first is the primary, which a reaper promotes if this process dies
+// before anything commits; the rest are companions, which it discards, because
+// bytes no copy was recorded for cannot be told apart from an older object at
+// the same path. The role only says what an abandoned intent means: whichever
+// upload lands first records the object, which may be a companion.
+func (o *Manager) copyIntents(req *PutObjectRequest, plan *putPlan, copies int) []*core.PendingObject {
 	identity := putIdentity(plan.etagDigest, req)
-	intents := make([]*core.PendingObject, o.d.CopiesPerWrite)
+	intents := make([]*core.PendingObject, copies)
 	for i := range intents {
 		intents[i] = writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity, req.Tags)
 		if i > 0 {

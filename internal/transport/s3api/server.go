@@ -95,32 +95,40 @@ var (
 	_ MultipartOps = (*multipart.Manager)(nil)
 )
 
-// Server handles HTTP requests and routes them to the object and multipart
-// managers. MaxObjectSize is the upload body ceiling in bytes, zero for none;
-// startedAt is the stable CreationDate ListBuckets reports.
-type Server struct {
-	Objects       ObjectOps
-	Multipart     MultipartOps
-	MaxObjectSize int64
-	registry      *auth.LiveRegistry
-	startedAt     time.Time
-	log           *slog.Logger
+// UploadLimitSource reports how many multipart uploads a bucket may hold open
+// at once, zero for no limit. *provisioning.Declared satisfies it.
+type UploadLimitSource interface {
+	MaxMultipartUploads(bucket string) int
 }
 
-// NewServer creates a Server authenticating against the registry in force and
-// stamped with a stable start time.
-func NewServer(objects ObjectOps, multipartMgr MultipartOps, registry *auth.LiveRegistry, maxObjectSize int64) *Server {
-	must.NotNil("objects", objects)
-	must.NotNil("multipart", multipartMgr)
-	must.NotNil("registry", registry)
-	return &Server{
-		Objects:       objects,
-		Multipart:     multipartMgr,
-		MaxObjectSize: maxObjectSize,
-		registry:      registry,
-		startedAt:     time.Now(),
-		log:           logfmt.Logger("s3_server"),
-	}
+// ServerDeps is what a Server is built from. Registry is the credential
+// registry in force, and MaxObjectSize the upload body ceiling in bytes, zero
+// for none.
+type ServerDeps struct {
+	Objects       ObjectOps
+	Multipart     MultipartOps
+	Registry      *auth.LiveRegistry
+	Buckets       UploadLimitSource
+	MaxObjectSize int64
+}
+
+// Server handles HTTP requests and routes them to the object and multipart
+// managers. startedAt is the stable CreationDate ListBuckets reports.
+type Server struct {
+	d         ServerDeps
+	startedAt time.Time
+	log       *slog.Logger
+}
+
+// NewServer creates a Server over d, stamped with a stable start time. Every
+// field but MaxObjectSize must be set.
+func NewServer(d *ServerDeps) *Server {
+	must.NotNil("d", d)
+	must.NotNil("d.Objects", d.Objects)
+	must.NotNil("d.Multipart", d.Multipart)
+	must.NotNil("d.Registry", d.Registry)
+	must.NotNil("d.Buckets", d.Buckets)
+	return &Server{d: *d, startedAt: time.Now(), log: logfmt.Logger("s3_server")}
 }
 
 // ServeHTTP implements http.Handler.
@@ -138,7 +146,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	inflight.Inc()
 	defer inflight.Dec()
 
-	user, streamMat, err := s.registry.Load().Authenticate(r)
+	user, streamMat, err := s.d.Registry.Load().Authenticate(r)
 	if err != nil {
 		s.log.LogAttrs(ctx, slog.LevelWarn, "S3 auth failure", logfmt.Request(r, logfmt.Err(err))...)
 		s.reject(ctx, w, r, start, accessDenied("s3.AuthFailure", logfmt.Err(err)))

@@ -34,6 +34,17 @@ var corsMethods = map[string]bool{
 	"DELETE": true,
 }
 
+// The layers a bucket's stored_form may name. They are the names the ledger's
+// stored-form flags render under, which take them from here.
+const (
+	LayerCompressed = "compressed"
+	LayerEncrypted  = "encrypted"
+	LayerHashed     = "hashed"
+)
+
+// bucketLayers is the set a stored_form entry may name.
+var bucketLayers = map[string]bool{LayerCompressed: true, LayerEncrypted: true, LayerHashed: true}
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -52,33 +63,60 @@ type CredentialConfig struct {
 // the header off. Without ETag in ExposeHeaders, a browser upload cannot read
 // the ETag of the object it just wrote.
 type CORSRule struct {
-	AllowedOrigins []string `yaml:"allowed_origins"`
-	AllowedMethods []string `yaml:"allowed_methods"`
-	AllowedHeaders []string `yaml:"allowed_headers"`
-	ExposeHeaders  []string `yaml:"expose_headers"`
-	MaxAge         int      `yaml:"max_age"`
+	AllowedOrigins []string `yaml:"allowed_origins" json:"allowed_origins"`
+	AllowedMethods []string `yaml:"allowed_methods" json:"allowed_methods"`
+	AllowedHeaders []string `yaml:"allowed_headers" json:"allowed_headers,omitempty"`
+	ExposeHeaders  []string `yaml:"expose_headers" json:"expose_headers,omitempty"`
+	MaxAge         int      `yaml:"max_age" json:"max_age,omitempty"`
+}
+
+// BucketSettings is what a virtual bucket carries besides its name and
+// credentials, in the one shape the config file, the store, the merged view
+// and the admin API's requests all embed.
+//
+// MaxMultipartUploads of zero is unlimited, and a request may leave it out.
+// CORS is empty by default, which refuses every cross-origin preflight.
+// StoredForm names the layers a new object is stored with: nil takes the
+// deployment's (compressed, encrypted and hashed as compression, encryption
+// and integrity are enabled), and any list, even an empty one, replaces them
+// all. ReplicationFactor is how many copies each object is kept at, zero for
+// replication.factor.
+type BucketSettings struct {
+	MaxMultipartUploads int        `yaml:"max_multipart_uploads" json:"max_multipart_uploads,omitzero"`
+	CORS                []CORSRule `yaml:"cors" json:"cors,omitempty"`
+	StoredForm          *[]string  `yaml:"stored_form,omitempty" json:"stored_form,omitempty"`
+	ReplicationFactor   int        `yaml:"replication_factor,omitempty" json:"replication_factor,omitzero"`
+}
+
+// BucketLimits is what the deployment allows a bucket's settings: the
+// encrypted layer only while it encrypts, and a replication factor no larger
+// than its fleet.
+type BucketLimits struct {
+	Encrypts bool
+	Backends int
+}
+
+// BucketLimits returns the limits c sets a bucket's settings.
+func (c *Config) BucketLimits() BucketLimits {
+	return BucketLimits{Encrypts: c.Encryption.Enabled, Backends: len(c.Backends)}
 }
 
 // BucketConfig defines a virtual bucket with one or more credential sets.
 // Multiple services can share a bucket by each having their own credentials.
-//
-// CORS is empty by default, which refuses every cross-origin preflight. A
-// bucket only reachable from server-side clients never needs it.
 type BucketConfig struct {
-	Name                string             `yaml:"name"`
-	Credentials         []CredentialConfig `yaml:"credentials"`
-	MaxMultipartUploads int                `yaml:"max_multipart_uploads"` // Max active multipart uploads per bucket (0 = unlimited)
-	CORS                []CORSRule         `yaml:"cors"`
+	Name           string             `yaml:"name"`
+	Credentials    []CredentialConfig `yaml:"credentials"`
+	BucketSettings `yaml:",inline"`
 }
 
 // validateBuckets enforces unique names and at least one credential per
 // bucket. Declaring none is allowed, since buckets can live in the store.
-func validateBuckets(buckets []BucketConfig) []error {
+func validateBuckets(buckets []BucketConfig, limits BucketLimits) []error {
 	var errs []error
 
 	seen := newSeenCredentials()
 	for i := range buckets {
-		errs = append(errs, validateBucket(i, &buckets[i], seen)...)
+		errs = append(errs, validateBucket(i, &buckets[i], seen, limits)...)
 	}
 	return errs
 }
@@ -104,9 +142,10 @@ func newSeenCredentials() *seenCredentials {
 // API, which accepts the same fields over the wire and has to refuse what config
 // would before it reaches the store. Credentials are not checked, since API
 // buckets carry none. Messages are prefixed as the bucket's own rather than by
-// config path, since the caller has no file to point at.
-func ValidateBucket(bkt *BucketConfig) []error {
-	return validateBucketFields("bucket", bkt)
+// config path, since the caller has no file to point at. limits is what the
+// running deployment allows the bucket's settings.
+func ValidateBucket(bkt *BucketConfig, limits BucketLimits) []error {
+	return validateBucketFields("bucket", bkt, limits)
 }
 
 // -------------------------------------------------------------------------
@@ -115,9 +154,9 @@ func ValidateBucket(bkt *BucketConfig) []error {
 
 // validateBucket checks a single bucket entry. seen is shared across the full
 // list so duplicates are detected across bucket boundaries.
-func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials) []error {
+func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials, limits BucketLimits) []error {
 	prefix := fmt.Sprintf("buckets[%d]", idx)
-	errs := validateBucketFields(prefix, bkt)
+	errs := validateBucketFields(prefix, bkt, limits)
 
 	if seen.names[bkt.Name] {
 		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
@@ -136,8 +175,8 @@ func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials) []error {
 // validateBucketFields checks what a bucket carries apart from its credentials
 // and its uniqueness among the others, which is all a bucket created over the
 // provisioning API has. The upload limit is bounded above by the store column
-// it is written to.
-func validateBucketFields(prefix string, bkt *BucketConfig) []error {
+// it is written to, and the replication factor by the fleet a copy can go to.
+func validateBucketFields(prefix string, bkt *BucketConfig, limits BucketLimits) []error {
 	var errs []error
 	if bkt.Name == "" {
 		errs = append(errs, prefixed(prefix, ErrBucketNameRequired))
@@ -148,8 +187,31 @@ func validateBucketFields(prefix string, bkt *BucketConfig) []error {
 	if bkt.MaxMultipartUploads < 0 || bkt.MaxMultipartUploads > math.MaxInt32 {
 		errs = append(errs, prefixed(prefix, ErrMaxUploadsRange))
 	}
+	if f := bkt.ReplicationFactor; f < 0 || f > limits.Backends {
+		errs = append(errs, prefixedDetail(prefix, ErrBucketFactorRange,
+			fmt.Sprintf("factor=%d backends=%d", f, limits.Backends)))
+	}
 	for j := range bkt.CORS {
 		errs = append(errs, validateCORSRule(prefix, j, &bkt.CORS[j])...)
+	}
+	if bkt.StoredForm != nil {
+		errs = append(errs, validateStoredForm(prefix, *bkt.StoredForm, limits.Encrypts)...)
+	}
+	return errs
+}
+
+// validateStoredForm checks each layer a bucket names. Encrypted needs the key
+// source an enabled encryption section loads, or the bucket's writes could
+// only be refused.
+func validateStoredForm(prefix string, layers []string, encrypts bool) []error {
+	var errs []error
+	for _, layer := range layers {
+		switch {
+		case !bucketLayers[layer]:
+			errs = append(errs, prefixedDetail(prefix, ErrBucketLayerUnknown, fmt.Sprintf("%q", layer)))
+		case layer == LayerEncrypted && !encrypts:
+			errs = append(errs, prefixed(prefix, ErrBucketLayerNoKey))
+		}
 	}
 	return errs
 }

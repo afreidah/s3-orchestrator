@@ -978,7 +978,7 @@ func TestDiscardPending_NoReasonCountsTheKey(t *testing.T) {
 	t.Parallel()
 	stub := &discardTxStub{}
 	ops := stubOps(stub)
-	ops.UseReplicationFactor(func() int { return 2 })
+	ops.UseReplicationFactors(func() ReplicationFactors { return ReplicationFactors{Default: 2} })
 	cleanup, err := ops.DiscardPending(context.Background(), discardedIntent(), "")
 	if err != nil || len(cleanup) != 0 {
 		t.Fatalf("DiscardPending = %+v, %v; want no cleanup", cleanup, err)

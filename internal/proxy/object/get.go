@@ -285,7 +285,7 @@ func (o *Manager) maybeWrapIntegrityReader(ctx context.Context, r *s3be.GetObjec
 	if partial || loc == nil || loc.ContentHash == "" || !icfg.ShouldVerifyOnRead() {
 		return
 	}
-	hasher := icfg.Hasher()
+	hasher := storedform.ContentHasher(loc.Form())
 	r.Body = ioutilx.TeeOnComplete(r.Body, r.Size, hasher, func() {
 		if !storedform.ContentMatches(ctx, o.log, integrityOpRead, loc, loc.ContentHash, etag.Hex(hasher)) {
 			o.dropCorruptedLocation(ctx, loc)

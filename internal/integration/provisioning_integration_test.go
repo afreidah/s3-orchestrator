@@ -89,9 +89,12 @@ func setupProvEnv(t *testing.T) *provEnv {
 	// with, so it has to be declared or they are all refused.
 	cfg.Auth = rootAuthConfig()
 
+	// The stack's declared set is the one the republish installs, so a stored
+	// bucket's settings reach the S3 server and the write path as they would
+	// in a running instance.
 	registry := auth.NewLiveRegistry(nil)
-	srv := s3api.NewServer(st.Objects, st.Multipart, registry, 0)
-	declared := provisioning.NewDeclared()
+	srv := stackServer(st, registry)
+	declared := st.Declared
 
 	inj := do.New()
 	st.Config.Store(cfg)
@@ -421,7 +424,7 @@ func TestProvInt_StoredBucketCarriesItsCORSRules(t *testing.T) {
 	env.mustAdmin(t, http.MethodPost, "/admin/api/provisioning/buckets",
 		adminapi.CreateBucketRequest{
 			Name: "cors-bucket",
-			CORS: []adminapi.CORSRule{{
+			CORS: []config.CORSRule{{
 				AllowedOrigins: []string{"https://app.example.com"},
 				AllowedMethods: []string{"GET"},
 			}},
@@ -439,6 +442,30 @@ func TestProvInt_StoredBucketCarriesItsCORSRules(t *testing.T) {
 	t.Fatal("the stored bucket never reached the declared set")
 }
 
+// TestProvInt_StoredFormReachesTheWritePath verifies a stored bucket's stored
+// form decides the layers its next write is stored with, with no reload: a
+// bucket asking for hashed records a content hash the deployment would not.
+func TestProvInt_StoredFormReachesTheWritePath(t *testing.T) {
+	env := setupProvEnv(t)
+	ctx := context.Background()
+	bucket := "hashed-bucket"
+
+	cred, _ := env.onboard(t, bucket, "hasher")
+	env.mustAdmin(t, http.MethodPatch, "/admin/api/provisioning/buckets/"+bucket,
+		adminapi.UpdateBucketRequest{StoredForm: &[]string{config.LayerHashed}}, nil)
+	if err := putObject(ctx, env.clientFor(cred), bucket, "hashed.txt", "payload"); err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+
+	locs, err := testStore.GetAllObjectLocations(ctx, bucket+"/hashed.txt")
+	if err != nil || len(locs) != 1 {
+		t.Fatalf("locations = %+v, %v; want one", locs, err)
+	}
+	if locs[0].ContentHash == "" {
+		t.Error("the write recorded no content hash, want the bucket's hashed layer")
+	}
+}
+
 // TestProvInt_RejectsUnreadableCORSRule verifies a rule the matcher cannot read
 // is refused at creation. Storing it would compile cleanly here and then fail
 // every later registry rebuild, taking the fleet's reloads down.
@@ -448,7 +475,7 @@ func TestProvInt_RejectsUnreadableCORSRule(t *testing.T) {
 	code := env.admReq(t, http.MethodPost, "/admin/api/provisioning/buckets",
 		adminapi.CreateBucketRequest{
 			Name: "bad-cors",
-			CORS: []adminapi.CORSRule{{
+			CORS: []config.CORSRule{{
 				AllowedOrigins: []string{"https://*.*.example.com"},
 				AllowedMethods: []string{"GET"},
 			}},
@@ -659,15 +686,14 @@ func TestProvInt_RebuildPreservesStoredState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMerged: %v", err)
 	}
-	registry, err := auth.NewBucketRegistry(&view)
-	if err != nil {
+	if _, err := auth.NewBucketRegistry(&view); err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
 
 	if !env.declared.Contains(bucket) {
 		t.Error("the stored bucket is missing from the declared set")
 	}
-	if registry.MaxMultipartUploads(virtualBucket) != 0 {
+	if env.declared.MaxMultipartUploads(virtualBucket) != 0 {
 		t.Error("the config bucket lost its settings across the rebuild")
 	}
 

@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
@@ -209,6 +210,7 @@ func newCompressionWith(t *testing.T, store RewriteStore, cfg config.Compression
 		Config:    cfg,
 		Encryptor: enc,
 		Store:     store,
+		Buckets:   opstest.EveryLayer(),
 		Rewriter:  rewriter,
 		Locker:    testx.Locker{},
 	}), be, rewriter
@@ -679,6 +681,7 @@ func TestCompressExisting_WithoutCodec(t *testing.T) {
 	t.Parallel()
 	svc := NewCompression(&CompressionDeps{
 		Store:    &oneRowStore{},
+		Buckets:  opstest.EveryLayer(),
 		Rewriter: &fakeRewriter{},
 		Locker:   testx.Locker{},
 	})

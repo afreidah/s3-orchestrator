@@ -138,21 +138,21 @@ type CreateMultipartUploadParams struct {
 }
 
 // ReplicationStore defines the replication queue. RebuildReplicationQueue
-// queues every key the ledger holds off factor, not counting copies on the
+// queues every key the ledger holds off its factor, not counting copies on the
 // excluded backends, and reports how many it queued. A drain, one at a time
 // under the replicator's lock, reads a side's due keys, then settles each one
 // it brought back to the factor or retries it at nextRetry; both match the
 // version it read, so a key a newer write queued again survives.
-// UseReplicationFactor names the factor the store's own writes queue keys
-// against, and ReplicationFactor reads it, zero when none is named.
+// UseReplicationFactors names the factors the store's own writes queue keys
+// against, and ReplicationFactors reads them, none when none are named.
 type ReplicationStore interface {
-	RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error)
+	RebuildReplicationQueue(ctx context.Context, factors *ReplicationFactors, excluded []string) (int64, error)
 	ListReplicationQueue(ctx context.Context, direction ReplicationDirection, limit int, excluded []string) ([]QueuedReplication, error)
 	SettleReplicationQueue(ctx context.Context, q *QueuedReplication) error
 	RetryReplicationQueue(ctx context.Context, q *QueuedReplication, nextRetry time.Time) error
 	CountReplicationQueue(ctx context.Context) (ReplicationBacklog, error)
-	UseReplicationFactor(factor func() int)
-	ReplicationFactor() int
+	UseReplicationFactors(factors func() ReplicationFactors)
+	ReplicationFactors() ReplicationFactors
 }
 
 // CleanupStore defines the cleanup queue lifecycle. Rows are queued by the

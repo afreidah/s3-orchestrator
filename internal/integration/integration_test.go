@@ -2498,7 +2498,7 @@ func overPending(t *testing.T, factor int) int64 {
 	if _, err := testDB.Exec("DELETE FROM replication_queue"); err != nil {
 		t.Fatalf("empty replication queue: %v", err)
 	}
-	if _, err := testStore.RebuildReplicationQueue(ctx, factor, nil); err != nil {
+	if _, err := testStore.RebuildReplicationQueue(ctx, &core.ReplicationFactors{Default: factor}, nil); err != nil {
 		t.Fatalf("RebuildReplicationQueue factor=%d: %v", factor, err)
 	}
 	backlog, err := testStore.CountReplicationQueue(ctx)

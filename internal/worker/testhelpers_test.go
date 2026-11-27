@@ -291,7 +291,7 @@ type mockMetadataStore struct {
 	underReplicatedErr  error
 	overReplicated      []core.ObjectLocation
 	overReplicatedErr   error
-	replicationFactor   int
+	factors             core.FactorsHolder
 	queueMu             sync.Mutex
 	settledKeys         []string
 	retriedKeys         []string
@@ -604,19 +604,20 @@ func (m *mockMetadataStore) RetryReplicationQueue(_ context.Context, q *core.Que
 }
 
 // RebuildReplicationQueue counts the rebuilds a pass asked for.
-func (m *mockMetadataStore) RebuildReplicationQueue(context.Context, int, []string) (int64, error) {
+func (m *mockMetadataStore) RebuildReplicationQueue(context.Context, *core.ReplicationFactors, []string) (int64, error) {
 	m.queueMu.Lock()
 	defer m.queueMu.Unlock()
 	m.rebuilds++
 	return 0, nil
 }
 
-// ReplicationFactor reports the test-set factor the store's writes queue
-// against; zero means none, so every pass rebuilds.
-func (m *mockMetadataStore) ReplicationFactor() int { return m.replicationFactor }
+// ReplicationFactors reports the factors a test named through
+// UseReplicationFactors, and none before it does.
+func (m *mockMetadataStore) ReplicationFactors() core.ReplicationFactors { return m.factors.Load() }
 
-// UseReplicationFactor is a no-op on mockMetadataStore.
-func (m *mockMetadataStore) UseReplicationFactor(func() int) {}
+// UseReplicationFactors names where ReplicationFactors reads, as a real
+// store's does.
+func (m *mockMetadataStore) UseReplicationFactors(f func() core.ReplicationFactors) { m.factors.Use(f) }
 
 // GetQuotaStats is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.

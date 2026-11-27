@@ -14,7 +14,7 @@
 -- -----------------------------------------------------------------------------
 
 -- name: ListBuckets :many
-SELECT name, max_multipart_uploads, cors, created_at
+SELECT name, max_multipart_uploads, cors, created_at, stored_form, replication_factor
 FROM buckets
 ORDER BY name;
 
@@ -37,8 +37,8 @@ FROM grants
 ORDER BY user_id, resource_kind, resource_name;
 
 -- name: CreateBucket :exec
-INSERT INTO buckets (name, max_multipart_uploads, cors)
-VALUES (@name, @max_multipart_uploads, @cors);
+INSERT INTO buckets (name, max_multipart_uploads, cors, stored_form, replication_factor)
+VALUES (@name, @max_multipart_uploads, @cors, @stored_form, @replication_factor);
 
 -- name: CreateUser :exec
 INSERT INTO users (id, name)
@@ -56,10 +56,12 @@ VALUES (@user_id, @resource_kind, @resource_name, @permissions);
 
 -- name: UpdateBucket :exec
 -- The name identifies the bucket and its objects, so only what a bucket carries
--- changes here. Both columns are written on every call: the caller declares
--- whole state, and an omitted CORS set means the bucket now has none.
+-- changes here. Every column is written on every call: the caller declares
+-- whole state, so an omitted CORS set means the bucket now has none and an
+-- omitted stored form means it takes the deployment's.
 UPDATE buckets
-SET max_multipart_uploads = @max_multipart_uploads, cors = @cors
+SET max_multipart_uploads = @max_multipart_uploads, cors = @cors, stored_form = @stored_form,
+    replication_factor = @replication_factor
 WHERE name = @name;
 
 -- name: RenameUser :exec

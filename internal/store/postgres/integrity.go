@@ -77,6 +77,8 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		BackendFilter: f.Backend,
 		KeyID:         f.KeyID,
 		ExceptKeyID:   f.ExceptKeyID,
+		BucketNames:   arrayOf(f.Buckets.Names),
+		BucketsOnly:   f.Buckets.Only,
 		AfterKey:      after.ObjectKey,
 		AfterBackend:  after.BackendName,
 		RowLimit:      rowLimit(limit),

@@ -31,7 +31,7 @@ window.s3oDiagram = {
     '    RATIO -->|yes, keep encoding| ENC',
     '    RATIO -->|no, discard encoding| ENC',
     '',
-    '    ENC{Encryption<br>Enabled?}:::decision',
+    '    ENC{Bucket<br>Encrypts?}:::decision',
     '    ENC -->|yes| ENCRYPT[Encrypt Once<br>DEK + AES-GCM]:::process',
     '    ENC -->|no| REFILTER',
     '    ENCRYPT --> REFILTER',
@@ -102,7 +102,7 @@ window.s3oDiagram = {
     PLAN: {
       title: 'Compress This Write?',
       badge: 'decision', badgeText: 'branch',
-      body: '<p><code>compressOnWrite(size)</code>: compression is configured, <code>compression.enabled: true</code>, and the object is at least <code>min_size</code>. A seek table and per-frame headers cost more than a small object saves, so the floor avoids paying for no return.</p><p>Decided up front because it moves the eligibility filter. An uncompressed write is filtered before its body is buffered, so a full cluster rejects without spending a tempfile. A compressed write is filtered after encoding, on the size that will actually land, because rejecting on the logical size would turn away a write that fits.</p><p>Objects already stored compressed stay readable whether or not this is on, so the codec is built either way.</p>'
+      body: '<p><code>storedForm(key, size)</code> reads the layers the key\'s bucket stores new objects with: its own <code>stored_form</code>, or the deployment\'s when it has none (<code>compressed</code> from <code>compression.enabled</code>, <code>encrypted</code> from the encryptor the process started with, <code>hashed</code> from <code>integrity.enabled</code>). This write compresses when that form carries <code>compressed</code>, a codec is built, and the object is at least <code>min_size</code>. A seek table and per-frame headers cost more than a small object saves, so the floor avoids paying for no return.</p><p>Decided up front because it moves the eligibility filter. An uncompressed write is filtered before its body is buffered, so a full cluster rejects without spending a tempfile. A compressed write is filtered after encoding, on the size that will actually land, because rejecting on the logical size would turn away a write that fits.</p><p>Objects already stored compressed stay readable whether or not this is on, so the codec is built either way.</p>'
     },
     FILTER: {
       title: 'Filter Eligible Backends',
@@ -132,7 +132,7 @@ window.s3oDiagram = {
     BUFFER: {
       title: 'Buffer Body + Hashes',
       badge: 'process', badgeText: 'buffering',
-      body: '<p><code>materialize.New</code> buffers the request body into a seekable form: memory below 32 MiB, a self-unlinking tempfile above it, so heap does not scale with object size.</p><p>Necessary because <code>io.Reader</code> is single-use &mdash; if the upload fails and we need to retry on another backend, we need to replay the body. <code>Reader()</code> serves a fresh reader positioned at offset 0 on every call, and those readers are independent of one another, so a write placing several copies at once has one per upload.</p><p>Hashers ride along the same pass, so the body is never re-read: an MD5 of the plaintext for every write, which becomes the ETag the client is given, and, when <code>integrity.enabled: true</code>, a SHA-256 stored as <code>object_locations.content_hash</code> for read-time verification and the scrubber. Both are taken on the plaintext, so they describe the object the client wrote whatever form it is stored in.</p>'
+      body: '<p><code>materialize.New</code> buffers the request body into a seekable form: memory below 32 MiB, a self-unlinking tempfile above it, so heap does not scale with object size.</p><p>Necessary because <code>io.Reader</code> is single-use &mdash; if the upload fails and we need to retry on another backend, we need to replay the body. <code>Reader()</code> serves a fresh reader positioned at offset 0 on every call, and those readers are independent of one another, so a write placing several copies at once has one per upload.</p><p>Hashers ride along the same pass, so the body is never re-read: an MD5 of the plaintext for every write, which becomes the ETag the client is given, and, when the bucket\'s stored form carries <code>hashed</code>, a SHA-256 stored as <code>object_locations.content_hash</code> for read-time verification and the scrubber. Both are taken on the plaintext, so they describe the object the client wrote whatever form it is stored in.</p>'
     },
     RATIO: {
       title: 'Shrank Past min_ratio?',
@@ -142,12 +142,12 @@ window.s3oDiagram = {
     COMPRESS: {
       title: 'Encode Chunked zstd',
       badge: 'process', badgeText: 'compression',
-      body: '<p>Encodes the buffered body into a second materialized body as one independently decodable zstd frame per <code>chunk_size</code> of input, with a seek table in a trailing skippable frame.</p><p>Runs once, ahead of the failover loop, and so does encryption: every attempt replays the finished payload and nothing is rebuilt per attempt. Ordering is compress then encrypt, because ciphertext does not compress.</p><p>The plaintext body is released once the encoded body exists; only the payload the uploads send is held from then on.</p><p>Records <code>compression_algorithm</code>, <code>compression_level</code>, <code>compression_format_version</code> and <code>logical_size</code> on the object row. <code>logical_size</code> is the only place the client-visible size survives, since <code>size_bytes</code> counts what landed on the backend.</p><p><a href="../compression/">Compression flow diagram &rarr;</a></p>'
+      body: '<p>Encodes the buffered body into a second materialized body as one independently decodable zstd frame per <code>chunk_size</code> of input, with a seek table in a trailing skippable frame.</p><p>Runs once, ahead of the failover loop, and so does encryption: every attempt replays the finished payload and nothing is rebuilt per attempt. Ordering is compress then encrypt, because ciphertext does not compress. Both are one <code>storedform.Layers.Reform</code> call from plaintext to the bucket\'s layers, the same call the rewrite passes make.</p><p>The plaintext body is released once the encoded body exists; only the payload the uploads send is held from then on. An encoding that misses <code>min_ratio</code> leaves the plaintext in place, and the write is stored without it.</p><p>Records <code>compression_algorithm</code>, <code>compression_level</code>, <code>compression_format_version</code> and <code>logical_size</code> on the object row. <code>logical_size</code> is the only place the client-visible size survives, since <code>size_bytes</code> counts what landed on the backend.</p><p><a href="../compression/">Compression flow diagram &rarr;</a></p>'
     },
     ENC: {
-      title: 'Encryption Enabled?',
+      title: 'Bucket Encrypts?',
       badge: 'decision', badgeText: 'branch',
-      body: '<p>Checks whether an encryptor is configured (<code>encryption.enabled: true</code>).</p><p>If disabled, the buffered (or encoded) body is uploaded as it is. If enabled, it passes through envelope encryption first.</p>'
+      body: '<p>Checks whether the bucket\'s stored form carries <code>encrypted</code>: its own, or the deployment\'s when the encryptor was built at startup (<code>encryption.enabled: true</code>).</p><p>If not, the buffered (or encoded) body is uploaded as it is. If it does, it passes through envelope encryption first. A stored bucket asking for <code>encrypted</code> on a process started without an encryptor has the write refused rather than stored as plaintext.</p>'
     },
     ENCRYPT: {
       title: 'Encrypt Once',
@@ -172,7 +172,7 @@ window.s3oDiagram = {
     FANOUT: {
       title: 'Parallel Copies On?',
       badge: 'decision', badgeText: 'branch',
-      body: '<p>Whether <code>write_path.parallel_copies</code> is on with a copy count above one. Off by default, and a <code>replication.factor</code> of 1 leaves it inert.</p>'
+      body: '<p>Whether <code>write_path.parallel_copies</code> is on and this write places more than one copy: its <code>count</code> or the bucket\'s replication factor, whichever is fewer. Off by default, and a bucket at factor 1 places one.</p>'
     },
     PARALLEL: {
       title: 'Place Copies in Parallel',

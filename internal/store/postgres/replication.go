@@ -69,12 +69,15 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 // REPLICATION QUEUE
 // -------------------------------------------------------------------------
 
-// RebuildReplicationQueue queues every key the ledger holds off factor in one
-// grouped pass and reports how many it queued.
-func (s *Store) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+// RebuildReplicationQueue queues every key the ledger holds off its factor in
+// one grouped pass and reports how many it queued.
+func (s *Store) RebuildReplicationQueue(ctx context.Context, factors *core.ReplicationFactors, excluded []string) (int64, error) {
+	names, bucketFactors := factors.Overrides()
 	n, err := s.queries.RebuildReplicationQueue(ctx, db.RebuildReplicationQueueParams{
-		Excluded: excludedList(excluded),
-		Factor:   int64(factor),
+		BucketNames:   arrayOf(names),
+		BucketFactors: arrayOf(bucketFactors),
+		Excluded:      arrayOf(excluded),
+		DefaultFactor: int64(factors.Default),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to rebuild replication queue: %w", err)
@@ -86,7 +89,7 @@ func (s *Store) RebuildReplicationQueue(ctx context.Context, factor int, exclude
 // the version a settle or retry must match.
 func (s *Store) ListReplicationQueue(ctx context.Context, direction core.ReplicationDirection, limit int, excluded []string) ([]core.QueuedReplication, error) {
 	rows, err := s.queries.ListReplicationQueue(ctx, db.ListReplicationQueueParams{
-		Excluded:  excludedList(excluded),
+		Excluded:  arrayOf(excluded),
 		Direction: int16(direction),
 		RowLimit:  rowLimit(limit),
 	})
@@ -139,11 +142,11 @@ func (s *Store) CountReplicationQueue(ctx context.Context) (core.ReplicationBack
 	return core.ReplicationBacklog{Under: row.UnderReplicated, Over: row.OverReplicated}, nil
 }
 
-// excludedList binds an empty list for nil, since a nil slice binds as NULL
-// and != ALL(NULL) would match no row.
-func excludedList(excluded []string) []string {
-	if excluded == nil {
-		return []string{}
+// arrayOf binds an empty list for nil, since a nil slice binds as NULL and
+// both = ANY(NULL) and != ALL(NULL) would match no row.
+func arrayOf[T any](values []T) []T {
+	if values == nil {
+		return []T{}
 	}
-	return excluded
+	return values
 }

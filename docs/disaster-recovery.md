@@ -78,6 +78,7 @@ When encryption is enabled, the database backup is therefore also the key backup
 - Back it up on a schedule, and test restoring it.
 - Keep backups long enough to recover from a loss that goes unnoticed for a while.
 - Encrypt the backups at rest and restrict who can read them. A wrapped key is useless without the master key, so a stolen backup alone does not expose data, but a backup stored next to the master key does.
+- Do not store the database backup in a bucket the orchestrator encrypts. Its objects would need the keys held in the database it is meant to restore, so after a total loss they exist and cannot be opened. Give that bucket a [stored form](configuration.md#stored-form) that leaves `encrypted` out, and encrypt the backup on the client before it is uploaded.
 
 ## Restoring PostgreSQL from Backup
 

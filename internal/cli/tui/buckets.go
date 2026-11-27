@@ -91,6 +91,8 @@ func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 var bucketColumns = []columnSpec{
 	{title: "BUCKET", min: 8, max: 32, priority: 4},
 	{title: "MULTIPART", min: 9, max: 9, priority: 1},
+	{title: "STORED FORM", min: 11, max: 27, priority: 0},
+	{title: "FACTOR", min: 7, max: 7, priority: 0},
 	{title: "SOURCE", min: 6, max: 6, priority: 2},
 	{title: "REACHED BY", min: 8, max: 0, priority: 3},
 }
@@ -99,10 +101,12 @@ var bucketColumns = []columnSpec{
 // means unlimited, so it sorts above every real cap; REACHED BY sorts by how
 // many identities reach the bucket.
 var bucketSorts = map[string]func(a, b *bucketEntry) int{
-	"BUCKET":     by(func(b *bucketEntry) string { return b.Name }),
-	"MULTIPART":  by(func(b *bucketEntry) int { return multipartRank(b.MaxMultipartUploads) }),
-	"SOURCE":     by(func(b *bucketEntry) string { return b.Source }),
-	"REACHED BY": by(func(b *bucketEntry) int { return len(b.reachedBy) }),
+	"BUCKET":      by(func(b *bucketEntry) string { return b.Name }),
+	"MULTIPART":   by(func(b *bucketEntry) int { return multipartRank(b.MaxMultipartUploads) }),
+	"STORED FORM": by(func(b *bucketEntry) string { return output.StoredForm(b.StoredForm) }),
+	"FACTOR":      by(func(b *bucketEntry) int { return b.ReplicationFactor }),
+	"SOURCE":      by(func(b *bucketEntry) string { return b.Source }),
+	"REACHED BY":  by(func(b *bucketEntry) int { return len(b.reachedBy) }),
 }
 
 // multipartRank orders a multipart cap with 0, which means unlimited, above
@@ -119,6 +123,8 @@ func bucketRow(b *bucketEntry) table.Row {
 	return table.Row{
 		b.Name,
 		output.MultipartCap(b.MaxMultipartUploads),
+		output.StoredForm(b.StoredForm),
+		output.ReplicationFactor(b.ReplicationFactor),
 		b.Source,
 		strings.Join(b.reachedBy, ", "),
 	}

@@ -110,21 +110,22 @@ func (s OverReplicationSummary) AuditAttrs() []slog.Attr {
 
 // clean is the body of Clean after observe.Run sets up the span.
 func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	if cfg.Factor <= 1 {
+	factors := c.d.Queue.Factors(cfg.Factor)
+	if !factors.Replicates() {
 		return OverReplicationSummary{}, nil
 	}
 
 	audit.Log(ctx, "over_replication.start",
-		slog.Int("factor", cfg.Factor),
+		slog.String("factors", factors.String()),
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
 	excluded := unhealthyBackends(c.d.Ops, c.log, cfg.UnhealthyThreshold)
-	if err := c.d.Queue.prepare(ctx, cfg.Factor, excluded, c.d.Ops.Backends()); err != nil {
+	if err := c.d.Queue.prepare(ctx, &factors, excluded, c.d.Ops.Backends()); err != nil {
 		return OverReplicationSummary{}, err
 	}
 	sets, err := c.d.Queue.read(ctx, core.ReplicationOver, cfg.BatchSize, nil, func(q *core.QueuedReplication) int {
-		return q.Held - cfg.Factor
+		return q.Held - factors.For(q.Key)
 	})
 	if err != nil || len(sets) == 0 {
 		return OverReplicationSummary{}, err
@@ -141,7 +142,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	// pass's sets are one batch of it.
 	pass := copySetPass{queue: c.d.Queue, concurrency: cfg.Concurrency, observer: observer}
 	sum, removed, err := pass.run(ctx, c.d.Ops, sets, func(ctx context.Context, set *copySet) (int, bool, batch.ItemResult) {
-		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, cfg.Factor, quotaStats)
+		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, factors.For(set.key), quotaStats)
 		return n, n >= set.off, cleanupItemResult(n, failures)
 	})
 

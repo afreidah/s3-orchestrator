@@ -41,6 +41,7 @@ type CompressionDeps struct {
 	Config    config.CompressionConfig
 	Encryptor *encryption.Encryptor
 	Store     RewriteStore
+	Buckets   BucketScopeSource
 	Rewriter  Rewriter
 	Locker    core.AdvisoryLocker
 }
@@ -58,6 +59,7 @@ type Compression struct {
 
 // NewCompression is the explicit-deps constructor.
 func NewCompression(d *CompressionDeps) *Compression {
+	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Rewriter", d.Rewriter)
 	must.NotNil("d.Locker", d.Locker)
 	return &Compression{
@@ -97,7 +99,8 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 	// The size floor and the recorded declines are both applied by the listing
 	// rather than here: both answers outlive the pass, so a copy either one
 	// excludes selects out of every future pass instead of being handed to
-	// each one only to be declined again.
+	// each one only to be declined again. So is the bucket scope, which keeps
+	// the pass out of a bucket that does not compress.
 	op := bulkRewriteOp{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
@@ -111,6 +114,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 				MinRatio: c.d.Config.MinRatio,
 				Level:    c.d.Config.Level,
 			},
+			Buckets: c.d.Buckets.Wanting(core.StoredCompressed),
 		},
 		onDeclined: c.recordDecline,
 		maxObjects: maxObjects,

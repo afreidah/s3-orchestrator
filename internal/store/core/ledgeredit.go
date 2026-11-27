@@ -37,18 +37,18 @@ import (
 // a key ends with where the transaction knows it outright.
 type ledgerEdit struct {
 	tx      TxAdapter
-	factor  int
+	factors ReplicationFactors
 	charges stripeDeltas
 	queued  []*CleanupRequest
 	moved   map[string]int
 	counts  map[string]int
 }
 
-// newLedgerEdit starts an edit over tx that queues keys off factor. Each
-// transaction body gets its own, so nothing one transaction gathers reaches
-// another's commit.
-func newLedgerEdit(tx TxAdapter, factor int) *ledgerEdit {
-	return &ledgerEdit{tx: tx, factor: factor, charges: stripeDeltas{}, moved: map[string]int{}, counts: map[string]int{}}
+// newLedgerEdit starts an edit over tx that queues keys off their factors.
+// Each transaction body gets its own, so nothing one transaction gathers
+// reaches another's commit.
+func newLedgerEdit(tx TxAdapter, factors ReplicationFactors) *ledgerEdit {
+	return &ledgerEdit{tx: tx, factors: factors, charges: stripeDeltas{}, moved: map[string]int{}, counts: map[string]int{}}
 }
 
 // insertCopy records a copy and charges it to its key's stripe on its backend.
@@ -208,12 +208,13 @@ func (e *ledgerEdit) commit(ctx context.Context) ([]CleanupItem, error) {
 	return cleanup, nil
 }
 
-// queueOffFactor queues each key the transaction left off factor. A key whose
-// count it knows is decided here; one whose count it changed is counted in the
-// database; one it left unchanged is skipped, since a key already off factor
-// is already queued. A factor of one or less replicates nothing.
+// queueOffFactor queues each key the transaction left off its factor. A key
+// whose count it knows is decided here; one whose count it changed is counted
+// in the database, once per factor the changed keys are kept at; one it left
+// unchanged is skipped, since a key already off factor is already queued.
+// Factors that replicate nothing queue nothing.
 func (e *ledgerEdit) queueOffFactor(ctx context.Context) error {
-	if e.factor <= 1 {
+	if !e.factors.Replicates() {
 		return nil
 	}
 	known, directions := e.knownOffFactor()
@@ -222,35 +223,37 @@ func (e *ledgerEdit) queueOffFactor(ctx context.Context) error {
 			return fmt.Errorf("queue replication: %w", err)
 		}
 	}
-	if changed := e.countUnknown(); len(changed) > 0 {
-		if err := e.tx.QueueOffFactor(ctx, e.factor, changed...); err != nil {
+	changed := e.countUnknown()
+	for _, factor := range slices.Sorted(maps.Keys(changed)) {
+		if err := e.tx.QueueOffFactor(ctx, factor, changed[factor]...); err != nil {
 			return fmt.Errorf("queue replication: %w", err)
 		}
 	}
 	return nil
 }
 
-// knownOffFactor returns the keys whose known count is off factor, with the
-// side of it each is on. A key left with nothing is gone and needs nothing.
+// knownOffFactor returns the keys whose known count is off their factor, with
+// the side of it each is on. A key left with nothing is gone and needs nothing.
 func (e *ledgerEdit) knownOffFactor() ([]string, []ReplicationDirection) {
 	var keys []string
 	var directions []ReplicationDirection
 	for _, key := range slices.Sorted(maps.Keys(e.counts)) {
-		if n := e.counts[key]; n > 0 && n != e.factor {
+		if n, factor := e.counts[key], e.factors.For(key); n > 0 && n != factor {
 			keys = append(keys, key)
-			directions = append(directions, directionOf(n, e.factor))
+			directions = append(directions, directionOf(n, factor))
 		}
 	}
 	return keys, directions
 }
 
 // countUnknown returns the keys whose count the transaction changed without
-// knowing what it ended at.
-func (e *ledgerEdit) countUnknown() []string {
-	var keys []string
+// knowing what it ended at, grouped by the factor each is kept at.
+func (e *ledgerEdit) countUnknown() map[int][]string {
+	keys := map[int][]string{}
 	for _, key := range slices.Sorted(maps.Keys(e.moved)) {
 		if _, known := e.counts[key]; !known && e.moved[key] != 0 {
-			keys = append(keys, key)
+			factor := e.factors.For(key)
+			keys[factor] = append(keys[factor], key)
 		}
 	}
 	return keys

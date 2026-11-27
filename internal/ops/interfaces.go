@@ -78,6 +78,20 @@ type BucketMatcher interface {
 	HasPrefix(key string) bool
 }
 
+// BucketScopeSource scopes a pass that adds a layer to existing copies to the
+// buckets whose new objects carry it, so a bucket that leaves the layer out is
+// left alone. *provisioning.Declared satisfies it.
+type BucketScopeSource interface {
+	Wanting(layer core.StoredFlags) core.BucketScope
+}
+
+// DeclaredBuckets is everything the operations layer asks of the declared
+// bucket set.
+type DeclaredBuckets interface {
+	BucketMatcher
+	BucketScopeSource
+}
+
 // NamespaceCounter answers how many objects live under a prefix, which is what
 // tells a bucket deletion whether the namespace it is about to drop still
 // addresses anything.
@@ -107,10 +121,12 @@ type Rewriter interface {
 // use. Replicate runs one cycle and returns the copies it created alongside the
 // per-item tally, so a caller can tell a cycle that did its work from one where
 // objects failed. RebuildQueue rebuilds the replication queue from the ledger
-// and reports how many keys it queued.
+// and reports how many keys it queued. Replicates reports whether any key's
+// factor leaves the workers anything to keep.
 type Replicator interface {
 	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error)
 	RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error)
+	Replicates() bool
 }
 
 // Rebalancer is the slice of *worker.Rebalancer the rebalance operation uses.

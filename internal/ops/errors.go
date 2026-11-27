@@ -47,7 +47,6 @@ func SkipReason(err error) (string, bool) {
 // same errors.As branch. ErrCompressionUnavailable means no codec was built,
 // not that compression is disabled for writes.
 var (
-	ErrIntegrityDisabled     = &SkipError{Reason: "integrity verification is not enabled"}
 	ErrReplicationDisabled   = &SkipError{Reason: "replication not configured or factor <= 1"}
 	ErrEncryptionDisabled    = &SkipError{Reason: "encryption not enabled"}
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}

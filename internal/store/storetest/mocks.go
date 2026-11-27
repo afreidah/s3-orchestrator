@@ -1107,18 +1107,18 @@ func (mr *MockMetadataStoreMockRecorder) PromotePending(ctx, p any) *gomock.Call
 }
 
 // RebuildReplicationQueue mocks base method.
-func (m *MockMetadataStore) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+func (m *MockMetadataStore) RebuildReplicationQueue(ctx context.Context, factors *core.ReplicationFactors, excluded []string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RebuildReplicationQueue", ctx, factor, excluded)
+	ret := m.ctrl.Call(m, "RebuildReplicationQueue", ctx, factors, excluded)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RebuildReplicationQueue indicates an expected call of RebuildReplicationQueue.
-func (mr *MockMetadataStoreMockRecorder) RebuildReplicationQueue(ctx, factor, excluded any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RebuildReplicationQueue(ctx, factors, excluded any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebuildReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).RebuildReplicationQueue), ctx, factor, excluded)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebuildReplicationQueue", reflect.TypeOf((*MockMetadataStore)(nil).RebuildReplicationQueue), ctx, factors, excluded)
 }
 
 // ReconcileUsage mocks base method.
@@ -1223,18 +1223,18 @@ func (mr *MockMetadataStoreMockRecorder) ReplaceObjectTags(ctx, key, tags any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplaceObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).ReplaceObjectTags), ctx, key, tags)
 }
 
-// ReplicationFactor mocks base method.
-func (m *MockMetadataStore) ReplicationFactor() int {
+// ReplicationFactors mocks base method.
+func (m *MockMetadataStore) ReplicationFactors() core.ReplicationFactors {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReplicationFactor")
-	ret0, _ := ret[0].(int)
+	ret := m.ctrl.Call(m, "ReplicationFactors")
+	ret0, _ := ret[0].(core.ReplicationFactors)
 	return ret0
 }
 
-// ReplicationFactor indicates an expected call of ReplicationFactor.
-func (mr *MockMetadataStoreMockRecorder) ReplicationFactor() *gomock.Call {
+// ReplicationFactors indicates an expected call of ReplicationFactors.
+func (mr *MockMetadataStoreMockRecorder) ReplicationFactors() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplicationFactor", reflect.TypeOf((*MockMetadataStore)(nil).ReplicationFactor))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplicationFactors", reflect.TypeOf((*MockMetadataStore)(nil).ReplicationFactors))
 }
 
 // RequeueCleanupDLQ mocks base method.
@@ -1439,16 +1439,16 @@ func (mr *MockMetadataStoreMockRecorder) UpdateCopyMetadata(ctx, loc, p any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCopyMetadata", reflect.TypeOf((*MockMetadataStore)(nil).UpdateCopyMetadata), ctx, loc, p)
 }
 
-// UseReplicationFactor mocks base method.
-func (m *MockMetadataStore) UseReplicationFactor(factor func() int) {
+// UseReplicationFactors mocks base method.
+func (m *MockMetadataStore) UseReplicationFactors(factors func() core.ReplicationFactors) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "UseReplicationFactor", factor)
+	m.ctrl.Call(m, "UseReplicationFactors", factors)
 }
 
-// UseReplicationFactor indicates an expected call of UseReplicationFactor.
-func (mr *MockMetadataStoreMockRecorder) UseReplicationFactor(factor any) *gomock.Call {
+// UseReplicationFactors indicates an expected call of UseReplicationFactors.
+func (mr *MockMetadataStoreMockRecorder) UseReplicationFactors(factors any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UseReplicationFactor", reflect.TypeOf((*MockMetadataStore)(nil).UseReplicationFactor), factor)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UseReplicationFactors", reflect.TypeOf((*MockMetadataStore)(nil).UseReplicationFactors), factors)
 }
 
 // VerifySchemaVersion mocks base method.

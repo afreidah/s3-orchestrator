@@ -127,12 +127,20 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	return sum, err
 }
 
-// RebuildQueue rebuilds the replication queue from the ledger at cfg's factor,
-// not counting copies on the backends the replicator is skipping, and reports
-// how many keys it queued.
+// RebuildQueue rebuilds the replication queue from the ledger at each key's
+// factor, not counting copies on the backends the replicator is skipping, and
+// reports how many keys it queued.
 func (r *Replicator) RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error) {
 	excluded := unhealthyBackends(r.d.Ops, r.log, cfg.UnhealthyThreshold)
-	return r.d.Queue.rebuild(ctx, cfg.Factor, excluded, r.d.Ops.Backends())
+	factors := r.d.Queue.Factors(cfg.Factor)
+	return r.d.Queue.rebuild(ctx, &factors, excluded, r.d.Ops.Backends())
+}
+
+// Replicates reports whether the running factors leave the replication
+// workers anything to keep, which is when they run.
+func (r *Replicator) Replicates() bool {
+	factors := r.d.Queue.Factors(r.d.Config.Config().Factor)
+	return factors.Replicates()
 }
 
 // AuditAttrs adds the copies created to the tally's attributes.
@@ -142,21 +150,22 @@ func (s ReplicationSummary) AuditAttrs() []slog.Attr {
 
 // replicate is the body of Replicate after observe.Run sets up the span.
 func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	if cfg.Factor <= 1 {
+	factors := r.d.Queue.Factors(cfg.Factor)
+	if !factors.Replicates() {
 		return ReplicationSummary{}, nil
 	}
 
 	audit.Log(ctx, "replication.start",
-		slog.Int("factor", cfg.Factor),
+		slog.String("factors", factors.String()),
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
 	excluded := unhealthyBackends(r.d.Ops, r.log, cfg.UnhealthyThreshold)
-	if err := r.d.Queue.prepare(ctx, cfg.Factor, excluded, r.d.Ops.Backends()); err != nil {
+	if err := r.d.Queue.prepare(ctx, &factors, excluded, r.d.Ops.Backends()); err != nil {
 		return ReplicationSummary{}, err
 	}
 	sets, err := r.d.Queue.read(ctx, core.ReplicationShort, cfg.BatchSize, excluded, func(q *core.QueuedReplication) int {
-		return cfg.Factor - q.Live
+		return factors.For(q.Key) - q.Live
 	})
 	if err != nil || len(sets) == 0 {
 		return ReplicationSummary{}, err

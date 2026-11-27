@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -102,7 +103,7 @@ func TestLedgerEdit_CommitQueuesEachRow(t *testing.T) {
 	t.Parallel()
 	claim := &CleanupClaim{At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), By: "inst-1"}
 	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}, claim: claim}
-	e := newLedgerEdit(queuer, 0)
+	e := newLedgerEdit(queuer, ReplicationFactors{})
 	e.queue("k", CleanupReasonDeleted, "b1", "k!a", 10)
 	e.queue("k", CleanupReasonSupersededIntent, "b2", "", 20)
 	items, err := e.commit(context.Background())
@@ -125,7 +126,7 @@ func TestLedgerEdit_RemovedCopiesQueueTheirOwnPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx, 0)
+	e := newLedgerEdit(tx, ReplicationFactors{})
 	old := []ExistingCopy{
 		{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old", SizeBytes: 100, ObjectSize: 100},
 		{ObjectKey: "k", BackendName: "b2", StorageKey: "k!b", SizeBytes: 200, ObjectSize: 200},
@@ -157,13 +158,13 @@ func TestLedgerEdit_RemovedCopiesQueueTheirOwnPaths(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // replicationRecorder records the keys a commit queues for replication: the
-// ones it knew the side of, and the ones it had the database count at factor.
+// ones it knew the side of, and the ones it had the database count, by the
+// factor each was counted at.
 type replicationRecorder struct {
 	noopTxAdapter
 	known      []string
 	directions []ReplicationDirection
-	counted    []string
-	countedAt  int
+	counted    map[int][]string
 }
 
 func (r *replicationRecorder) QueueReplication(_ context.Context, keys []string, directions []ReplicationDirection) error {
@@ -172,7 +173,10 @@ func (r *replicationRecorder) QueueReplication(_ context.Context, keys []string,
 }
 
 func (r *replicationRecorder) QueueOffFactor(_ context.Context, factor int, keys ...string) error {
-	r.countedAt, r.counted = factor, keys
+	if r.counted == nil {
+		r.counted = map[int][]string{}
+	}
+	r.counted[factor] = keys
 	return nil
 }
 
@@ -184,7 +188,7 @@ func TestLedgerEdit_QueuesTheKeysItLeavesOffTheFactor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &replicationRecorder{}
-	e := newLedgerEdit(tx, 2)
+	e := newLedgerEdit(tx, ReplicationFactors{Default: 2})
 	for key, count := range map[string]int{"short": 1, "at": 2, "over": 3, "gone": 0} {
 		e.know(key, count)
 	}
@@ -200,8 +204,36 @@ func TestLedgerEdit_QueuesTheKeysItLeavesOffTheFactor(t *testing.T) {
 	if !slices.Equal(tx.known, []string{"over", "short"}) || !slices.Equal(tx.directions, []ReplicationDirection{ReplicationOver, ReplicationShort}) {
 		t.Errorf("known = %v %v, want over and short on their sides", tx.known, tx.directions)
 	}
-	if tx.countedAt != 2 || !slices.Equal(tx.counted, []string{"changed"}) {
-		t.Errorf("counted %v at %d, want only changed at 2", tx.counted, tx.countedAt)
+	if !maps.EqualFunc(tx.counted, map[int][]string{2: {"changed"}}, slices.Equal) {
+		t.Errorf("counted %v, want only changed at 2", tx.counted)
+	}
+}
+
+// TestLedgerEdit_HoldsEachKeyToItsBucketsFactor verifies a key in a bucket
+// with a factor of its own is queued against that factor and every other key
+// against the deployment's, so a deployment at one copy still trims a key past
+// it once any bucket replicates.
+func TestLedgerEdit_HoldsEachKeyToItsBucketsFactor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tx := &replicationRecorder{}
+	e := newLedgerEdit(tx, ReplicationFactors{Default: 1, Buckets: map[string]int{"photos": 2}})
+	for key, count := range map[string]int{"photos/short": 1, "logs/over": 2, "logs/at": 1} {
+		e.know(key, count)
+	}
+	for _, key := range []string{"photos/changed", "logs/changed"} {
+		if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: key, BackendName: "b1", SizeBytes: 1}); err != nil {
+			t.Fatalf("insertCopy %s: %v", key, err)
+		}
+	}
+	if _, err := e.commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if !slices.Equal(tx.known, []string{"logs/over", "photos/short"}) || !slices.Equal(tx.directions, []ReplicationDirection{ReplicationOver, ReplicationShort}) {
+		t.Errorf("known = %v %v, want logs/over over and photos/short short", tx.known, tx.directions)
+	}
+	if want := map[int][]string{1: {"logs/changed"}, 2: {"photos/changed"}}; !maps.EqualFunc(tx.counted, want, slices.Equal) {
+		t.Errorf("counted %v, want %v", tx.counted, want)
 	}
 }
 
@@ -212,7 +244,7 @@ func TestLedgerEdit_NoFactorQueuesNothing(t *testing.T) {
 	ctx := context.Background()
 	for _, factor := range []int{0, 1} {
 		tx := &replicationRecorder{}
-		e := newLedgerEdit(tx, factor)
+		e := newLedgerEdit(tx, ReplicationFactors{Default: factor})
 		e.know("known", 3)
 		if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: "changed", BackendName: "b1", SizeBytes: 1}); err != nil {
 			t.Fatalf("insertCopy: %v", err)
@@ -237,7 +269,7 @@ func TestLedgerEdit_ChargesEachKeyOnItsStripeInOrder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx, 0)
+	e := newLedgerEdit(tx, ReplicationFactors{})
 	for _, loc := range []*ObjectLocation{
 		{ObjectKey: "bucket/key", BackendName: "b3", SizeBytes: 100},
 		{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 50},
@@ -264,10 +296,10 @@ func TestLedgerEdit_NothingChangedWritesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	if items, err := newLedgerEdit(tx, 0).commit(ctx); err != nil || items != nil {
+	if items, err := newLedgerEdit(tx, ReplicationFactors{}).commit(ctx); err != nil || items != nil {
 		t.Errorf("empty edit: items=%+v err=%v, want nothing", items, err)
 	}
-	e := newLedgerEdit(tx, 0)
+	e := newLedgerEdit(tx, ReplicationFactors{})
 	if err := e.insertCopy(ctx, &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 5}); err != nil {
 		t.Fatalf("insertCopy: %v", err)
 	}
@@ -291,7 +323,7 @@ func TestLedgerEdit_FailedWriteFailsCommit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			e := newLedgerEdit(tx, 0)
+			e := newLedgerEdit(tx, ReplicationFactors{})
 			e.queue("k", CleanupReasonDeleted, "b1", "k!a", 10)
 			e.debit(&ExistingCopy{ObjectKey: "k", BackendName: "b1", SizeBytes: 10})
 			if items, err := e.commit(ctx); !errors.Is(err, sentinel) || items != nil {
@@ -341,7 +373,7 @@ func TestLedgerEdit_CountsEachCopyItsOwnCounter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx, 0)
+	e := newLedgerEdit(tx, ReplicationFactors{})
 	stray := &ObjectLocation{
 		ObjectKey: "k", BackendName: "b1", SizeBytes: 40, Unmanaged: true,
 		ContentHash: "h", EncryptionKey: []byte("stray"), CompressionAlgorithm: "zstd", LogicalSize: 100,
@@ -376,7 +408,7 @@ func TestLedgerEdit_RestateMovesOnlyWhatChanged(t *testing.T) {
 	held := &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 10}
 
 	tx := &stripeRecordingTxStub{}
-	e := newLedgerEdit(tx, 0)
+	e := newLedgerEdit(tx, ReplicationFactors{})
 	before, after := existingCopyOf(held), existingCopyOf((&CopyPatch{ContentHash: "h", Scrubbed: true}).applied(held))
 	e.restate(&before, &after)
 	if _, err := e.commit(ctx); err != nil {
@@ -389,7 +421,7 @@ func TestLedgerEdit_RestateMovesOnlyWhatChanged(t *testing.T) {
 	}
 
 	probe := &stripeRecordingTxStub{}
-	e = newLedgerEdit(probe, 0)
+	e = newLedgerEdit(probe, ReplicationFactors{})
 	before, after = existingCopyOf(held), existingCopyOf((&CopyPatch{Probe: &CompressionProbe{Size: 5}}).applied(held))
 	e.restate(&before, &after)
 	if _, err := e.commit(ctx); err != nil || probe.calls != 0 {

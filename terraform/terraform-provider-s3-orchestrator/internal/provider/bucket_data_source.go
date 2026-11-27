@@ -35,6 +35,8 @@ type bucketDataSource struct {
 type bucketDataSourceModel struct {
 	Name                types.String `tfsdk:"name"`
 	MaxMultipartUploads types.Int64  `tfsdk:"max_multipart_uploads"`
+	StoredForm          types.Set    `tfsdk:"stored_form"`
+	ReplicationFactor   types.Int64  `tfsdk:"replication_factor"`
 	Source              types.String `tfsdk:"source"`
 }
 
@@ -76,6 +78,17 @@ func (d *bucketDataSource) Schema(
 				Computed: true,
 				MarkdownDescription: "Multipart uploads that may be in flight at once. " +
 					"Zero is unlimited.",
+			},
+			"stored_form": schema.SetAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+				MarkdownDescription: "Layers the bucket's new objects are stored with. Null " +
+					"when the bucket takes the deployment's.",
+			},
+			"replication_factor": schema.Int64Attribute{
+				Computed: true,
+				MarkdownDescription: "Copies each of the bucket's objects is kept at. Zero " +
+					"when the bucket takes the deployment's.",
 			},
 			"source": schema.StringAttribute{
 				Computed: true,
@@ -122,6 +135,8 @@ func (d *bucketDataSource) Read(
 	}
 
 	config.MaxMultipartUploads = types.Int64Value(int64(bucket.MaxMultipartUploads))
+	config.StoredForm = storedFormFromAPI(ctx, bucket.StoredForm, &resp.Diagnostics)
+	config.ReplicationFactor = types.Int64Value(int64(bucket.ReplicationFactor))
 	config.Source = types.StringValue(bucket.Source)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 }

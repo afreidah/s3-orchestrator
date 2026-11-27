@@ -517,6 +517,20 @@ func (mr *MockReplicatorMockRecorder) Replicate(ctx, cfg, observer any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Replicate", reflect.TypeOf((*MockReplicator)(nil).Replicate), ctx, cfg, observer)
 }
 
+// Replicates mocks base method.
+func (m *MockReplicator) Replicates() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Replicates")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// Replicates indicates an expected call of Replicates.
+func (mr *MockReplicatorMockRecorder) Replicates() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Replicates", reflect.TypeOf((*MockReplicator)(nil).Replicates))
+}
+
 // MockRebalancer is a mock of Rebalancer interface.
 type MockRebalancer struct {
 	ctrl     *gomock.Controller

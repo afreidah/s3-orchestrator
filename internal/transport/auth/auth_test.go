@@ -482,32 +482,6 @@ func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 	}
 }
 
-// TestBucketRegistry_MaxMultipartUploads verifies the bucket registry max multipart uploads contract.
-// Asserts that limited bucket limit = , want 50.
-func TestBucketRegistry_MaxMultipartUploads(t *testing.T) {
-	t.Parallel()
-	buckets := []config.BucketConfig{
-		{Name: "limited", MaxMultipartUploads: 50, Credentials: []config.CredentialConfig{
-			{AccessKeyID: "K1", SecretAccessKey: "S1"},
-		}},
-		{Name: "unlimited", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "K2", SecretAccessKey: "S2"},
-		}},
-	}
-
-	br := mustBucketRegistry(t, buckets)
-
-	if limit := br.MaxMultipartUploads("limited"); limit != 50 {
-		t.Errorf("limited bucket limit = %d, want 50", limit)
-	}
-	if limit := br.MaxMultipartUploads("unlimited"); limit != 0 {
-		t.Errorf("unlimited bucket limit = %d, want 0", limit)
-	}
-	if limit := br.MaxMultipartUploads("nonexistent"); limit != 0 {
-		t.Errorf("nonexistent bucket limit = %d, want 0", limit)
-	}
-}
-
 // -------------------------------------------------------------------------
 // PRESIGNED URL TESTS
 // -------------------------------------------------------------------------

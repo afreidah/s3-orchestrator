@@ -159,7 +159,7 @@ func TestPending_DiscardWithoutReasonRequeuesTheKey(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	s.UseReplicationFactor(func() int { return 2 })
+	s.UseReplicationFactors(func() core.ReplicationFactors { return core.ReplicationFactors{Default: 2} })
 
 	mustRecordObject(t, s, "bucket/k1", "backend-b", 100)
 	intent := pendingFixture("intent-1", "bucket/k1")

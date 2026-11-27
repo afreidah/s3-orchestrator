@@ -40,18 +40,18 @@ func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Con
 }
 
 // NewReplicationService constructs the replication service, which runs while
-// the replication factor is above one. Each tick works one batch of the
-// queue's short side and then one of its over side, so batch_size per
-// worker_interval paces the copies made and removed. It also runs as it
-// starts, so a restart does not leave objects off the factor for a whole
-// interval.
+// the deployment's factor is above one or a bucket sets one of its own. Each
+// tick works one batch of the queue's short side and then one of its over
+// side, so batch_size per worker_interval paces the copies made and removed.
+// It also runs as it starts, so a restart does not leave objects off the
+// factor for a whole interval.
 func NewReplicationService(rep *Replicator, c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
 		Locker:       locker,
 		LockID:       core.LockReplicator,
 		Name:         string(audit.WorkloadReplication),
 		Interval:     rep.Config().WorkerInterval,
-		ShouldRun:    func() bool { return rep.Config().Factor > 1 },
+		ShouldRun:    rep.Replicates,
 		RunAtStartup: true,
 		Work: func(ctx context.Context) error {
 			_, replicateErr := rep.Replicate(ctx, *rep.Config(), nil)
@@ -91,16 +91,15 @@ func NewDrainerService(d *Drainer, locker core.AdvisoryLocker) lifecycle.Runner 
 	})
 }
 
-// NewScrubberService constructs the integrity scrubber service, which runs
-// while integrity is enabled. A zero scrubber interval turns the sweep off,
+// NewScrubberService constructs the integrity scrubber service, which verifies
+// the copies carrying a hash. A zero scrubber interval turns the sweep off,
 // and the caller registers no service for it.
 func NewScrubberService(s *Scrubber, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
-		Locker:    locker,
-		LockID:    core.LockScrubber,
-		Name:      string(audit.WorkloadScrub),
-		Interval:  s.Config().ScrubberInterval,
-		ShouldRun: func() bool { return s.Config().IsEnabled() },
+		Locker:   locker,
+		LockID:   core.LockScrubber,
+		Name:     string(audit.WorkloadScrub),
+		Interval: s.Config().ScrubberInterval,
 		Work: passWork(func(ctx context.Context) (batch.Summary, error) {
 			return s.Scrub(ctx, s.Config().ScrubberBatchSize, "", nil)
 		}),

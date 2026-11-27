@@ -12,7 +12,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -493,35 +492,6 @@ func TestProvisioning_ClosedStoreSurfacesErrors(t *testing.T) {
 	}
 	if err := s.DeleteGrant(ctx, "u", core.BucketResource("b")); err == nil {
 		t.Error("DeleteGrant succeeded against a closed store")
-	}
-}
-
-// TestProvisioning_CORSEncodeSkipsEmpty verifies a bucket with no rules encodes
-// to NULL rather than to an empty array.
-func TestProvisioning_CORSEncodeSkipsEmpty(t *testing.T) {
-	t.Parallel()
-
-	got, err := marshalCORS(nil)
-	if err != nil {
-		t.Fatalf("marshalCORS: %v", err)
-	}
-	if got.Valid {
-		t.Errorf("marshalCORS(nil) = %+v, want NULL", got)
-	}
-}
-
-// TestProvisioning_CORSDecodeRejectsGarbage verifies a column holding something
-// that is not a rule set surfaces as an error rather than as a bucket with no
-// CORS, which would silently drop a browser policy.
-func TestProvisioning_CORSDecodeRejectsGarbage(t *testing.T) {
-	t.Parallel()
-
-	if _, err := unmarshalCORS(sql.NullString{String: "{not json", Valid: true}); err == nil {
-		t.Error("unmarshalCORS accepted a value that is not a rule set")
-	}
-	got, err := unmarshalCORS(sql.NullString{})
-	if err != nil || got != nil {
-		t.Errorf("unmarshalCORS(NULL) = (%v, %v), want (nil, nil)", got, err)
 	}
 }
 

@@ -22,6 +22,7 @@ database:
 buckets:
   - name: "photos"
     # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
+    # stored_form: ["hashed"]     # optional; layers new objects are stored with (omit for the deployment's)
     credentials:
       - access_key_id: "photoskey"
         secret_access_key: "photossecret"

@@ -140,7 +140,7 @@ func (s *Server) listBucket(ctx context.Context, t *target, startAfter string) (
 		startAfter = bucketPrefix + startAfter
 	}
 
-	result, err := s.Objects.ListObjects(ctx, bucketPrefix+page.Prefix, page.Delimiter, startAfter, maxKeys)
+	result, err := s.d.Objects.ListObjects(ctx, bucketPrefix+page.Prefix, page.Delimiter, startAfter, maxKeys)
 	if err != nil {
 		return listPage{}, err
 	}

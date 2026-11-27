@@ -3,19 +3,17 @@
 //
 // Author: Alex Freidah
 //
-// Defines IntegrityConfig: enables SHA-256 content hashing on writes,
-// optional verification on reads, and the periodic scrubber that random-
-// samples stored objects to catch silent corruption. Carries the
-// scrubber interval and batch size and validates them so a typo cannot
-// silently disable the worker by setting the interval to zero.
+// Defines IntegrityConfig: whether a bucket without a stored form of its own
+// hashes its objects on write, optional verification on reads, and the
+// periodic scrubber that samples stored copies carrying a hash to catch silent
+// corruption. Carries the scrubber interval and batch size and validates them
+// so a typo cannot silently disable the worker by setting the interval to zero.
 // -------------------------------------------------------------------------------
 
 package config
 
 import (
 	"cmp"
-	"crypto/sha256"
-	"hash"
 	"time"
 )
 
@@ -27,11 +25,12 @@ const DefaultScrubberMinAge = 7 * 24 * time.Hour
 // limit the scrubber leaves for other reads when the config does not set one.
 const DefaultScrubberEgressReserve = 0.8
 
-// IntegrityConfig holds settings for object integrity verification.
-// When enabled, objects are checksummed on write and optionally verified
-// on read and during replication.
+// IntegrityConfig holds settings for object integrity verification. Enabled
+// gives a bucket without a stored form of its own the hashed layer; a copy
+// carrying a hash is verified on read, on replication and by the scrubber as
+// those are configured, whichever bucket it is in.
 type IntegrityConfig struct {
-	Enabled               bool          `yaml:"enabled"`                 // Enable integrity verification (default: false)
+	Enabled               bool          `yaml:"enabled"`                 // Hash new objects by default (default: false)
 	VerifyOnRead          bool          `yaml:"verify_on_read"`          // Hash-check every GET response (default: false)
 	VerifyOnReplicate     bool          `yaml:"verify_on_replicate"`     // Hash-check a new replica before recording it (default: false)
 	ScrubberInterval      time.Duration `yaml:"scrubber_interval"`       // Background verification interval (0 = disabled)
@@ -64,45 +63,29 @@ func (ic *IntegrityConfig) ScrubbedBefore(now time.Time) time.Time {
 	return now.Add(-minAge)
 }
 
-// IsEnabled reports whether integrity verification is on. A nil config, an
-// integrity section never loaded, is off, so callers need no nil check.
-func (ic *IntegrityConfig) IsEnabled() bool {
-	return ic != nil && ic.Enabled
-}
-
 // ShouldVerifyOnReplicate reports whether a new replica must be read back and
 // hash-checked before its ledger row is written. It is off unless explicitly
 // set, since verifying doubles the egress replication spends on each replica.
+// A nil config, an integrity section never loaded, is off.
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
-	return ic.IsEnabled() && ic.VerifyOnReplicate
+	return ic != nil && ic.VerifyOnReplicate
 }
 
 // ShouldVerifyOnRead reports whether a whole-object GET hashes the bytes it
 // serves and drops a copy that does not match its stored hash.
 func (ic *IntegrityConfig) ShouldVerifyOnRead() bool {
-	return ic.IsEnabled() && ic.VerifyOnRead
+	return ic != nil && ic.VerifyOnRead
 }
 
-// Hasher returns the hasher a content hash is computed in, by a write that
-// records one and a read that checks one, or nil when integrity is off, so a
-// write records no hash.
-func (ic *IntegrityConfig) Hasher() hash.Hash {
-	if !ic.IsEnabled() {
-		return nil
-	}
-	return sha256.New()
-}
-
-// setDefaultsAndValidate fills the scrubber's defaults and, when integrity is
-// enabled, reports every field out of bounds.
+// setDefaultsAndValidate fills the scrubber's defaults and reports every field
+// out of bounds. They are checked whether or not integrity is enabled, since
+// enabled only decides whether a bucket hashes by default and the scrubber
+// verifies whatever copies carry a hash.
 func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 	ic.ScrubberBatchSize = cmp.Or(ic.ScrubberBatchSize, 100)
 	ic.ScrubberMinAge = cmp.Or(ic.ScrubberMinAge, DefaultScrubberMinAge)
 	if ic.ScrubberEgressReserve == nil {
 		ic.ScrubberEgressReserve = new(DefaultScrubberEgressReserve)
-	}
-	if !ic.Enabled {
-		return nil
 	}
 	return failed(
 		nonNegative("integrity.scrubber_interval", ic.ScrubberInterval),

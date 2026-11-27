@@ -161,32 +161,49 @@ WITH inflight AS (
     FROM pending_objects
     GROUP BY object_key
 ),
+overrides AS (
+    SELECT unnest($1::text[]) AS bucket, unnest($2::bigint[]) AS factor
+),
 counted AS (
     SELECT ol.object_key,
-           COUNT(*) FILTER (WHERE ol.backend_name != ALL($2::text[])) + COALESCE(i.copies, 0) AS live,
+           COUNT(*) FILTER (WHERE ol.backend_name != ALL($3::text[])) + COALESCE(i.copies, 0) AS live,
            COUNT(*) AS held
     FROM object_locations ol
     LEFT JOIN inflight i ON i.object_key = ol.object_key
     WHERE ol.managed
     GROUP BY ol.object_key, i.copies
+),
+factored AS (
+    SELECT c.object_key, c.live, c.held, COALESCE(o.factor, $4::bigint) AS factor
+    FROM counted c
+    LEFT JOIN overrides o ON o.bucket = split_part(c.object_key, '/', 1)
 )
 INSERT INTO replication_queue (object_key, direction)
-SELECT object_key, (CASE WHEN live < $1::bigint THEN -1 ELSE 1 END)::smallint
-FROM counted
-WHERE live < $1::bigint OR held > $1::bigint
+SELECT object_key, (CASE WHEN live < factor THEN -1 ELSE 1 END)::smallint
+FROM factored
+WHERE live < factor OR held > factor
 ON CONFLICT (object_key) DO UPDATE
 SET direction = EXCLUDED.direction, next_retry = NOW(), attempts = 0, version = replication_queue.version + 1
 `
 
 type RebuildReplicationQueueParams struct {
-	Factor   int64
-	Excluded []string
+	BucketNames   []string
+	BucketFactors []int64
+	Excluded      []string
+	DefaultFactor int64
 }
 
-// One grouped pass over the ledger that queues every key off factor, for a
-// factor or excluded set the queue was not kept against.
+// One grouped pass over the ledger that queues every key off its factor, for
+// factors or an excluded set the queue was not kept against. A key is kept at
+// the factor its bucket sets in bucket_names and bucket_factors, and otherwise
+// at default_factor.
 func (q *Queries) RebuildReplicationQueue(ctx context.Context, arg RebuildReplicationQueueParams) (int64, error) {
-	result, err := q.db.Exec(ctx, rebuildReplicationQueue, arg.Factor, arg.Excluded)
+	result, err := q.db.Exec(ctx, rebuildReplicationQueue,
+		arg.BucketNames,
+		arg.BucketFactors,
+		arg.Excluded,
+		arg.DefaultFactor,
+	)
 	if err != nil {
 		return 0, err
 	}

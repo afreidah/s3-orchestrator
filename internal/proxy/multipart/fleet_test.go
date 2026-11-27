@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -119,16 +120,18 @@ func newFleet(
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	live := config.NewLive(&config.Config{})
+	live := config.NewLive(&config.Config{Compression: opts.Compression})
+	forms := provisioning.NewDeclared()
+	forms.UseDeployment(live, opts.Encryptor != nil)
 	mp := New(&Deps{
 		Core:               rt,
 		Coord:              writepath.New(rt, store),
 		Stores:             store,
+		Forms:              forms,
 		Encryptor:          opts.Encryptor,
 		Codec:              opts.Codec,
 		Compression:        opts.Compression,
 		DEKCacheTTL:        fleetDEKTTL,
-		IntegrityCfg:       live.Integrity(),
 		EnforceMinPartSize: opts.EnforceMinPartSize,
 	})
 	t.Cleanup(mp.Close)

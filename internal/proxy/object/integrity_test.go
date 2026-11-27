@@ -313,7 +313,6 @@ func TestMaybeWrapIntegrityReader_LeavesBodyAlone(t *testing.T) {
 		cfg  *config.IntegrityConfig
 		loc  *core.ObjectLocation
 	}{
-		{"integrity disabled", &config.IntegrityConfig{Enabled: false, VerifyOnRead: true}, hashed},
 		{"verify on read off", &config.IntegrityConfig{Enabled: true, VerifyOnRead: false}, hashed},
 		{"no stored hash", verifyOnRead(), &core.ObjectLocation{ObjectKey: key, BackendName: beName}},
 		{"no location", verifyOnRead(), nil},
