@@ -72,10 +72,9 @@ type entry struct {
 
 // BucketRegistry resolves client credentials to the identity behind them.
 type BucketRegistry struct {
-	byAccessKey    map[string]entry      // access_key_id -> identity and its secret
-	byUserID       map[string]*User      // user id -> identity, for a caller that proved itself another way
-	multipartLimit map[string]int        // bucket name -> max active multipart uploads (0 = unlimited)
-	notices        []provisioning.Notice // what registration found and served through anyway
+	byAccessKey map[string]entry      // access_key_id -> identity and its secret
+	byUserID    map[string]*User      // user id -> identity, for a caller that proved itself another way
+	notices     []provisioning.Notice // what registration found and served through anyway
 }
 
 // NewBucketRegistry builds a credential-to-identity lookup from the merged view
@@ -88,16 +87,9 @@ type BucketRegistry struct {
 // grant.
 func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 	br := &BucketRegistry{
-		byAccessKey:    make(map[string]entry),
-		byUserID:       make(map[string]*User, len(v.Users)),
-		multipartLimit: make(map[string]int),
-		notices:        slices.Clone(v.Notices),
-	}
-
-	for i := range v.Buckets {
-		if b := &v.Buckets[i]; b.MaxMultipartUploads > 0 {
-			br.multipartLimit[b.Name] = b.MaxMultipartUploads
-		}
+		byAccessKey: make(map[string]entry),
+		byUserID:    make(map[string]*User, len(v.Users)),
+		notices:     slices.Clone(v.Notices),
 	}
 
 	users := make(map[string]*User, len(v.Users))
@@ -225,12 +217,6 @@ func (br *BucketRegistry) verify(accessKey string, check func(secret string) err
 		return nil, errors.New(errAuthFailed)
 	}
 	return e.user, nil
-}
-
-// MaxMultipartUploads returns the configured limit for active multipart
-// uploads on the given bucket. Returns 0 if unlimited.
-func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
-	return br.multipartLimit[bucket]
 }
 
 // Authenticate verifies the request and returns the identity behind the

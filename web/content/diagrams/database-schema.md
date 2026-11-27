@@ -305,7 +305,7 @@ window.s3oDiagram = {
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Wrapped DEK (baseNonce || wrappedDEK) when encrypted</td></tr>' +
         '<tr><td>key_id</td><td>TEXT</td><td>Master key identifier for unwrap</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Logical object size (pre-encryption)</td></tr>' +
-        '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 of the plaintext (when integrity is enabled)</td></tr>' +
+        '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 of the plaintext (when the bucket\'s stored form carries hashed)</td></tr>' +
         '<tr><td>compression_algorithm</td><td>TEXT</td><td>Codec the stored bytes were encoded with. NULL means stored verbatim, so no separate flag can drift out of step with it (nullable)</td></tr>' +
         '<tr><td>compression_level</td><td>TEXT</td><td>Level the object was written at. Diagnostic only, since decoding does not need it, but a rewrite pass does (nullable)</td></tr>' +
         '<tr><td>compression_format_version</td><td>SMALLINT</td><td>On-disk layout version, so a later change is detectable rather than silently misread (nullable)</td></tr>' +
@@ -344,9 +344,11 @@ window.s3oDiagram = {
         '<tr><td class="pk">name</td><td>TEXT</td><td>PRIMARY KEY; the namespace an object key is prefixed with</td></tr>' +
         '<tr><td>max_multipart_uploads</td><td>INTEGER</td><td>Cap on concurrent multipart uploads; 0 is unlimited, mirroring the config field</td></tr>' +
         '<tr><td>cors</td><td>JSONB</td><td>Browser CORS rule set, validated when the API stores it so an unreadable rule cannot break a later registry rebuild</td></tr>' +
-        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Declaration time</td></tr></table>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Declaration time</td></tr>' +
+        '<tr><td>stored_form</td><td>BIGINT</td><td>Layers the bucket\'s new objects are stored with, as the bits <code>object_locations.form</code> uses. NULL takes the deployment\'s, and 0 stores objects with no layer (nullable)</td></tr>' +
+        '<tr><td>replication_factor</td><td>INTEGER</td><td>Copies each of the bucket\'s objects is kept at; 0 takes the deployment\'s <code>replication.factor</code></td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on name</p>' +
-        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.LoadMerged</a> (read on every assembly) &bull; <code>ops.Provisioning</code> create and delete. A delete is refused while any object is stored under the name or any grant still names it, so dropping a namespace cannot strand bytes that nothing can reach.</p>'
+        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.LoadMerged</a> (read on every assembly, and published in <code>provisioning.Declared</code>, which the write path asks for each bucket\'s stored form, multipart limit and replication factor) &bull; <code>ops.Provisioning</code> create, update and delete. A delete is refused while any object is stored under the name or any grant still names it, so dropping a namespace cannot strand bytes that nothing can reach.</p>'
     },
     users: {
       title: 'users',
@@ -498,3 +500,4 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | `00049_listing_key_ranges` | Replace `idx_object_locations_key_pattern` and `idx_object_locations_key_collate_c_covering` with `idx_object_locations_listing (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, object_size, etag, managed)`, and `idx_multipart_uploads_key_pattern` with `idx_multipart_uploads_key_collate_c`, for listings that state a byte range rather than a LIKE pattern |
 | `00050_replication_queue` | Add `replication_queue` and `idx_replication_queue_due (direction, next_retry)`, so the replicator and the over-replication cleaner drain the keys off the factor instead of scanning `object_locations`. SQLite (0036) |
 | `00051_ledger_counters` | Split `backend_quota_stripes` by stored `form` and `managed` flag and add `copies`, `object_bytes` and `never_scrubbed` beside `bytes_used`, with the primary key grown to `(backend_name, stripe_id, form, managed)` and the counters rebuilt from one grouped pass onto stripe zero, so the ledger figures are read from a few rows instead of a scan of `object_locations`. SQLite (0037) rebuilds the table and recreates `backend_capacity` over it |
+| `00052_bucket_storage_settings` | Add nullable `buckets.stored_form`, the layers a stored bucket's new objects are stored with, as the bits `object_locations.form` uses, and `buckets.replication_factor`, the copies each of its objects is kept at. NULL and 0, which every existing bucket holds, take the deployment's. SQLite (0038) adds the same columns |

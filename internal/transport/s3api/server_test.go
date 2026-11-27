@@ -35,7 +35,7 @@ func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(nil),
 	})
-	srv := NewServer(st.Objects, st.Multipart, auth.NewLiveRegistry(nil), 1024)
+	srv := stackServer(st, auth.NewLiveRegistry(nil), 1024)
 	if srv.log == nil {
 		t.Fatal("NewServer left log field nil")
 	}
@@ -47,7 +47,9 @@ func TestServer_FollowsTheRegistrySwap(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	registry := auth.NewLiveRegistry(mustBucketRegistry(t, nil))
-	ts := httptest.NewServer(NewServer(NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl), registry, 0))
+	ts := httptest.NewServer(NewServer(&ServerDeps{
+		Objects: NewMockObjectOps(ctrl), Multipart: NewMockMultipartOps(ctrl), Registry: registry, Buckets: provisioning.NewDeclared(),
+	}))
 	t.Cleanup(ts.Close)
 
 	headBucket := func() int {
@@ -159,9 +161,9 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 	ctrl := gomock.NewController(t)
 	objects, multipart := NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl)
 
-	ts := httptest.NewServer(NewServer(objects, multipart, mustLiveRegistry(t, []config.BucketConfig{
-		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
-	}), 10*1024*1024))
+	ts := httptest.NewServer(NewServer(&ServerDeps{
+		Objects: objects, Multipart: multipart, Registry: testRegistry(t), Buckets: provisioning.NewDeclared(), MaxObjectSize: 10 * 1024 * 1024,
+	}))
 	t.Cleanup(ts.Close)
 	return ts, objects, multipart
 }

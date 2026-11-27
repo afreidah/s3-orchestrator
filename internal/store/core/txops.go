@@ -15,46 +15,41 @@
 package core
 
 import (
-	"sync/atomic"
-
 	"golang.org/x/sync/semaphore"
 )
 
 // TxOps holds the Runner that the shared methods run their transactions
 // against, the slots that bound how many claims run at once, and where the
-// replication factor its writes queue keys against comes from. It is embedded
+// replication factors its writes queue keys against come from. It is embedded
 // by each engine store, which is itself that Runner.
 type TxOps struct {
 	runner     Runner
 	claimSlots *semaphore.Weighted
-	factor     *atomic.Pointer[func() int]
+	factors    *FactorsHolder
 }
 
 // NewTxOps binds the shared methods to the store that will embed them. A claim
 // waiting on a backend's lock holds a connection, so claimSlots is the most of
 // them the store's claims may occupy; the rest wait without one.
 func NewTxOps(r Runner, claimSlots int) TxOps {
-	return TxOps{runner: r, claimSlots: semaphore.NewWeighted(int64(claimSlots)), factor: &atomic.Pointer[func() int]{}}
+	return TxOps{runner: r, claimSlots: semaphore.NewWeighted(int64(claimSlots)), factors: &FactorsHolder{}}
 }
 
-// UseReplicationFactor names where the store's writes read the replication
-// factor, so each reads the running value. Until it is called, writes queue
+// UseReplicationFactors names where the store's writes read the replication
+// factors, so each reads the running values. Until it is called, writes queue
 // nothing.
-func (o TxOps) UseReplicationFactor(factor func() int) {
-	o.factor.Store(&factor)
+func (o TxOps) UseReplicationFactors(factors func() ReplicationFactors) {
+	o.factors.Use(factors)
 }
 
-// ReplicationFactor returns the factor the store's writes queue keys against
-// now, zero before one is named.
-func (o TxOps) ReplicationFactor() int {
-	if f := o.factor.Load(); f != nil {
-		return (*f)()
-	}
-	return 0
+// ReplicationFactors returns the factors the store's writes queue keys
+// against now, none before they are named.
+func (o TxOps) ReplicationFactors() ReplicationFactors {
+	return o.factors.Load()
 }
 
 // edit starts the ledger edit of one transaction, queueing keys against the
-// running replication factor.
+// running replication factors.
 func (o TxOps) edit(tx TxAdapter) *ledgerEdit {
-	return newLedgerEdit(tx, o.ReplicationFactor())
+	return newLedgerEdit(tx, o.ReplicationFactors())
 }

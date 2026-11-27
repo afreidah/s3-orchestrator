@@ -60,6 +60,14 @@ type Codec interface {
 	InspectStored(ctx context.Context, f compression.RangeFetcher, storedSize int64) (int64, bool)
 }
 
+// BucketSettingsSource reports how a bucket's new objects are stored: the
+// layers they carry and how many copies each is kept at.
+// *provisioning.Declared satisfies it.
+type BucketSettingsSource interface {
+	Form(bucket string) core.StoredFlags
+	Factors() core.ReplicationFactors
+}
+
 // DetachedRegistry is what the write path needs from the tracker of copies
 // that outlive their response: a slot to run under, and the depth to log when
 // there is none. Waiting for those copies at shutdown belongs to the runtime,

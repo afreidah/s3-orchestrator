@@ -99,6 +99,28 @@ Changing the limit or the rules is an update in place. Changing the name replace
 
 Dropping a `cors_rule` block removes that rule. The configuration is the whole of what the bucket carries, not a set of additions to it.
 
+`stored_form` names the layers the bucket's new objects are stored with, from `compressed`, `encrypted` and `hashed`. Leave it out and the bucket takes the deployment's; set it and the bucket gets exactly those, so an empty set stores its objects with none. A bucket whose client already compresses and encrypts, such as a restic repository, gains nothing from the orchestrator doing either again:
+
+```hcl
+resource "s3orchestrator_bucket" "restic" {
+  name        = "restic"
+  stored_form = ["hashed"]
+}
+```
+
+The deployment refuses `encrypted` when it does not encrypt, and a change applies to new writes only. It needs 0.189 or later on both sides. See [Stored form](../../docs/configuration/#stored-form).
+
+`replication_factor` sets how many copies each of the bucket's objects is kept at, from 1 to the deployment's number of backends. Zero, the default, takes the deployment's `replication.factor`. Unlike the stored form, a change brings existing objects to the new count:
+
+```hcl
+resource "s3orchestrator_bucket" "traces" {
+  name               = "traces"
+  replication_factor = 1
+}
+```
+
+It also needs 0.189 or later on both sides. See [Replication factor](../../docs/configuration/#replication-factor).
+
 Deleting the resource removes the bucket, and is refused while anything is stored under it. Emptying a bucket stays a deliberate act rather than something an apply does on your behalf.
 
 ## Onboarding one client

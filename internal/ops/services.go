@@ -51,7 +51,7 @@ type Deps struct {
 	Locker       core.AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
-	Declared     BucketMatcher
+	Declared     DeclaredBuckets
 	Config       *config.Live
 }
 
@@ -81,10 +81,11 @@ func New(d *Deps) *Services {
 			Store:   d.Store,
 			Buckets: d.Declared,
 		}),
-		Integrity: NewIntegrity(IntegrityDeps{
+		Integrity: NewIntegrity(&IntegrityDeps{
 			Scrubber:   d.Scrubber,
 			Reconciler: d.Reconciler,
 			Store:      d.CopyStore,
+			Buckets:    d.Declared,
 			Locker:     d.Locker,
 			Config:     cfg,
 		}),
@@ -101,10 +102,11 @@ func New(d *Deps) *Services {
 			Config:     cfg,
 		}),
 		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry, Config: cfg}),
-		Encryption: NewEncryption(EncryptionDeps{
+		Encryption: NewEncryption(&EncryptionDeps{
 			Encryptor: d.Encryptor,
 			Codec:     d.Codec,
 			Store:     d.EncStore,
+			Buckets:   d.Declared,
 			Rewriter:  d.Rewriter,
 			Locker:    d.Locker,
 		}),
@@ -113,6 +115,7 @@ func New(d *Deps) *Services {
 			Config:    d.Config.Load().Compression,
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
+			Buckets:   d.Declared,
 			Rewriter:  d.Rewriter,
 			Locker:    d.Locker,
 		}),

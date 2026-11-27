@@ -377,7 +377,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to build bucket registry: %v\n", err)
 		os.Exit(1)
 	}
-	srv := s3api.NewServer(stack.Objects, stack.Multipart, auth.NewLiveRegistry(bucketAuth), 0)
+	srv := stackServer(stack, auth.NewLiveRegistry(bucketAuth))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1009,7 +1009,15 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.Buck
 // registry built from buckets, with no object size ceiling.
 func newS3Server(tb testing.TB, stack *proxytest.Stack, buckets ...config.BucketConfig) *s3api.Server {
 	tb.Helper()
-	return s3api.NewServer(stack.Objects, stack.Multipart, auth.NewLiveRegistry(mustBucketRegistry(tb, buckets)), 0)
+	return stackServer(stack, auth.NewLiveRegistry(mustBucketRegistry(tb, buckets)))
+}
+
+// stackServer builds an S3 server over stack's managers and declared bucket
+// set, authenticating against registry, with no object size ceiling.
+func stackServer(stack *proxytest.Stack, registry *auth.LiveRegistry) *s3api.Server {
+	return s3api.NewServer(&s3api.ServerDeps{
+		Objects: stack.Objects, Multipart: stack.Multipart, Registry: registry, Buckets: stack.Declared,
+	})
 }
 
 // virtualBucketFor is the bucket a hand-built server serves, reached with one
@@ -1021,11 +1029,11 @@ func virtualBucketFor(accessKey, secret string) config.BucketConfig {
 	}
 }
 
-// declaredForConfig builds the live bucket set a hand-wired harness hands the
-// operations layer, applying the same config-to-declared translation registry
-// assembly performs before publishing it.
-func declaredForConfig(buckets []config.BucketConfig) *provisioning.Declared {
-	d := provisioning.NewDeclared()
-	d.Store(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
-	return d
+// declareConfig publishes buckets as stack's live bucket set, which a
+// hand-wired harness hands the operations layer, applying the same
+// config-to-declared translation registry assembly performs. The stack's
+// deployment form stays, so a bucket without its own takes it.
+func declareConfig(stack *proxytest.Stack, buckets []config.BucketConfig) *provisioning.Declared {
+	stack.Declared.Store(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
+	return stack.Declared
 }

@@ -3272,8 +3272,8 @@ func TestParallelCopies_OffMeansOneCopy(t *testing.T) {
 }
 
 // TestParallelCopies_InertWithoutReplication verifies a single-copy deployment
-// is unaffected even with the gate on: there is no second copy to place, and
-// the over-replication cleaner would remove one that appeared.
+// places one copy even with the gate on, since the count defaults to its
+// factor of one.
 func TestParallelCopies_InertWithoutReplication(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -3288,17 +3288,20 @@ func TestParallelCopies_InertWithoutReplication(t *testing.T) {
 	}
 }
 
-// TestParallelCopies_RejectsACountOverTheFactor verifies a count past the
-// factor is refused at boot rather than producing copies the over-replication
-// cleaner deletes as fast as writes create them.
-func TestParallelCopies_RejectsACountOverTheFactor(t *testing.T) {
+// TestParallelCopies_AllowsACountOverTheFactor verifies a count past the
+// deployment's factor loads, since each write places no more copies than its
+// own bucket's factor, which a bucket may set above the deployment's.
+func TestParallelCopies_AllowsACountOverTheFactor(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfigTwoBackends()
-	cfg.Replication.Factor = 2
-	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: 3}
+	cfg.Replication.Factor = 1
+	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: 2}
 
-	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesOverFactor) {
-		t.Errorf("err = %v, want ErrParallelCopiesOverFactor", err)
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.CopiesPerWrite(); got != 2 {
+		t.Errorf("CopiesPerWrite = %d, want the count", got)
 	}
 }
 
@@ -3312,20 +3315,6 @@ func TestParallelCopies_RejectsACountBelowOne(t *testing.T) {
 
 	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNotPositive) {
 		t.Errorf("err = %v, want ErrNotPositive", err)
-	}
-}
-
-// TestParallelCopies_CapsAtTheFactor verifies CopiesPerWrite never reports more
-// than the factor even if a count slipped past validation, since it is the one
-// place the write path asks how many copies to place.
-func TestParallelCopies_CapsAtTheFactor(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfigTwoBackends()
-	cfg.Replication.Factor = 2
-	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: 5}
-
-	if got := cfg.CopiesPerWrite(); got != 2 {
-		t.Errorf("CopiesPerWrite = %d, want the factor", got)
 	}
 }
 

@@ -217,7 +217,7 @@ func TestLedgerChanges_QueueOnceAndChargeLast(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ops := stubOps(tc.stub)
-			ops.UseReplicationFactor(func() int { return 2 })
+			ops.UseReplicationFactors(func() ReplicationFactors { return ReplicationFactors{Default: 2} })
 			if err := tc.run(ops); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}

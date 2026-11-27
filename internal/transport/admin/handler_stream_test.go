@@ -158,21 +158,6 @@ func allStepStartsLabeled(events []adminstream.Event) bool {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
-	t.Parallel()
-	h := newCoverageHandler(t)
-	integrityWith(t, h, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}}, &scrubberStub{})
-
-	w := httptest.NewRecorder()
-	h.handleBackfillChecksums(w, streamReq("/admin/api/backfill-checksums"))
-
-	events := decodeEvents(t, w.Body.Bytes())
-	last := events[len(events)-1]
-	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeSkipped {
-		t.Errorf("last event = %+v, want result/skipped", last)
-	}
-}
-
 func TestHandleReconcile_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)

@@ -114,7 +114,6 @@ func TestVerifyReplica_GateTable(t *testing.T) {
 		cfg  *config.IntegrityConfig
 	}{
 		{"no integrity config at all", nil},
-		{"integrity off", &config.IntegrityConfig{Enabled: false, VerifyOnReplicate: true}},
 		{"integrity on, verify off", &config.IntegrityConfig{Enabled: true, VerifyOnReplicate: false}},
 		{"integrity on, verify unset", &config.IntegrityConfig{Enabled: true}},
 	}

@@ -73,14 +73,13 @@ type Manager struct {
 	log      *slog.Logger
 }
 
-// New creates a Manager. Core, Coord and Stores must be non-nil. When
-// IntegrityCfg is nil or disabled, CompleteMultipartUpload skips the plaintext
-// hash that populates content_hash on the recorded location.
+// New creates a Manager. Core, Coord, Stores and Forms must be non-nil.
 func New(d *Deps) *Manager {
 	must.NotNil("d", d)
 	must.NotNil("d.Core", d.Core)
 	must.NotNil("d.Coord", d.Coord)
 	must.NotNil("d.Stores", d.Stores)
+	must.NotNil("d.Forms", d.Forms)
 	return &Manager{
 		d:        *d,
 		dekCache: syncutil.NewTTLCache[string, []byte](d.DEKCacheTTL),
@@ -89,22 +88,29 @@ func New(d *Deps) *Manager {
 }
 
 // Deps groups the multipart manager's constructor parameters: backend
-// runtime, shared write coordinator, store surface, optional encryption and
-// compression, the DEK-cache TTL, and the shared integrity config. Encryptor
-// is nil when encryption is disabled and Codec when no codec is configured.
-// Codec is supplied whether or not Compression.Enabled, matching the object
-// manager: an assembled object is encoded only when both are set. With
-// EnforceMinPartSize every non-final part must meet the S3 5 MiB floor.
+// runtime, shared write coordinator, store surface, the layers each bucket's
+// new objects are stored with, optional encryption and compression, and the
+// DEK-cache TTL. Encryptor is nil when encryption is disabled and Codec when no
+// codec is configured; an assembled object is encoded only when its bucket
+// compresses and a codec is set. With EnforceMinPartSize every non-final part
+// must meet the S3 5 MiB floor.
 type Deps struct {
 	Core               Runtime
 	Coord              *writepath.Coordinator
 	Stores             Stores
+	Forms              StoredFormSource
 	Encryptor          *encryption.Encryptor
 	Codec              Codec
 	Compression        config.CompressionConfig
 	DEKCacheTTL        time.Duration
-	IntegrityCfg       syncutil.Section[config.IntegrityConfig]
 	EnforceMinPartSize bool
+}
+
+// storedForm returns the layers the bucket key is under stores new objects
+// with.
+func (mp *Manager) storedForm(key string) core.StoredFlags {
+	bucket, _ := internalkey.Split(key)
+	return mp.d.Forms.Form(bucket)
 }
 
 // Close stops the per-upload DEK cache eviction loop.
@@ -131,9 +137,10 @@ type CreateUploadRequest struct {
 }
 
 // CreateMultipartUpload initiates a multipart upload by selecting a backend
-// with available quota and recording the upload in the database. With
-// encryption configured it wraps one DEK here and persists it on the upload
-// row; every UploadPart and the assembled object share that DEK.
+// with available quota and recording the upload in the database. When the
+// bucket encrypts it wraps one DEK here and persists it on the upload row;
+// every UploadPart and the assembled object share that DEK, so a change to the
+// bucket's form mid-upload cannot leave the parts disagreeing.
 func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadRequest) (string, string, error) {
 	const operation = s3op.CreateMultipartUpload
 	key := req.Key
@@ -151,7 +158,11 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 		encryptionKey []byte
 		keyID         string
 	)
-	if mp.d.Encryptor != nil {
+	if mp.storedForm(key).Has(core.StoredEncrypted) {
+		if mp.d.Encryptor == nil {
+			observe.RecordSpanError(span, storedform.ErrNoEncryptor)
+			return "", "", storedform.ErrNoEncryptor
+		}
 		_, wrappedDEK, kid, kerr := mp.d.Encryptor.GenerateAndWrapDEK(ctx)
 		if kerr != nil {
 			observe.RecordSpanError(span, kerr)
@@ -707,11 +718,12 @@ func (mp *Manager) completeMultipartUploadLocked(
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, s3be.Endpoint{Name: mu.BackendName, Backend: be}, uploadID, parts)
 	defer pipeCancel()
 
-	// Tee the plaintext stream through SHA-256 when integrity is on so
-	// the assembled object lands with a content_hash matching the
-	// regular PutObject path. Without this, the scrubber cannot verify
+	// Tee the plaintext stream through SHA-256 when the bucket hashes, so the
+	// assembled object lands with a content_hash matching the regular
+	// PutObject path. Without this, the scrubber cannot verify
 	// multipart-completed objects.
-	hasher := mp.d.IntegrityCfg.Config().Hasher()
+	want := mp.storedForm(mu.ObjectKey)
+	hasher := storedform.ContentHasher(want)
 	// An upload whose parts predate per-part digests has no composite, and the
 	// MD5 of the assembled bytes is the only ETag left to give it. Every other
 	// upload already knows its own and must not pay for a second pass over
@@ -725,7 +737,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// Compression runs between the part pipe and the encryptor, the order the
 	// single-object path uses and the only one that works: ciphertext does not
 	// compress.
-	stored, err := mp.compressAssembly(assembleReader, totalPlaintextSize)
+	stored, err := mp.compressAssembly(assembleReader, totalPlaintextSize, want)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -878,13 +890,13 @@ func (a *assembledBody) cleanup() {
 	}
 }
 
-// compressAssembly encodes the assembled plaintext when compression applies and
-// reports what the PUT should send. The encoding is buffered because a backend
-// PUT declares its size up front. An encoding that misses min_ratio is decoded
-// back out of that buffer, since the part pipe delivers the plaintext only once
-// and re-reading the parts would charge their egress a second time.
-func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
-	if !storedform.ShouldCompress(&mp.d.Compression, mp.d.Codec, totalPlaintextSize) {
+// compressAssembly encodes the assembled plaintext when the layers of want call
+// for it and reports what the PUT should send. The encoding is buffered because
+// a backend PUT declares its size up front. An encoding that misses min_ratio
+// is decoded back out of that buffer, since the part pipe delivers the
+// plaintext only once and re-reading the parts would charge their egress twice.
+func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64, want core.StoredFlags) (*assembledBody, error) {
+	if !storedform.ShouldCompress(want, &mp.d.Compression, mp.d.Codec, totalPlaintextSize) {
 		return &assembledBody{body: src, size: totalPlaintextSize}, nil
 	}
 
@@ -909,9 +921,9 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 }
 
 // buildAssembledUpload returns the body the assembly PUT sends and the form
-// describing it. With encryption configured it encrypts the stored bytes under
-// the upload-level DEK from mu, so the assembled object shares its DEK with
-// every part.
+// describing it. An encrypted upload's stored bytes are encrypted under the
+// upload-level DEK from mu, as its parts were, so the assembled object shares
+// its DEK with every part.
 func (mp *Manager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,
@@ -921,7 +933,7 @@ func (mp *Manager) buildAssembledUpload(
 ) (io.Reader, int64, *core.StoredForm, error) {
 	out, size := stored.body, stored.size
 	var form *core.StoredForm
-	if mp.d.Encryptor != nil {
+	if mu.Encrypted && mp.d.Encryptor != nil {
 		var err error
 		out, size, form, err = mp.encryptWithUploadDEK(ctx, mu, stored.body, stored.size)
 		if err != nil {

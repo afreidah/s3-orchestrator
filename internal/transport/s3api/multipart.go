@@ -109,7 +109,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		return 0, err
 	}
 
-	uploadID, _, err := s.Multipart.CreateMultipartUpload(ctx, &multipart.CreateUploadRequest{
+	uploadID, _, err := s.d.Multipart.CreateMultipartUpload(ctx, &multipart.CreateUploadRequest{
 		Key:         t.internalKey,
 		ContentType: contentType,
 		Metadata:    metadata,
@@ -129,11 +129,11 @@ var errUploadLimit = s3Err(http.StatusServiceUnavailable, "SlowDown", "Too many 
 // checkUploadLimit refuses a new upload to a bucket at its configured ceiling of
 // open uploads. A bucket with no ceiling is never counted.
 func (s *Server) checkUploadLimit(ctx context.Context, bucket string) error {
-	limit := s.registry.Load().MaxMultipartUploads(bucket)
+	limit := s.d.Buckets.MaxMultipartUploads(bucket)
 	if limit <= 0 {
 		return nil
 	}
-	count, err := s.Multipart.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
+	count, err := s.d.Multipart.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 	// HEAD first: the range is validated against the source's real length, so
 	// an out-of-bounds copy costs nothing and the caller learns which end of
 	// the request was wrong.
-	head, err := s.Objects.HeadObject(ctx, sourceKey)
+	head, err := s.d.Objects.HeadObject(ctx, sourceKey)
 	if err != nil {
 		return 0, err
 	}
@@ -221,7 +221,7 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 		return 0, err
 	}
 
-	source, err := s.Objects.GetObject(ctx, sourceKey, rangeHeader)
+	source, err := s.d.Objects.GetObject(ctx, sourceKey, rangeHeader)
 	if err != nil {
 		return 0, err
 	}
@@ -236,7 +236,7 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 		partSize = size
 	}
 
-	etag, err := s.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, source.Body, partSize)
+	etag, err := s.d.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, source.Body, partSize)
 	if err != nil {
 		return 0, err
 	}
@@ -257,7 +257,7 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 		return 0, err
 	}
 
-	etag, err := s.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, r.Body, r.ContentLength)
+	etag, err := s.d.Multipart.UploadPart(ctx, t.bucket, t.key, t.uploadID, partNumber, r.Body, r.ContentLength)
 	if err != nil {
 		return 0, err
 	}
@@ -295,7 +295,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return 0, err
 	}
 
-	etag, err := s.Multipart.CompleteMultipartUpload(ctx, t.bucket, t.key, t.uploadID, manifest)
+	etag, err := s.d.Multipart.CompleteMultipartUpload(ctx, t.bucket, t.key, t.uploadID, manifest)
 	if err != nil {
 		return 0, err
 	}
@@ -307,10 +307,10 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 // object ceiling, before the expensive reassembly reads them all back. Nothing
 // is fetched when no ceiling is configured.
 func (s *Server) checkAssemblySize(ctx context.Context, t *target, partNumbers []int) error {
-	if s.MaxObjectSize <= 0 {
+	if s.d.MaxObjectSize <= 0 {
 		return nil
 	}
-	parts, err := s.Multipart.GetParts(ctx, t.bucket, t.key, t.uploadID)
+	parts, err := s.d.Multipart.GetParts(ctx, t.bucket, t.key, t.uploadID)
 	if err != nil {
 		return err
 	}
@@ -331,7 +331,7 @@ func (s *Server) checkAssemblySize(ctx context.Context, t *target, partNumbers [
 // bucket and key scope the abort to the request URL so a caller for one
 // bucket cannot wipe an in-flight upload that belongs to another.
 func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
-	if err := s.Multipart.AbortMultipartUpload(ctx, t.bucket, t.key, t.uploadID); err != nil {
+	if err := s.d.Multipart.AbortMultipartUpload(ctx, t.bucket, t.key, t.uploadID); err != nil {
 		return 0, err
 	}
 
@@ -368,7 +368,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 	}
 
 	// Fetch one extra to detect truncation
-	uploads, err := s.Multipart.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
+	uploads, err := s.d.Multipart.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
 	if err != nil {
 		return 0, err
 	}
@@ -407,7 +407,7 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, t *
 		return 0, err
 	}
 
-	parts, truncated, err := s.Multipart.ListParts(ctx, t.bucket, t.key, t.uploadID, marker, maxParts)
+	parts, truncated, err := s.d.Multipart.ListParts(ctx, t.bucket, t.key, t.uploadID, marker, maxParts)
 	if err != nil {
 		return 0, err
 	}

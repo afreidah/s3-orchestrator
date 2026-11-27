@@ -35,7 +35,7 @@ func newTagObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 	return NewObjects(ObjectsDeps{
 		Objects: api,
 		Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-		Buckets: declaredBuckets("bucket"),
+		Buckets: opstest.EveryLayer("bucket"),
 	}), api
 }
 

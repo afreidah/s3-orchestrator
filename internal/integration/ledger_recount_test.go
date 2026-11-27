@@ -168,7 +168,9 @@ func newRecountRun(t *testing.T) *recountRun {
 		model: map[string][][]byte{}, history: map[string][]string{}, fired: map[string]int{},
 	}
 	r.factor.Store(2)
-	h.store.UseReplicationFactor(func() int { return int(r.factor.Load()) })
+	h.store.UseReplicationFactors(func() core.ReplicationFactors {
+		return core.ReplicationFactors{Default: int(r.factor.Load())}
+	})
 	return r
 }
 
@@ -770,7 +772,7 @@ func (r *recountRun) checkQueues(stage string, factor int) {
 			r.t.Errorf("%s: %s holds %d rows", stage, table, n)
 		}
 	}
-	queued, err := r.h.store.RebuildReplicationQueue(context.Background(), factor, nil)
+	queued, err := r.h.store.RebuildReplicationQueue(context.Background(), &core.ReplicationFactors{Default: factor}, nil)
 	if err != nil {
 		r.t.Fatalf("%s: rebuild replication queue: %v", stage, err)
 	}

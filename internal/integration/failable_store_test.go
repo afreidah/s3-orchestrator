@@ -310,13 +310,13 @@ func (f *FailableStore) LedgerStats(ctx context.Context) (core.LedgerStats, erro
 	return f.inner.LedgerStats(ctx)
 }
 
-// RebuildReplicationQueue queues every key off the factor unless the fault
+// RebuildReplicationQueue queues every key off its factor unless the fault
 // fails the call.
-func (f *FailableStore) RebuildReplicationQueue(ctx context.Context, factor int, excluded []string) (int64, error) {
+func (f *FailableStore) RebuildReplicationQueue(ctx context.Context, factors *core.ReplicationFactors, excluded []string) (int64, error) {
 	if err := f.fail("RebuildReplicationQueue", ""); err != nil {
 		return 0, err
 	}
-	return f.inner.RebuildReplicationQueue(ctx, factor, excluded)
+	return f.inner.RebuildReplicationQueue(ctx, factors, excluded)
 }
 
 // ListReplicationQueue reads a side's due keys unless the fault fails the

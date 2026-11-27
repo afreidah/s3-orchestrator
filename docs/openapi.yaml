@@ -1526,11 +1526,19 @@ components:
                     type: integer
                 name:
                     type: string
+                replication_factor:
+                    format: int64
+                    type: integer
                 source:
                     type: string
+                stored_form:
+                    items:
+                        type: string
+                    type: array
             required:
                 - name
                 - max_multipart_uploads
+                - replication_factor
                 - source
             type: object
         CORSRule:
@@ -1785,6 +1793,13 @@ components:
                     type: integer
                 name:
                     type: string
+                replication_factor:
+                    format: int64
+                    type: integer
+                stored_form:
+                    items:
+                        type: string
+                    type: array
             required:
                 - name
             type: object
@@ -2688,6 +2703,13 @@ components:
                 max_multipart_uploads:
                     format: int64
                     type: integer
+                replication_factor:
+                    format: int64
+                    type: integer
+                stored_form:
+                    items:
+                        type: string
+                    type: array
             type: object
         UsageCycle:
             properties:

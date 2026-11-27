@@ -38,4 +38,6 @@ resource "s3orchestrator_grant" "backup" {
 ### Read-Only
 
 - `max_multipart_uploads` (Number) Multipart uploads that may be in flight at once. Zero is unlimited.
+- `replication_factor` (Number) Copies each of the bucket's objects is kept at. Zero when the bucket takes the deployment's.
 - `source` (String) Which of the two places declared it, `config` or `store`. A `config` bucket cannot be managed as a resource.
+- `stored_form` (Set of String) Layers the bucket's new objects are stored with. Null when the bucket takes the deployment's.

@@ -182,13 +182,13 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Scrubber:   workers.Scrubber,
 		CopyStore:  mock,
 		Locker:     mock,
-		Declared:   declaredBuckets(testBucket),
+		Declared:   opstest.EveryLayer(testBucket),
 		Config:     st.Config,
 	})
 }
 
-// enableIntegrity turns verification on in the running config behind svc, so
-// the integrity operations get past their disabled guard.
+// enableIntegrity gives the running config behind svc an enabled integrity
+// section with a scrub batch size, as a deployment that verifies has.
 func enableIntegrity(t *testing.T, svc *Services) {
 	t.Helper()
 	svc.Integrity.d.Config.Update(func(c *config.Config) {
@@ -216,7 +216,7 @@ func newObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 	return NewObjects(ObjectsDeps{
 		Objects: api,
 		Store:   storetest.NewMockMetadataStore(gomock.NewController(t)),
-		Buckets: declaredBuckets(testBucket),
+		Buckets: opstest.EveryLayer(testBucket),
 	}), api
 }
 
@@ -291,7 +291,7 @@ func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.
 // encryptionOver builds an encryption service over enc and store that moves
 // nothing, under a lock it always takes.
 func encryptionOver(enc *encryption.Encryptor, store RewriteStore) *Encryption {
-	return NewEncryption(EncryptionDeps{Encryptor: enc, Store: store, Rewriter: &fakeRewriter{}, Locker: testx.Locker{}})
+	return NewEncryption(&EncryptionDeps{Encryptor: enc, Store: store, Buckets: opstest.EveryLayer(), Rewriter: &fakeRewriter{}, Locker: testx.Locker{}})
 }
 
 // TestRebalance_RunsTheRunningConfig asserts a manual cycle runs with the
@@ -322,21 +322,8 @@ func TestRebalance_NotWired(t *testing.T) {
 	assertSkipped(t, err)
 }
 
-// TestScrub_SkippedWhenIntegrityDisabled asserts a scrub declines rather than
-// reporting a pass that verified nothing.
-func TestScrub_SkippedWhenIntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
-
-	res, err := svc.Integrity.Scrub(context.Background(), 0, "", nil)
-	assertSkipped(t, err)
-	if res.Attempted != 0 || res.Failed != 0 {
-		t.Errorf("Checked=%d Failed=%d, want both 0", res.Attempted, res.Failed)
-	}
-}
-
-// TestScrub_EmptyStore asserts an enabled scrub over an empty store completes
-// with zero counts.
+// TestScrub_EmptyStore asserts a scrub over an empty store completes with zero
+// counts.
 func TestScrub_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
@@ -396,24 +383,27 @@ func servicesLockedBy(t *testing.T, l testx.Locker) *Services {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := opstest.NewMockRewriteStore(ctrl)
+	repl := opstest.NewMockReplicator(ctrl)
+	repl.EXPECT().Replicates().Return(true).AnyTimes()
 	return &Services{
-		Integrity: NewIntegrity(IntegrityDeps{
+		Integrity: NewIntegrity(&IntegrityDeps{
 			Scrubber:   opstest.NewMockScrubberOps(ctrl),
 			Reconciler: opstest.NewMockReconciler(ctrl),
 			Store:      opstest.NewMockCopyStore(ctrl),
+			Buckets:    opstest.EveryLayer(),
 			Locker:     l,
 			Config:     integrityEnabled(),
 		}),
 		Replication: NewReplication(ReplicationDeps{
-			Replicator: opstest.NewMockReplicator(ctrl),
+			Replicator: repl,
 			OverRep:    opstest.NewMockOverReplicationCleaner(ctrl),
 			Backlog:    emptyBacklog,
 			Locker:     l,
 			Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 		}),
 		Rebalance:   NewRebalance(RebalanceDeps{Rebalancer: opstest.NewMockRebalancer(ctrl), Locker: l, Config: config.NewLive(&config.Config{})}),
-		Encryption:  NewEncryption(EncryptionDeps{Encryptor: testEncryptor(t), Store: store, Rewriter: &fakeRewriter{}, Locker: l}),
-		Compression: NewCompression(&CompressionDeps{Codec: testCodec(t), Store: store, Rewriter: &fakeRewriter{}, Locker: l}),
+		Encryption:  NewEncryption(&EncryptionDeps{Encryptor: testEncryptor(t), Store: store, Buckets: opstest.EveryLayer(), Rewriter: &fakeRewriter{}, Locker: l}),
+		Compression: NewCompression(&CompressionDeps{Codec: testCodec(t), Store: store, Buckets: opstest.EveryLayer(), Rewriter: &fakeRewriter{}, Locker: l}),
 	}
 }
 
@@ -455,17 +445,6 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 	}
 }
 
-// TestVerifyKey_SkippedWhenIntegrityDisabled asserts a per-key verification
-// declines when verification is off, which the transports answer with a
-// conflict rather than a not-found.
-func TestVerifyKey_SkippedWhenIntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
-
-	_, err := svc.Integrity.VerifyKey(context.Background(), testBucket+"/file.txt")
-	assertSkipped(t, err)
-}
-
 // TestVerifyKey_RejectsEmptyKey asserts the request is rejected before any
 // store lookup.
 func TestVerifyKey_RejectsEmptyKey(t *testing.T) {
@@ -477,21 +456,8 @@ func TestVerifyKey_RejectsEmptyKey(t *testing.T) {
 	}
 }
 
-// TestBackfillChecksums_SkippedWhenIntegrityDisabled asserts the backfill
-// declines with a reason rather than reporting an empty pass.
-func TestBackfillChecksums_SkippedWhenIntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
-
-	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, "", nil)
-	assertSkipped(t, err)
-	if res.Succeeded != 0 {
-		t.Errorf("Processed = %d, want 0", res.Succeeded)
-	}
-}
-
-// TestBackfillChecksums_EmptyStore asserts an enabled backfill with no backlog
-// reports a drained run.
+// TestBackfillChecksums_EmptyStore asserts a backfill with no backlog reports a
+// drained run.
 func TestBackfillChecksums_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
@@ -918,11 +884,12 @@ func TestObjectsGet_NotFound(t *testing.T) {
 // integrityDeps is an integrity service's collaborators: one stubbed scrubber,
 // a copy store that expects no call, a free lock and verification enabled. A
 // test replaces the one it exercises.
-func integrityDeps(t *testing.T, scrubber ScrubberOps) IntegrityDeps {
+func integrityDeps(t *testing.T, scrubber ScrubberOps) *IntegrityDeps {
 	t.Helper()
-	return IntegrityDeps{
+	return &IntegrityDeps{
 		Scrubber: scrubber,
 		Store:    opstest.NewMockCopyStore(gomock.NewController(t)),
+		Buckets:  opstest.EveryLayer(),
 		Locker:   testx.Locker{},
 		Config:   integrityEnabled(),
 	}
@@ -1182,7 +1149,7 @@ func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 
 	page, err := objects.List(context.Background(), "", "/", "")
@@ -1210,7 +1177,7 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 
 	page, err := objects.List(context.Background(), testBucket+"/dir/", "", "")
@@ -1231,7 +1198,7 @@ func browseObjects(t *testing.T, store ObjectStore) *Objects {
 	return NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 }
 
@@ -1332,7 +1299,7 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 
 	locs, err := objects.Locations(context.Background(), testBucket+"/file.txt")
@@ -1371,7 +1338,7 @@ func TestCountBacklog_ReportsBothSides(t *testing.T) {
 func TestCountBacklog_DisabledReportsTheFactor(t *testing.T) {
 	t.Parallel()
 	svc := NewReplication(ReplicationDeps{
-		Replicator: opstest.NewMockReplicator(gomock.NewController(t)),
+		Replicator: replicatingNothing(t),
 		OverRep:    opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
 		Backlog: backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
 			t.Error("a disabled backlog read the queue")
@@ -1483,12 +1450,21 @@ func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
 	}
 
 	off := NewReplication(ReplicationDeps{
-		Replicator: repl, OverRep: opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
+		Replicator: replicatingNothing(t), OverRep: opstest.NewMockOverReplicationCleaner(gomock.NewController(t)),
 		Backlog: emptyBacklog, Locker: testx.Locker{}, Config: config.NewLive(&config.Config{}),
 	})
 	if _, err := off.RebuildQueue(context.Background()); !errors.Is(err, ErrReplicationDisabled) {
 		t.Errorf("RebuildQueue at factor 1 err = %v, want ErrReplicationDisabled", err)
 	}
+}
+
+// replicatingNothing returns a replicator whose factors leave it nothing to
+// keep, and fails the test on any pass it is asked to run.
+func replicatingNothing(t *testing.T) *opstest.MockReplicator {
+	t.Helper()
+	repl := opstest.NewMockReplicator(gomock.NewController(t))
+	repl.EXPECT().Replicates().Return(false).AnyTimes()
+	return repl
 }
 
 // emptyBacklog reports an empty replication queue.
@@ -1498,15 +1474,16 @@ var emptyBacklog = backlogFunc(func(context.Context) (core.ReplicationBacklog, e
 
 // replicationOver builds a replication service over the two stubbed workers,
 // running at factor 2 over an empty backlog.
-func replicationOver(t *testing.T, repl Replicator, over OverReplicationCleaner) *Replication {
+func replicationOver(t *testing.T, repl *opstest.MockReplicator, over OverReplicationCleaner) *Replication {
 	t.Helper()
 	return replicationCounting(t, repl, over, emptyBacklog)
 }
 
 // replicationCounting builds a replication service whose backlog count
 // comes from backlog, running at factor 2 under a lock it always takes.
-func replicationCounting(t *testing.T, repl Replicator, over OverReplicationCleaner, backlog BacklogCounter) *Replication {
+func replicationCounting(t *testing.T, repl *opstest.MockReplicator, over OverReplicationCleaner, backlog BacklogCounter) *Replication {
 	t.Helper()
+	repl.EXPECT().Replicates().Return(true).AnyTimes()
 	return NewReplication(ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,
@@ -1568,7 +1545,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 // provisioning API becomes addressable here without a restart.
 func TestDeclaredBuckets_UpdateReachesOperations(t *testing.T) {
 	t.Parallel()
-	declared := declaredBuckets()
+	declared := opstest.EveryLayer()
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	api.EXPECT().DeleteObject(gomock.Any(), "later/file.txt").Return(nil).AnyTimes()
 	objects := NewObjects(ObjectsDeps{
@@ -1658,7 +1635,7 @@ func TestObjects_RejectsEveryKeyWithoutConfig(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 
 	if err := objects.Delete(context.Background(), testBucket+"/file.txt"); !errors.Is(err, ErrInvalidKey) {

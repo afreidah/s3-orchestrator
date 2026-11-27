@@ -895,10 +895,16 @@ func dueKey(t *testing.T, s *Store, key string, excluded []string, side core.Rep
 // side, as dueKey does.
 func queuedKey(t *testing.T, s *Store, key string, factor int, excluded []string, side core.ReplicationDirection) (core.QueuedReplication, bool) {
 	t.Helper()
-	if _, err := s.RebuildReplicationQueue(context.Background(), factor, excluded); err != nil {
+	if _, err := s.RebuildReplicationQueue(context.Background(), &core.ReplicationFactors{Default: factor}, excluded); err != nil {
 		t.Fatalf("RebuildReplicationQueue(%d): %v", factor, err)
 	}
 	return dueKey(t, s, key, excluded, side)
+}
+
+// TestStoreInt_ReplicationQueue_RebuildHoldsEachKeyToItsBucket runs the
+// cross-engine factored rebuild check against Postgres.
+func TestStoreInt_ReplicationQueue_RebuildHoldsEachKeyToItsBucket(t *testing.T) {
+	storetest.CheckFactoredRebuild(t, adapterPgStore(t), t.Name()+"-", "backend-a", "backend-b")
 }
 
 // TestStoreInt_ReplicationQueue_SettleAndRetryMatchTheVersionRead verifies a

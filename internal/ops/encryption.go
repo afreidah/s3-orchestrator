@@ -46,6 +46,7 @@ type EncryptionDeps struct {
 	Encryptor *encryption.Encryptor
 	Codec     storedform.Codec
 	Store     RewriteStore
+	Buckets   BucketScopeSource
 	Rewriter  Rewriter
 	Locker    core.AdvisoryLocker
 }
@@ -59,10 +60,11 @@ type Encryption struct {
 }
 
 // NewEncryption is the explicit-deps constructor.
-func NewEncryption(d EncryptionDeps) *Encryption {
+func NewEncryption(d *EncryptionDeps) *Encryption {
+	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Rewriter", d.Rewriter)
 	must.NotNil("d.Locker", d.Locker)
-	return &Encryption{d: d, log: logfmt.Logger(logComponent)}
+	return &Encryption{d: *d, log: logfmt.Logger(logComponent)}
 }
 
 // -------------------------------------------------------------------------
@@ -70,7 +72,8 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // -------------------------------------------------------------------------
 
 // EncryptExisting rewrites every plaintext copy as ciphertext and records the
-// new encryption metadata. A compressed copy keeps its encoding underneath.
+// new encryption metadata. A compressed copy keeps its encoding underneath, and
+// a bucket whose stored form leaves encryption out is left alone.
 //
 // maxObjects caps how many objects are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
@@ -84,7 +87,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.EncryptExistingObjectsTotal,
 		layer:       core.StoredEncrypted,
 		add:         true,
-		filter:      core.FormFilter{Backend: backend},
+		filter:      core.FormFilter{Backend: backend, Buckets: e.d.Buckets.Wanting(core.StoredEncrypted)},
 		maxObjects:  maxObjects,
 	}
 	return op.run(ctx, e.rewriteEnv(), obs)

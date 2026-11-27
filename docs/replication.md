@@ -18,7 +18,7 @@ replication:
   unhealthy_threshold: "10m"     # grace period before replacing copies on backends refusing reads (default: 10m)
 ```
 
-The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
+The replication factor must be `<= number of backends`. A bucket can keep its objects at a factor of its own with [`replication_factor`](configuration.md#replication-factor), and each key is brought to its bucket's factor. The worker runs while the factor is above 1 or any bucket sets one of its own, once at startup to catch up on any pending replicas and then at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
 Replication is **asynchronous by default** - writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
 
@@ -82,7 +82,7 @@ The cleaner scores each copy by its backend's health and storage utilization, th
 
 Among healthy backends, the most utilized backend gets the lowest score - freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.
 
-The cleaner runs in the replicator's service, draining the queue's surplus side after the replicator's side each tick, and shares the same `batch_size` and `concurrency` settings. It only runs when `replication.factor > 1`, under the replicator's advisory lock.
+The cleaner runs in the replicator's service, draining the queue's surplus side after the replicator's side each tick, and shares the same `batch_size` and `concurrency` settings. It runs whenever the replicator does, under the replicator's advisory lock, and trims a key down to its bucket's factor, so a bucket lowered to 1 loses its surplus copies too.
 
 Cleanup can also be triggered on demand via the admin API (`POST /admin/api/over-replication`), the CLI (`s3-orchestrator admin over-replication --execute`), or the web dashboard's **Clean Excess** button.
 

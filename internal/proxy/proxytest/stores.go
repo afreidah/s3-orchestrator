@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
@@ -142,7 +143,9 @@ func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore) *usage.S
 // test reaches for the collaborator it is exercising. Config is the running
 // configuration every collaborator reads its reloadable sections from, Metrics
 // the collector over the stack's store, with no shared state, and Detached the
-// copies still uploading after their write was answered.
+// copies still uploading after their write was answered. Declared is the bucket
+// set the write path takes each bucket's stored form from; a bucket without one
+// takes the form Config and the encryptor give, as di wires it.
 type Stack struct {
 	Runtime   *infra.BackendRuntime
 	Coord     *writepath.Coordinator
@@ -152,6 +155,7 @@ type Stack struct {
 	States    *backendstate.Manager
 	Drainer   *worker.Drainer
 	Usage     *usage.Service
+	Declared  *provisioning.Declared
 	Config    *config.Live
 	Detached  *writepath.DetachedUploads
 }
@@ -210,7 +214,13 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	// One running config and one coordinator shared by everything: production
 	// wires it this way, and a fixture that hands out two of either lets a test
 	// pass against a shape that cannot exist.
-	live := config.NewLive(&config.Config{})
+	// The copy count defaults to the factor, so the factor follows it here.
+	live := config.NewLive(&config.Config{
+		Compression: opts.Compression,
+		Replication: config.ReplicationConfig{Factor: max(opts.CopiesPerWrite, 1)},
+	})
+	declared := provisioning.NewDeclared()
+	declared.UseDeployment(live, opts.Encryptor != nil)
 	coord := writepath.New(rt, store)
 	collector := metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: rt.Usage(), Scrub: worker.NewScrubBudget(rt, live.Integrity()),
@@ -218,17 +228,18 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	detached := writepath.NewDetachedUploads(detachedUploadCeiling)
 
 	mp := multipart.New(&multipart.Deps{
-		Core:         rt,
-		Coord:        coord,
-		Stores:       store,
-		Encryptor:    opts.Encryptor,
-		DEKCacheTTL:  dekCacheTTL,
-		IntegrityCfg: live.Integrity(),
+		Core:        rt,
+		Coord:       coord,
+		Stores:      store,
+		Forms:       declared,
+		Encryptor:   opts.Encryptor,
+		DEKCacheTTL: dekCacheTTL,
 	})
 	om := object.New(&object.Deps{
 		Core:                         rt,
 		Coord:                        coord,
 		Stores:                       store,
+		Buckets:                      declared,
 		Encryptor:                    opts.Encryptor,
 		Codec:                        opts.Codec,
 		Compression:                  opts.Compression,
@@ -259,6 +270,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 			OnRecords:    states.SetStates,
 		}),
 		Usage:    NewUsage(rt, store),
+		Declared: declared,
 		Config:   live,
 		Detached: detached,
 	}

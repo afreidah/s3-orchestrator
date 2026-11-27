@@ -50,7 +50,7 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 		Ops: &ops.Services{Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-			Buckets: declaredBuckets("bucket"),
+			Buckets: opstest.EveryLayer("bucket"),
 		})},
 		LogLevel: &lv,
 		Registry: func() *auth.BucketRegistry { return rootRegistry(t) },

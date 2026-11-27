@@ -38,7 +38,7 @@ func reformedSource(t *testing.T, l *Layers, plain []byte) (*core.ObjectLocation
 	sum := sha256.Sum256(plain)
 	stored, form := seed(t, l, plain, core.StoredCompressed)
 	form.ContentHash = hex.EncodeToString(sum[:])
-	out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, core.StoredLayers)
+	out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, core.StoredLayers, nil)
 	if err != nil {
 		t.Fatalf("Reform: %v", err)
 	}

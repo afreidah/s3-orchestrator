@@ -4,7 +4,7 @@ title: "Compression"
 linkTitle: "Compression"
 ---
 
-At-rest compression. When enabled, objects are stored on backends as chunked zstd; sizes, ETags and content hashes stay those of the object the client wrote. Disabled by default.
+At-rest compression. When enabled, objects are stored on backends as chunked zstd; sizes, ETags and content hashes stay those of the object the client wrote. Disabled by default. A bucket's [stored form](configuration.md#stored-form) overrides it either way: one naming `compressed` compresses while this is off, and one leaving it out does not compress while this is on.
 
 Storage and transfer are both metered on the backends this project targets, so compression reduces the bill twice. That second saving only holds if a partial read stays cheap, which is what drives the format.
 

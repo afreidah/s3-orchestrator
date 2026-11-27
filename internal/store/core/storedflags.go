@@ -16,6 +16,7 @@ package core
 import (
 	"encoding/json"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/util/bitset"
 )
 
@@ -41,12 +42,19 @@ const (
 )
 
 // storedFlagNames pairs each flag with its name, in the order a rendered set
-// lists them.
+// lists them. The layers a bucket may ask for are named by config, which
+// validates a bucket's stored_form against them.
 var storedFlagNames = bitset.Vocabulary[StoredFlags]{
-	{Bit: StoredCompressed, Name: "compressed"},
-	{Bit: StoredEncrypted, Name: "encrypted"},
-	{Bit: StoredHashed, Name: "hashed"},
+	{Bit: StoredCompressed, Name: config.LayerCompressed},
+	{Bit: StoredEncrypted, Name: config.LayerEncrypted},
+	{Bit: StoredHashed, Name: config.LayerHashed},
 	{Bit: StoredKeyed, Name: "keyed"},
+}
+
+// ParseStoredFlags reads layer names, as a bucket's stored_form lists them,
+// into the set they name.
+func ParseStoredFlags(names []string) (StoredFlags, error) {
+	return storedFlagNames.Parse("layer", names)
 }
 
 // Has reports whether the set carries every flag in want.

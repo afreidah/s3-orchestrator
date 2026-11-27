@@ -189,21 +189,20 @@ func (c *Config) HasBackend(name string) bool {
 	return slices.ContainsFunc(c.Backends, func(b BackendConfig) bool { return b.Name == name })
 }
 
-// CopiesPerWrite reports how many copies a single-object PUT places itself:
-// 1 unless fan-out is on, and always 1 at replication factor 1.
+// CopiesPerWrite reports the most copies a single-object PUT places itself: 1
+// unless fan-out is on. A write places no more than its bucket's factor, so
+// the over-replication cleaner never deletes what a write just created.
 func (c *Config) CopiesPerWrite() int {
 	pc := c.WritePath.ParallelCopies
-	if !pc.Enabled || c.Replication.Factor <= 1 {
+	if !pc.Enabled {
 		return 1
 	}
-	return min(pc.Count, c.Replication.Factor)
+	return pc.Count
 }
 
 // validateParallelCopies settles how many copies a write places itself. The
-// count defaults to the replication factor and may never exceed it, since the
-// over-replication cleaner deletes anything past the factor about as fast as
-// writes could create it. It must run after the replication section applies
-// the factor's default.
+// count defaults to the replication factor. It must run after the replication
+// section applies the factor's default.
 func (c *Config) validateParallelCopies() []error {
 	pc := &c.WritePath.ParallelCopies
 	pc.Count = cmp.Or(pc.Count, c.Replication.Factor)
@@ -211,14 +210,10 @@ func (c *Config) validateParallelCopies() []error {
 	if !pc.Enabled {
 		return nil
 	}
-	errs := failed(
+	return failed(
 		positive("write_path.parallel_copies.count", pc.Count),
 		positive("write_path.parallel_copies.max_in_flight", pc.MaxInFlight),
 	)
-	if pc.Count > c.Replication.Factor {
-		errs = append(errs, ErrParallelCopiesOverFactor)
-	}
-	return errs
 }
 
 // validatePerTypeSections delegates to each sub-type's
@@ -228,7 +223,7 @@ func (c *Config) validatePerTypeSections() []error {
 	var errs []error
 	errs = append(errs, c.Server.setDefaultsAndValidate()...)
 	errs = append(errs, c.Database.setDefaultsAndValidate()...)
-	errs = append(errs, validateBuckets(c.Buckets)...)
+	errs = append(errs, validateBuckets(c.Buckets, c.BucketLimits())...)
 	errs = append(errs, validateBackends(c.Backends)...)
 	errs = append(errs, c.Telemetry.setDefaultsAndValidate()...)
 	errs = append(errs, c.Rebalance.setDefaultsAndValidate()...)
@@ -333,6 +328,7 @@ var reloadablePaths = []string{
 	"replication.batch_size",
 	"replication.concurrency",
 	"replication.unhealthy_threshold",
+	"compression.enabled",
 	"integrity.enabled",
 	"integrity.verify_on_read",
 	"integrity.verify_on_replicate",

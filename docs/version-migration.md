@@ -62,7 +62,28 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.188.x (current)
+### v0.189.x (current)
+
+**A virtual bucket chooses the layers its objects are stored with ([#1480](https://github.com/afreidah/s3-orchestrator/issues/1480), v0.189.0)**
+
+Compression, encryption and content hashing applied to every object alike, so a bucket of client-encrypted backups was compressed and encrypted a second time, and a bucket of expendable traces was hashed and scrubbed like the rest. A bucket's `stored_form` now names the layers its new objects are stored with, from `compressed`, `encrypted` and `hashed`, in the config file, over the admin API and on the Terraform `s3orchestrator_bucket` resource. A bucket that leaves it out takes the deployment's, so existing configs behave as before. See [Stored form](configuration.md#stored-form).
+
+**A virtual bucket chooses how many copies its objects are kept at ([#1956](https://github.com/afreidah/s3-orchestrator/issues/1956), v0.189.0)**
+
+`replication.factor` applied to every object alike, so expendable data was copied as often as backups. A bucket's `replication_factor` now sets the copies each of its objects is kept at, from 1 to the number of backends, in the config file, over the admin API and on the Terraform `s3orchestrator_bucket` resource. A bucket that leaves it at 0 takes the deployment's. A change brings the bucket's existing objects to the new count. See [Replication factor](configuration.md#replication-factor).
+
+**Operator action items after upgrade:**
+
+- **The migration adds `buckets.stored_form` and `buckets.replication_factor`,** NULL and 0 for every existing bucket.
+- **The replication service runs while any bucket sets a `replication_factor` of its own,** even at `replication.factor: 1`, so a bucket at 1 is trimmed of surplus copies too.
+- **`write_path.parallel_copies.count` may exceed `replication.factor`.** A write places `count` copies or its bucket's factor, whichever is fewer.
+- **`integrity.enabled` only decides whether a bucket hashes by default.** Verification no longer waits on it: `verify_on_read`, `verify_on_replicate` and a non-zero `scrubber_interval` act on every copy that carries a hash, and `admin scrub`, `scrub -key` and `backfill-checksums` run rather than answering `integrity verification is not enabled`. A deployment with integrity off but those set starts verifying the hashed copies it already holds; unset them to keep it from doing so.
+- **The `integrity` block is validated whether or not it is enabled.** A disabled block with an out-of-range field now refuses to load.
+- **`compression.enabled` is reloadable,** since it only decides which buckets compress by default.
+- **`compress-existing`, `encrypt-existing` and `backfill-checksums` skip buckets whose stored form leaves their layer out.**
+- **`s3-orchestrator admin bucket list` and the TUI's buckets pane gain stored form and factor columns.**
+
+### v0.188.x
 
 **Admission shares a full pool between virtual buckets ([#1434](https://github.com/afreidah/s3-orchestrator/issues/1434), v0.188.0)**
 

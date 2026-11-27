@@ -135,7 +135,7 @@ var errInvalidTaggingDirective = errors.New("invalid tagging directive")
 // An untagged object answers 200 with an empty TagSet rather than 404: the
 // object exists and simply carries nothing.
 func (s *Server) handleGetObjectTagging(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
-	tags, err := s.Objects.GetObjectTags(ctx, t.internalKey)
+	tags, err := s.d.Objects.GetObjectTags(ctx, t.internalKey)
 	if err != nil {
 		return 0, err
 	}
@@ -150,7 +150,7 @@ func (s *Server) handlePutObjectTagging(ctx context.Context, w http.ResponseWrit
 	if err := decodeXMLBody(w, r, maxTaggingBody, &doc); err != nil {
 		return 0, err
 	}
-	if err := s.Objects.PutObjectTags(ctx, t.internalKey, doc.toCoreTags()); err != nil {
+	if err := s.d.Objects.PutObjectTags(ctx, t.internalKey, doc.toCoreTags()); err != nil {
 		return 0, err
 	}
 	w.WriteHeader(http.StatusOK)
@@ -160,7 +160,7 @@ func (s *Server) handlePutObjectTagging(ctx context.Context, w http.ResponseWrit
 // handleDeleteObjectTagging removes the object's whole tag set. Removing a set
 // that is already empty succeeds: the object is there and still has no tags.
 func (s *Server) handleDeleteObjectTagging(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
-	if err := s.Objects.DeleteObjectTags(ctx, t.internalKey); err != nil {
+	if err := s.d.Objects.DeleteObjectTags(ctx, t.internalKey); err != nil {
 		return 0, err
 	}
 	w.WriteHeader(http.StatusNoContent)

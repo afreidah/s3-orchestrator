@@ -48,6 +48,8 @@ replication:
 
 All defaults except `factor` are applied automatically when `factor` is set above 1. You only need to specify the fields you want to override.
 
+A virtual bucket can keep its objects at a factor of its own with `replication_factor`, so expendable data can stay at one copy while backups are kept at three. A change brings the bucket's existing objects to the new count. See [Replication factor](../../docs/configuration/#replication-factor).
+
 To have writes place their own copies, add the `write_path` block:
 
 ```yaml
@@ -61,7 +63,7 @@ write_path:
 | Field | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Whether a write places its own copies instead of leaving them to the replicator. |
-| `count` | `replication.factor` | Copies a write places. May not exceed the factor - the over-replication cleaner would delete anything past it about as fast as writes created it. A factor of 1 leaves the setting inert. |
+| `count` | `replication.factor` | Most copies a write places. A write places no more than its bucket's factor, since the over-replication cleaner would delete anything past it about as fast as writes created it, so a bucket at factor 1 places one. |
 | `max_in_flight` | `server.max_concurrent_writes`, else `server.max_concurrent_requests` | Ceiling on writes whose copies are still uploading after their client was answered. A write that finds it full places a single copy and leaves the rest to the replicator. |
 
 Single-object PUTs only. Multipart uploads always write one copy and let the replicator make the rest.

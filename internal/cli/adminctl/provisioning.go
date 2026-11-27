@@ -325,11 +325,14 @@ func provisioningTable(headers []string, rowsOf func(*adminapi.ProvisioningRespo
 }
 
 // renderBuckets renders the bucket slice of the provisioning response.
-var renderBuckets = provisioningTable([]string{"Bucket", "Multipart", colSource},
+var renderBuckets = provisioningTable([]string{"Bucket", "Multipart", "Stored form", "Factor", colSource},
 	func(p *adminapi.ProvisioningResponse) [][]string {
 		rows := make([][]string, len(p.Buckets))
 		for i, b := range p.Buckets {
-			rows[i] = []string{b.Name, output.MultipartCap(b.MaxMultipartUploads), b.Source}
+			rows[i] = []string{
+				b.Name, output.MultipartCap(b.MaxMultipartUploads), output.StoredForm(b.StoredForm),
+				output.ReplicationFactor(b.ReplicationFactor), b.Source,
+			}
 		}
 		return rows
 	})

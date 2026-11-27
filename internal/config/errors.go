@@ -134,6 +134,9 @@ var (
 	ErrInvalidCredential   = errors.New("must have both access_key_id and secret_access_key")
 	ErrDuplicateCredential = errors.New("duplicate access_key_id")
 	ErrMaxUploadsRange     = errors.New("max_multipart_uploads must be between 0 and 2147483647")
+	ErrBucketLayerUnknown  = errors.New("stored_form names a layer other than compressed, encrypted or hashed")
+	ErrBucketLayerNoKey    = errors.New("stored_form names encrypted but encryption is not enabled")
+	ErrBucketFactorRange   = errors.New("replication_factor must be between 0 and the number of backends")
 )
 
 // Bucket CORS validation errors. An origin pattern accepts at most one '*'
@@ -239,7 +242,6 @@ var (
 	ErrReplicationFactorTooLarge = errors.New("replication.factor exceeds number of backends")
 	ErrQuotaMixNotAllowed        = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
 	ErrUnlimitedNeedsReplication = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
-	ErrParallelCopiesOverFactor  = errors.New("write_path.parallel_copies.count exceeds replication.factor")
 )
 
 // Usage flush errors. The threshold excludes both ends, which the shared range

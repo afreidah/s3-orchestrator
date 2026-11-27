@@ -141,32 +141,12 @@ func (p PermissionSet) Names() []string {
 }
 
 // ParsePermissions reads permission names as a request lists them or a stored
-// value holds them once split. Names are trimmed and case-folded, blank ones are
-// skipped, and an unrecognised one is an error. No names is the empty set, and
-// what that means is the caller's to decide.
+// value holds them once split, accepting the all and admin-all shorthands. No
+// names is the empty set, and what that means is the caller's to decide.
 func ParsePermissions(names []string) (PermissionSet, error) {
-	var out PermissionSet
-	for _, field := range names {
-		name := strings.ToLower(strings.TrimSpace(field))
-		if name == "" {
-			continue
-		}
-		if name == permAllName {
-			out |= PermAll
-			continue
-		}
-		if name == permAdminAllName {
-			out |= PermAdminAll
-			continue
-		}
-		bit, ok := permissionNames.Lookup(name)
-		if !ok {
-			return 0, fmt.Errorf("unknown permission %q, want one of %s, %q or %q",
-				name, strings.Join(permissionNames.AllNames(), ", "), permAllName, permAdminAllName)
-		}
-		out |= bit
-	}
-	return out, nil
+	return permissionNames.Parse("permission", names,
+		bitset.Bit[PermissionSet]{Bit: PermAll, Name: permAllName},
+		bitset.Bit[PermissionSet]{Bit: PermAdminAll, Name: permAdminAllName})
 }
 
 // emptyPermissions is what a stored grant recording nothing carries: PermAll on

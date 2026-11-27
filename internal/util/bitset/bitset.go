@@ -62,6 +62,29 @@ func (v Vocabulary[T]) Lookup(name string) (T, bool) {
 	return 0, false
 }
 
+// Parse reads names as a request lists them or a stored value holds them once
+// split: trimmed and case-folded, blank ones skipped, and an unrecognised one an
+// error naming kind. aliases are shorthands for several bits, such as "all".
+func (v Vocabulary[T]) Parse(kind string, names []string, aliases ...Bit[T]) (T, error) {
+	var out T
+	for _, field := range names {
+		name := strings.ToLower(strings.TrimSpace(field))
+		if name == "" {
+			continue
+		}
+		bit, ok := v.Lookup(name)
+		if !ok {
+			bit, ok = Vocabulary[T](aliases).Lookup(name)
+		}
+		if !ok {
+			valid := append(v.AllNames(), Vocabulary[T](aliases).AllNames()...)
+			return 0, fmt.Errorf("unknown %s %q, want one of %s", kind, name, strings.Join(valid, ", "))
+		}
+		out |= bit
+	}
+	return out, nil
+}
+
 // AllNames lists every name in the vocabulary, in vocabulary order.
 func (v Vocabulary[T]) AllNames() []string {
 	out := make([]string, 0, len(v))

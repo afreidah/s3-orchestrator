@@ -5,11 +5,10 @@
 //
 // Verification passes over stored copies: a scrub that re-hashes a batch of
 // objects, an on-demand check of every copy of one key, and the backfill that
-// computes hashes for objects stored before integrity verification was turned
-// on. Each declines with ErrIntegrityDisabled when verification is off. The
-// reconcile of backends against the ledger, the listings of unhashed and
-// unreadable copies, and the purge run either way. Scrub, backfill and
-// reconcile each hold an advisory lock, so two runs of one never overlap.
+// computes hashes for objects in hashing buckets stored without one. Alongside
+// them, the reconcile of backends against the ledger, the listings of unhashed
+// and unreadable copies, and the purge. Scrub, backfill and reconcile each hold
+// an advisory lock, so two runs of one never overlap.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -61,6 +60,7 @@ type IntegrityDeps struct {
 	Scrubber   ScrubberOps
 	Reconciler Reconciler
 	Store      CopyStore
+	Buckets    BucketScopeSource
 	Locker     core.AdvisoryLocker
 	Config     *config.Live
 }
@@ -73,12 +73,13 @@ type Integrity struct {
 }
 
 // NewIntegrity is the explicit-deps constructor.
-func NewIntegrity(d IntegrityDeps) *Integrity {
+func NewIntegrity(d *IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
 	must.NotNil("d.Store", d.Store)
+	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Locker", d.Locker)
 	must.NotNil("d.Config", d.Config)
-	return &Integrity{d: d, log: logfmt.Logger(logComponent)}
+	return &Integrity{d: *d, log: logfmt.Logger(logComponent)}
 }
 
 // -------------------------------------------------------------------------
@@ -96,12 +97,8 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // a tick cannot overlap. If the lock is held it returns ErrScrubInProgress
 // instead of waiting.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
-	icfg := &i.d.Config.Load().Integrity
-	if !icfg.IsEnabled() {
-		return batch.Summary{}, ErrIntegrityDisabled
-	}
 	if batchSize <= 0 {
-		batchSize = icfg.ScrubberBatchSize
+		batchSize = i.d.Config.Load().Integrity.ScrubberBatchSize
 	}
 
 	return underLock(ctx, i.d.Locker, core.LockScrubber, ErrScrubInProgress, func(lockCtx context.Context) (batch.Summary, error) {
@@ -115,9 +112,6 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVerification, error) {
 	if key == "" {
 		return nil, ErrKeyRequired
-	}
-	if !i.d.Config.Load().Integrity.IsEnabled() {
-		return nil, ErrIntegrityDisabled
 	}
 
 	copies, err := i.d.Scrubber.ScrubKey(ctx, key)
@@ -134,13 +128,11 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // have one, batchSize objects per pass, pausing for pause between passes to
 // rate-limit backend reads. maxObjects <= 0 drains the whole backlog;
 // batchSize <= 0 uses the default pass size. An empty backend hashes copies on
-// every backend. observer, when non-nil, receives a start and end step per
-// object hashed. Reports ErrBackfillInProgress while another backfill runs,
-// since a second one would read every copy again and undo the pause.
+// every backend. Only buckets whose new objects are hashed are backfilled.
+// observer, when non-nil, receives a start and end step per object hashed.
+// Reports ErrBackfillInProgress while another backfill runs, since a second
+// one would read every copy again and undo the pause.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (worker.BackfillResult, error) {
-	if !i.d.Config.Load().Integrity.IsEnabled() {
-		return worker.BackfillResult{}, ErrIntegrityDisabled
-	}
 	if batchSize <= 0 {
 		batchSize = defaultBackfillBatchSize
 	}
@@ -150,6 +142,7 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 			"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 		return i.d.Scrubber.Backfill(lockCtx, worker.BackfillRequest{
 			BatchSize: batchSize, MaxObjects: maxObjects, Pause: pause, Backend: backend,
+			Buckets: i.d.Buckets.Wanting(core.StoredHashed),
 		}, observer)
 	})
 }

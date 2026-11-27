@@ -127,15 +127,19 @@ func TestProvideLoginThrottle(t *testing.T) {
 func TestProvideLiveRegistry(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
-	do.ProvideValue(inj, &config.Config{
-		Buckets: []config.BucketConfig{{Name: "test"}},
-	})
+	cfg := &config.Config{Buckets: []config.BucketConfig{{Name: "test"}}}
+	do.ProvideValue(inj, cfg)
+	do.ProvideValue(inj, config.NewLive(cfg))
 
 	// The startup state is loaded from config merged with the store, so the
 	// provider reads the provisioning tables. An empty answer is the state a
 	// deployment that has provisioned nothing is in.
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
 	do.Provide(inj, ProvideProvisioned)
+	// The declared set names the store's replication factors.
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(store)
+	do.ProvideValue[metadataStore](inj, store)
 
 	reg, err := ProvideLiveRegistry(inj)
 	if err != nil {

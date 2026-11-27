@@ -129,10 +129,10 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 	// client sends Expect: 100-continue, Go's net/http delays the 100
 	// Continue response until the first r.Body.Read(). Rejecting here
 	// avoids transmitting the entire upload body for a doomed request.
-	if !s.Objects.CanAcceptWrite(r.ContentLength) {
+	if !s.d.Objects.CanAcceptWrite(r.ContentLength) {
 		telemetry.EarlyRejectionsTotal.Inc()
 		msg := fmt.Sprintf("No backend can accept a %d byte upload", r.ContentLength)
-		if hint := formatCapacityHint(s.Objects.BackendCapacityStats(ctx)); hint != "" {
+		if hint := formatCapacityHint(s.d.Objects.BackendCapacityStats(ctx)); hint != "" {
 			msg += "; backend usage: " + hint
 		}
 		return 0, s3Err(http.StatusInsufficientStorage, "InsufficientStorage", msg)
@@ -148,7 +148,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	annotateObject(ctx, r.ContentLength, contentType)
 
-	etag, err := s.Objects.PutObject(ctx, &object.PutObjectRequest{
+	etag, err := s.d.Objects.PutObject(ctx, &object.PutObjectRequest{
 		Key:         t.internalKey,
 		Body:        r.Body,
 		Size:        r.ContentLength,
@@ -179,7 +179,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	rangeHeader := r.Header.Get("Range")
 
-	result, err := s.Objects.GetObject(ctx, key, rangeHeader)
+	result, err := s.d.Objects.GetObject(ctx, key, rangeHeader)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -204,7 +204,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	// trip only on the mismatch that would otherwise corrupt the download.
 	if rangeHeader != "" && !ifRangeMatches(r, result.ETag, result.LastModified) {
 		_ = result.Body.Close()
-		full, ferr := s.Objects.GetObject(ctx, key, "")
+		full, ferr := s.d.Objects.GetObject(ctx, key, "")
 		if ferr != nil {
 			return 0, 0, ferr
 		}
@@ -241,7 +241,7 @@ func (s *Server) answerConditionalFromHead(ctx context.Context, w http.ResponseW
 	if !hasConditionals(r) {
 		return 0, false
 	}
-	head, err := s.Objects.HeadObject(ctx, key)
+	head, err := s.d.Objects.HeadObject(ctx, key)
 	if err != nil {
 		return 0, false
 	}
@@ -256,7 +256,7 @@ func (s *Server) answerConditionalFromHead(ctx context.Context, w http.ResponseW
 
 // handleHead processes HEAD requests.
 func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, t *target) (int, error) {
-	result, err := s.Objects.HeadObject(ctx, t.internalKey)
+	result, err := s.d.Objects.HeadObject(ctx, t.internalKey)
 	if err != nil {
 		return 0, err
 	}
@@ -278,7 +278,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 // handleDelete processes DELETE requests. The manager treats missing objects as
 // success (S3 idempotent delete), so any error returned is a real backend failure.
 func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, t *target) (int, error) {
-	if err := s.Objects.DeleteObject(ctx, t.internalKey); err != nil {
+	if err := s.d.Objects.DeleteObject(ctx, t.internalKey); err != nil {
 		return 0, err
 	}
 
@@ -324,7 +324,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 		return 0, err
 	}
 
-	etag, err := s.Objects.CopyObject(ctx, &object.CopyObjectRequest{
+	etag, err := s.d.Objects.CopyObject(ctx, &object.CopyObjectRequest{
 		SourceKey:   sourceInternalKey,
 		DestKey:     t.internalKey,
 		ReplaceTags: replaceTags,
@@ -358,7 +358,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		keys[i] = internalkey.Make(t.bucket, obj.Key)
 	}
 
-	results := s.Objects.DeleteObjects(ctx, keys)
+	results := s.d.Objects.DeleteObjects(ctx, keys)
 
 	// A per-key failure answers with the same S3 error the whole request would
 	// have, so a client reads one vocabulary.
@@ -388,7 +388,7 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, r *http.Request, key 
 	if r.Header.Get(headerIfNoneMatch) != "*" {
 		return nil
 	}
-	exists, err := s.Objects.ObjectExists(ctx, key)
+	exists, err := s.d.Objects.ObjectExists(ctx, key)
 	if err != nil {
 		return err
 	}

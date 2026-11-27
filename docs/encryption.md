@@ -5,7 +5,7 @@ linkTitle: "Encryption"
 ---
 
 
-Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects are encrypted before being stored on backends and decrypted transparently on read. Exactly one key source is required.
+Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects are encrypted before being stored on backends and decrypted transparently on read, except in a bucket whose [stored form](configuration.md#stored-form) leaves `encrypted` out. Exactly one key source is required.
 
 ```yaml
 encryption:
@@ -102,7 +102,7 @@ A non-zero value on a fleet configured for encryption means exactly one thing: o
 ## Integrity verification
 
 
-SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in PostgreSQL.
+SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in PostgreSQL, except in a bucket whose [stored form](configuration.md#stored-form) leaves `hashed` out. Verification acts on every copy that carries a hash, whether or not `enabled` is set.
 
 ```yaml
 integrity:

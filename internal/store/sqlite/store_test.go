@@ -122,6 +122,10 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{38, func() {
+			exec("drop buckets.replication_factor", `ALTER TABLE buckets DROP COLUMN replication_factor`)
+			exec("drop buckets.stored_form", `ALTER TABLE buckets DROP COLUMN stored_form`)
+		}},
 		{37, func() {
 			var view string
 			if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE name = 'backend_capacity'`).Scan(&view); err != nil {
@@ -1634,10 +1638,17 @@ func rebuiltQueue(t *testing.T, s *Store, factor int, excluded []string, side co
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM replication_queue`); err != nil {
 		t.Fatalf("empty replication queue: %v", err)
 	}
-	if _, err := s.RebuildReplicationQueue(ctx, factor, excluded); err != nil {
+	if _, err := s.RebuildReplicationQueue(ctx, &core.ReplicationFactors{Default: factor}, excluded); err != nil {
 		t.Fatalf("RebuildReplicationQueue(%d): %v", factor, err)
 	}
 	return dueKeys(t, s, side, excluded)
+}
+
+// TestReplicationQueue_RebuildHoldsEachKeyToItsBucket runs the cross-engine
+// factored rebuild check against SQLite.
+func TestReplicationQueue_RebuildHoldsEachKeyToItsBucket(t *testing.T) {
+	t.Parallel()
+	storetest.CheckFactoredRebuild(t, newTestStore(t), "", "backend-a", "backend-b")
 }
 
 // dueKeys reads every due key on side, returning each with its counts.
@@ -1725,7 +1736,7 @@ func TestReplicationQueue_WritesQueueTheKeysTheyLeaveOffFactor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	s.UseReplicationFactor(func() int { return 2 })
+	s.UseReplicationFactors(func() core.ReplicationFactors { return core.ReplicationFactors{Default: 2} })
 
 	mustRecordObject(t, s, "bucket/one", "backend-a", 100)
 	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{

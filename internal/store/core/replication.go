@@ -12,6 +12,89 @@
 
 package core
 
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"sync/atomic"
+
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+)
+
+// ReplicationFactors is how many copies each key is kept at: Default, or the
+// factor its bucket sets in Buckets. Buckets is shared between the copies a
+// snapshot is handed to and must not be modified.
+type ReplicationFactors struct {
+	Default int
+	Buckets map[string]int
+}
+
+// For returns the factor key is kept at.
+func (f *ReplicationFactors) For(key string) int {
+	bucket, _ := internalkey.Split(key)
+	if n, ok := f.Buckets[bucket]; ok {
+		return n
+	}
+	return f.Default
+}
+
+// Replicates reports whether the replication workers have anything to keep:
+// a default above one, or a bucket setting a factor of its own, which may be
+// one lower than the copies it holds.
+func (f *ReplicationFactors) Replicates() bool {
+	return f.Default > 1 || len(f.Buckets) > 0
+}
+
+// Overrides lists the buckets setting a factor of their own and those
+// factors, in name order, as a query binds them.
+func (f *ReplicationFactors) Overrides() ([]string, []int64) {
+	names := slices.Sorted(maps.Keys(f.Buckets))
+	factors := make([]int64, len(names))
+	for i, name := range names {
+		factors[i] = int64(f.Buckets[name])
+	}
+	return names, factors
+}
+
+// String renders the factors so two equal sets render alike, which is what
+// tells a queue rebuilt against them that they changed.
+func (f *ReplicationFactors) String() string {
+	names, factors := f.Overrides()
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d", f.Default)
+	for i, name := range names {
+		fmt.Fprintf(&b, ",%s=%d", name, factors[i])
+	}
+	return b.String()
+}
+
+// Equal reports whether f and o keep every key at the same factor.
+func (f *ReplicationFactors) Equal(o *ReplicationFactors) bool {
+	return f.Default == o.Default && maps.Equal(f.Buckets, o.Buckets)
+}
+
+// FactorsHolder holds where replication factors are read from, which a store
+// is told once wiring settles them. The zero value reads none.
+type FactorsHolder struct {
+	source atomic.Pointer[func() ReplicationFactors]
+}
+
+// Use names where Load reads the factors from, so each read gets the running
+// values.
+func (h *FactorsHolder) Use(factors func() ReplicationFactors) {
+	h.source.Store(&factors)
+}
+
+// Load returns the factors as they stand now, and none before Use names a
+// source.
+func (h *FactorsHolder) Load() ReplicationFactors {
+	if f := h.source.Load(); f != nil {
+		return (*f)()
+	}
+	return ReplicationFactors{}
+}
+
 // ReplicationDirection says which side of the factor a queued key is on.
 type ReplicationDirection int16
 

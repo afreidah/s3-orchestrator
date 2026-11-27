@@ -68,6 +68,8 @@ type Bucket struct {
 	MaxMultipartUploads int32
 	Cors                []byte
 	CreatedAt           pgtype.Timestamptz
+	StoredForm          *int64
+	ReplicationFactor   int32
 }
 
 type CleanupDlq struct {

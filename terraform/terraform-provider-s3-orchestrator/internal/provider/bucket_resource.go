@@ -46,6 +46,8 @@ type bucketResource struct {
 type bucketModel struct {
 	Name                types.String    `tfsdk:"name"`
 	MaxMultipartUploads types.Int64     `tfsdk:"max_multipart_uploads"`
+	StoredForm          types.Set       `tfsdk:"stored_form"`
+	ReplicationFactor   types.Int64     `tfsdk:"replication_factor"`
 	CORSRules           []corsRuleModel `tfsdk:"cors_rule"`
 }
 
@@ -105,6 +107,22 @@ func (r *bucketResource) Schema(
 				MarkdownDescription: "Multipart uploads that may be in flight against " +
 					"this bucket at once. Zero, the default, is unlimited.",
 			},
+			"stored_form": schema.SetAttribute{
+				Optional:    true,
+				ElementType: types.StringType,
+				MarkdownDescription: "Layers the bucket's new objects are stored with: any of " +
+					"`compressed`, `encrypted` and `hashed`. Omitted, the bucket takes the " +
+					"deployment's; an empty set stores its objects with none. Objects already " +
+					"stored keep the form they were written in.",
+			},
+			"replication_factor": schema.Int64Attribute{
+				Optional: true,
+				Computed: true,
+				Default:  int64default.StaticInt64(0),
+				MarkdownDescription: "Copies each of the bucket's objects is kept at, no more than " +
+					"the deployment's backends. Zero, the default, takes the deployment's " +
+					"`replication.factor`. A change brings existing objects to the new count.",
+			},
 		},
 		Blocks: map[string]schema.Block{
 			"cors_rule": schema.ListNestedBlock{
@@ -162,12 +180,8 @@ func (r *bucketResource) Create(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.write(ctx, &plan, &resp.Diagnostics, "Could not create bucket", func(rules []client.CORSRule) error {
-		_, err := r.api.CreateBucket(ctx, client.CreateBucketRequest{
-			Name:                plan.Name.ValueString(),
-			MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
-			CORS:                rules,
-		})
+	r.write(ctx, &plan, &resp.Diagnostics, "Could not create bucket", func(settings client.BucketSettings) error {
+		_, err := r.api.CreateBucket(ctx, client.CreateBucketRequest{Name: plan.Name.ValueString(), BucketSettings: settings})
 		return err
 	})
 	if resp.Diagnostics.HasError() {
@@ -211,6 +225,8 @@ func (r *bucketResource) Read(
 	}
 
 	state.MaxMultipartUploads = types.Int64Value(int64(bucket.MaxMultipartUploads))
+	state.StoredForm = storedFormFromAPI(ctx, bucket.StoredForm, &resp.Diagnostics)
+	state.ReplicationFactor = types.Int64Value(int64(bucket.ReplicationFactor))
 	state.CORSRules = rules
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -225,11 +241,8 @@ func (r *bucketResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.write(ctx, &plan, &resp.Diagnostics, "Could not update bucket", func(rules []client.CORSRule) error {
-		return r.api.UpdateBucket(ctx, plan.Name.ValueString(), client.UpdateBucketRequest{
-			MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
-			CORS:                rules,
-		})
+	r.write(ctx, &plan, &resp.Diagnostics, "Could not update bucket", func(settings client.BucketSettings) error {
+		return r.api.UpdateBucket(ctx, plan.Name.ValueString(), client.UpdateBucketRequest{BucketSettings: settings})
 	})
 	if resp.Diagnostics.HasError() {
 		return
@@ -269,18 +282,46 @@ func (r *bucketResource) ImportState(
 // refusal is reported under summary.
 func (r *bucketResource) write(
 	ctx context.Context, plan *bucketModel, diags *diag.Diagnostics, summary string,
-	send func([]client.CORSRule) error,
+	send func(client.BucketSettings) error,
 ) {
-	rules, d := corsRulesToAPI(ctx, plan.CORSRules)
+	settings, d := settingsToAPI(ctx, plan)
 	diags.Append(d...)
 	if diags.HasError() {
 		return
 	}
-	if err := send(rules); err != nil {
+	if err := send(settings); err != nil {
 		diags.AddError(summary, err.Error())
 		return
 	}
-	diags.Append(resolveCORSState(ctx, rules, plan)...)
+	diags.Append(resolveCORSState(ctx, settings.CORS, plan)...)
+}
+
+// settingsToAPI renders what the planned bucket carries as the API takes it. A
+// null stored form is left out, which gives the bucket the deployment's.
+func settingsToAPI(ctx context.Context, plan *bucketModel) (client.BucketSettings, diag.Diagnostics) {
+	rules, diags := corsRulesToAPI(ctx, plan.CORSRules)
+	settings := client.BucketSettings{
+		MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
+		CORS:                rules,
+		ReplicationFactor:   int(plan.ReplicationFactor.ValueInt64()),
+	}
+	if !plan.StoredForm.IsNull() && !plan.StoredForm.IsUnknown() {
+		layers := []string{}
+		diags.Append(plan.StoredForm.ElementsAs(ctx, &layers, false)...)
+		settings.StoredForm = &layers
+	}
+	return settings, diags
+}
+
+// storedFormFromAPI renders a bucket's stored form as state: null for a bucket
+// taking the deployment's, which is what a configuration omitting it holds.
+func storedFormFromAPI(ctx context.Context, layers *[]string, diags *diag.Diagnostics) types.Set {
+	if layers == nil {
+		return types.SetNull(types.StringType)
+	}
+	set, d := types.SetValueFrom(ctx, types.StringType, *layers)
+	diags.Append(d...)
+	return set
 }
 
 // resolveCORSState writes the rules that were sent back over the model, so

@@ -110,7 +110,7 @@ func (r *fakeRewriter) reform(ctx context.Context, req *writepath.RewriteRequest
 		return nil, err
 	}
 	defer func() { _ = read.Body.Close() }()
-	return req.Layers.Reform(ctx, read.Body, read.Size, &src.StoredForm, req.Want)
+	return req.Layers.Reform(ctx, read.Body, read.Size, &src.StoredForm, req.Want, nil)
 }
 
 // land writes the reformed bytes to dst's backend and records the placement.

@@ -14,6 +14,7 @@ package output
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -99,6 +100,28 @@ func (c Ceiling) LimitText() string {
 func MultipartCap(n int) string {
 	if n == 0 {
 		return NoLimit
+	}
+	return strconv.Itoa(n)
+}
+
+// StoredForm renders a bucket's stored form: its layers joined by commas,
+// "none" for a bucket storing objects with no layer, and "default" for one
+// taking the deployment's.
+func StoredForm(layers *[]string) string {
+	switch {
+	case layers == nil:
+		return "default"
+	case len(*layers) == 0:
+		return "none"
+	}
+	return strings.Join(*layers, ",")
+}
+
+// ReplicationFactor renders a bucket's replication factor, and "default" for
+// zero, which takes the deployment's.
+func ReplicationFactor(n int) string {
+	if n == 0 {
+		return "default"
 	}
 	return strconv.Itoa(n)
 }

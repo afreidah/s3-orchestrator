@@ -24,14 +24,12 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// Bucket is a virtual bucket held in the store rather than declared in config.
-// Its fields mirror the config ones; MaxMultipartUploads of zero means
-// unlimited.
+// Bucket is a virtual bucket held in the store rather than declared in config,
+// carrying the settings a config bucket does.
 type Bucket struct {
-	Name                string
-	MaxMultipartUploads int
-	CORS                []config.CORSRule
-	CreatedAt           time.Time
+	Name string
+	config.BucketSettings
+	CreatedAt time.Time
 }
 
 // User is the identity a request is attributed to. Credentials prove a caller is
@@ -136,10 +134,53 @@ type Grant struct {
 // COLUMN HELPERS
 // -------------------------------------------------------------------------
 
-// EncodeCORS renders a bucket's browser rules for storage. A bucket with no
-// rules encodes to nil, which both engines store as NULL, so "no CORS
-// configured" is one value in the column rather than two.
-func EncodeCORS(rules []config.CORSRule) ([]byte, error) {
+// BucketColumns is what a bucket's settings are stored as in both engines: the
+// limits as they are, the CORS rules as JSON and the stored form as the bits of
+// its layers, the encoding object_locations.form uses. The last two are nil,
+// stored as NULL, for a bucket with no rules and for one taking the
+// deployment's form.
+type BucketColumns struct {
+	MaxMultipartUploads int
+	ReplicationFactor   int
+	CORS                []byte
+	StoredForm          *int64
+}
+
+// EncodeBucket renders the settings a bucket carries into its columns.
+func EncodeBucket(s *config.BucketSettings) (BucketColumns, error) {
+	cors, err := encodeCORS(s.CORS)
+	if err != nil {
+		return BucketColumns{}, err
+	}
+	cols := BucketColumns{MaxMultipartUploads: s.MaxMultipartUploads, ReplicationFactor: s.ReplicationFactor, CORS: cors}
+	if s.StoredForm != nil {
+		form, err := ParseStoredFlags(*s.StoredForm)
+		if err != nil {
+			return BucketColumns{}, fmt.Errorf("encode bucket stored form: %w", err)
+		}
+		cols.StoredForm = new(int64(form))
+	}
+	return cols, nil
+}
+
+// DecodeBucket reads a bucket's settings back from its columns. A CORS column
+// holding something that is not a rule set is an error rather than a bucket
+// with no CORS, which would silently drop a browser policy.
+func DecodeBucket(cols *BucketColumns) (config.BucketSettings, error) {
+	cors, err := decodeJSONColumn[[]config.CORSRule](cols.CORS, "bucket cors")
+	if err != nil {
+		return config.BucketSettings{}, err
+	}
+	s := config.BucketSettings{MaxMultipartUploads: cols.MaxMultipartUploads, ReplicationFactor: cols.ReplicationFactor, CORS: cors}
+	if cols.StoredForm != nil {
+		s.StoredForm = new(StoredFlags(*cols.StoredForm).Names())
+	}
+	return s, nil
+}
+
+// encodeCORS renders a bucket's browser rules for storage. No rules encode to
+// nil, so "no CORS configured" is one value in the column rather than two.
+func encodeCORS(rules []config.CORSRule) ([]byte, error) {
 	if len(rules) == 0 {
 		return nil, nil
 	}
@@ -148,13 +189,6 @@ func EncodeCORS(rules []config.CORSRule) ([]byte, error) {
 		return nil, fmt.Errorf("encode bucket cors: %w", err)
 	}
 	return encoded, nil
-}
-
-// DecodeCORS reads a bucket's browser rules back. A column holding something
-// that is not a rule set is an error rather than a bucket with no CORS, which
-// would silently drop a browser policy.
-func DecodeCORS(b []byte) ([]config.CORSRule, error) {
-	return decodeJSONColumn[[]config.CORSRule](b, "bucket cors")
 }
 
 // GrantFromColumns builds a grant from its stored columns, compiling the

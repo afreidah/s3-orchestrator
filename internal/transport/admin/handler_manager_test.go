@@ -96,7 +96,7 @@ func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
 	return ops.NewObjects(ops.ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Buckets: declaredBuckets(),
+		Buckets: opstest.EveryLayer(),
 	})
 }
 
@@ -116,7 +116,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
 		CopyStore:  store,
-		Declared:   declaredBuckets(),
+		Declared:   opstest.EveryLayer(),
 		Config:     st.Config,
 	})
 }
@@ -354,33 +354,6 @@ func TestManagerRouteOutcomes(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", w.Code, tt.want, w.Body.String())
 			}
 		})
-	}
-}
-
-// TestHandleScrub_IntegrityDisabled: with the default (zero-value) integrity
-// config the scrubber is disabled and handleScrub returns a 200 with
-// status=skipped, covering the early-exit branch.
-func TestHandleScrub_IntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/scrub", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	var resp adminapi.ScrubResponse
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Status != "skipped" || resp.Reason == "" {
-		t.Errorf("got status=%q reason=%q, want skipped with a reason", resp.Status, resp.Reason)
-	}
-	// The skipped branch reports the counters as zero rather than omitting
-	// them, so both branches of the endpoint carry one shape.
-	if resp.Checked != 0 || resp.Failed != 0 {
-		t.Errorf("got checked=%d failed=%d, want both zero", resp.Checked, resp.Failed)
 	}
 }
 

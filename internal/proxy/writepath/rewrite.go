@@ -122,7 +122,7 @@ func (w *Coordinator) reformFrom(ctx context.Context, req *RewriteRequest, loc *
 	}
 	defer cancel()
 	defer func() { _ = read.Body.Close() }()
-	out, err := req.Layers.Reform(ctx, read.Body, read.Size, &loc.StoredForm, req.Want)
+	out, err := req.Layers.Reform(ctx, read.Body, read.Size, &loc.StoredForm, req.Want, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -55,7 +55,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	// The handler drives real workers, whose passes read the replication queue
 	// and the ledger. These are incidental to the wrapper-closure behaviour
 	// under test.
-	mock.EXPECT().ReplicationFactor().Return(0).AnyTimes()
+	mock.EXPECT().ReplicationFactors().Return(core.ReplicationFactors{}).AnyTimes()
 	mock.EXPECT().RebuildReplicationQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	mock.EXPECT().ListReplicationQueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().CountReplicationQueue(gomock.Any()).Return(core.ReplicationBacklog{}, nil).AnyTimes()
@@ -107,7 +107,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
 		CopyStore:  store,
-		Declared:   declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
+		Declared:   opstest.EveryLayer("test-bucket"),
 		Config:     st.Config,
 	})
 }
@@ -224,9 +224,10 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 	}
 
 	h := &Handler{log: slog.Default(), d: Deps{
-		Ops: &ops.Services{Encryption: ops.NewEncryption(ops.EncryptionDeps{
+		Ops: &ops.Services{Encryption: ops.NewEncryption(&ops.EncryptionDeps{
 			Encryptor: enc,
 			Store:     store,
+			Buckets:   opstest.EveryLayer(),
 			Rewriter:  opstest.NewMockRewriter(gomock.NewController(t)),
 			Locker:    testx.Locker{},
 		})},
@@ -294,6 +295,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	repl := opstest.NewMockReplicator(ctrl)
+	repl.EXPECT().Replicates().Return(true).AnyTimes()
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
 			Succeeded: created, Failed: failed,
@@ -361,10 +363,10 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 }
 
 // TestAdminActions_RouteIntoAdmin asserts that each trigger runs its admin
-// pass through the real goroutine path and the poll reports the subsystem
-// being off the way the admin API does: a skip with its reason, or for the
-// bulk rewrites, which refuse when their layer is unavailable, a failure
-// naming it.
+// pass through the real goroutine path and the poll reports what the admin API
+// does: the result of a pass that runs on an empty fleet, a skip with its
+// reason for a subsystem that is off, or for the bulk rewrites, which refuse
+// when their layer is unavailable, a failure naming it.
 func TestAdminActions_RouteIntoAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -374,8 +376,8 @@ func TestAdminActions_RouteIntoAdmin(t *testing.T) {
 		key    string
 	}{
 		{"replicate", adminstream.OutcomeSkipped, "reason"},
-		{"scrub", adminstream.OutcomeSkipped, "reason"},
-		{"backfill-checksums", adminstream.OutcomeSkipped, "reason"},
+		{"scrub", adminstream.OutcomeOK, "result"},
+		{"backfill-checksums", adminstream.OutcomeOK, "result"},
 		{"encrypt-existing", adminstream.OutcomeFailed, "error"},
 		{"compress-existing", adminstream.OutcomeFailed, "error"},
 		{"decompress-existing", adminstream.OutcomeFailed, "error"},
@@ -424,6 +426,7 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 					Codec:    codec,
 					Config:   config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 					Store:    store,
+					Buckets:  opstest.EveryLayer(),
 					Rewriter: opstest.NewMockRewriter(gomock.NewController(t)),
 					Locker:   testx.Locker{},
 				})},

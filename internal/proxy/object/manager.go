@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -49,6 +50,7 @@ type Stores interface {
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
 	d        Deps
+	layers   *storedform.Layers
 	failover *readpath.Failover
 	log      *slog.Logger
 }
@@ -56,18 +58,21 @@ type Manager struct {
 // Deps bundles New's dependencies. A nil Codec disables compression in both
 // directions, and a nil ObjectCache disables object data caching. A
 // CopiesPerWrite of 1 leaves every copy after the first to the replicator.
+// Buckets says which layers each bucket's new objects carry and how many
+// copies each is kept at.
 type Deps struct {
 	Core      Runtime
 	Coord     *writepath.Coordinator
 	Stores    Stores
+	Buckets   BucketSettingsSource
 	Encryptor *encryption.Encryptor
 
-	Codec             Codec // supplied even when compression is off for writes: already-encoded objects still have to be read
+	Codec             Codec // supplied even when no bucket compresses: already-encoded objects still have to be read
 	Compression       config.CompressionConfig
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
-	CopiesPerWrite    int              // how many copies a PUT places itself; 0 and 1 both mean one
+	CopiesPerWrite    int              // the most copies a PUT places itself, never past its bucket's factor; 0 and 1 both mean one
 	Detached          DetachedRegistry // required once CopiesPerWrite is above 1
 
 	DegradedBroadcastParallelism int  // caps concurrent probes; 0 is uncapped
@@ -76,14 +81,16 @@ type Deps struct {
 	BackendTimeout               time.Duration // bounds the degraded-mode loser-drain goroutine
 }
 
-// New creates a Manager. Core, Coord, Stores, LocationCache and IntegrityCfg
-// must be non-nil, and Detached too when CopiesPerWrite is above 1. The read
-// failover is built once here and reused for every GET and HEAD.
+// New creates a Manager. Core, Coord, Stores, Buckets, LocationCache and
+// IntegrityCfg must be non-nil, and Detached too when CopiesPerWrite is above
+// 1. The read failover and the layers a write is stored through are built once
+// here and reused for every request.
 func New(d *Deps) *Manager {
 	must.NotNil("d", d)
 	must.NotNil("d.Core", d.Core)
 	must.NotNil("d.Coord", d.Coord)
 	must.NotNil("d.Stores", d.Stores)
+	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.LocationCache", d.LocationCache)
 	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
 	// Only the fan-out reaches for it, so a deployment that never fans out is
@@ -92,7 +99,8 @@ func New(d *Deps) *Manager {
 		must.NotNil("d.Detached", d.Detached)
 	}
 	m := &Manager{
-		d: *d,
+		d:      *d,
+		layers: &storedform.Layers{Encryptor: d.Encryptor, Codec: d.Codec, Compression: d.Compression},
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.Core,
 			Cache:                        d.LocationCache,

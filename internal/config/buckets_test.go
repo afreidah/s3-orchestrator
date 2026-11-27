@@ -108,7 +108,7 @@ func TestValidateBuckets_CORSRules(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			errs := validateBuckets(bucketWithCORS(&tc.rule))
+			errs := validateBuckets(bucketWithCORS(&tc.rule), BucketLimits{})
 			if tc.wantErr == nil {
 				if len(errs) != 0 {
 					t.Errorf("validateBuckets() = %v, want no errors", errs)
@@ -131,7 +131,7 @@ func TestValidateBuckets_CORSAbsentIsValid(t *testing.T) {
 	errs := validateBuckets([]BucketConfig{{
 		Name:        "photos",
 		Credentials: []CredentialConfig{{AccessKeyID: "ak", SecretAccessKey: "sk"}},
-	}})
+	}}, BucketLimits{})
 	if len(errs) != 0 {
 		t.Errorf("validateBuckets() = %v, want no errors", errs)
 	}
@@ -151,7 +151,7 @@ func TestValidateBuckets_CORSErrorNamesTheRule(t *testing.T) {
 		},
 	}}
 
-	errs := validateBuckets(buckets)
+	errs := validateBuckets(buckets, BucketLimits{})
 	if !hasError(errs, ErrCORSNoMethods) {
 		t.Fatalf("validateBuckets() = %v, want an error wrapping %v", errs, ErrCORSNoMethods)
 	}
@@ -163,5 +163,75 @@ func TestValidateBuckets_CORSErrorNamesTheRule(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("errors %v do not identify buckets[0].cors[1]", errs)
+	}
+}
+
+// -------------------------------------------------------------------------
+// STORED FORM VALIDATION
+// -------------------------------------------------------------------------
+
+// TestValidateBucket_StoredForm pins which layers a bucket may name: the three
+// a write applies, encrypted only where a key source is loaded, and an empty
+// list as a bucket storing objects with no layer.
+func TestValidateBucket_StoredForm(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		form     []string
+		encrypts bool
+		wantErr  error
+	}{
+		{"every layer", []string{LayerCompressed, LayerEncrypted, LayerHashed}, true, nil},
+		{"no layer", []string{}, false, nil},
+		{"hashed only", []string{LayerHashed}, false, nil},
+		{"unknown layer", []string{"gzipped"}, true, ErrBucketLayerUnknown},
+		{"keyed is not a layer to ask for", []string{"keyed"}, true, ErrBucketLayerUnknown},
+		{"encrypted without encryption", []string{LayerEncrypted}, false, ErrBucketLayerNoKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bkt := BucketConfig{Name: "photos", StoredForm: &tc.form}
+			assertBucketErr(t, ValidateBucket(&bkt, BucketLimits{Encrypts: tc.encrypts}), tc.wantErr)
+		})
+	}
+}
+
+// TestValidateBucket_ReplicationFactor pins the factors a bucket may set: zero
+// for the deployment's, and otherwise one copy up to one per backend.
+func TestValidateBucket_ReplicationFactor(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		factor  int
+		wantErr error
+	}{
+		{"deployment's", 0, nil},
+		{"one copy", 1, nil},
+		{"one per backend", 3, nil},
+		{"past the backends", 4, ErrBucketFactorRange},
+		{"negative", -1, ErrBucketFactorRange},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bkt := BucketConfig{Name: "photos", ReplicationFactor: tc.factor}
+			assertBucketErr(t, ValidateBucket(&bkt, BucketLimits{Backends: 3}), tc.wantErr)
+		})
+	}
+}
+
+// assertBucketErr fails t unless errs is empty when want is nil, or holds an
+// error wrapping want otherwise.
+func assertBucketErr(t *testing.T, errs []error, want error) {
+	t.Helper()
+	if want == nil {
+		if len(errs) != 0 {
+			t.Errorf("ValidateBucket() = %v, want no errors", errs)
+		}
+		return
+	}
+	if !hasError(errs, want) {
+		t.Errorf("ValidateBucket() = %v, want an error wrapping %v", errs, want)
 	}
 }

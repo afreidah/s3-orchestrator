@@ -149,6 +149,13 @@ func jsonList[T string | int64](values []T) string {
 	return string(b)
 }
 
+// bucketOf renders the SQL naming the bucket the object key in column is
+// under: everything before its first '/', or the whole key when it has none,
+// as Postgres' split_part reads it.
+func bucketOf(column string) string {
+	return "substr(" + column + ", 1, instr(" + column + " || '/', '/') - 1)"
+}
+
 // -------------------------------------------------------------------------
 // ROW COLLECTION
 // -------------------------------------------------------------------------

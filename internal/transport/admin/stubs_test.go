@@ -22,6 +22,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -32,7 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
@@ -114,10 +114,11 @@ func reconcilerWith(t *testing.T, h *Handler, result *worker.ReconcileResult, er
 // reconciler, nil for none, under the running config and a lock always taken.
 func installIntegrity(t *testing.T, h *Handler, running *config.Config, sc *scrubberStub, rec ops.Reconciler) {
 	t.Helper()
-	h.d.Ops.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
+	h.d.Ops.Integrity = ops.NewIntegrity(&ops.IntegrityDeps{
 		Scrubber:   newScrubber(t, sc),
 		Reconciler: rec,
 		Store:      newCopyStore(t, sc),
+		Buckets:    opstest.EveryLayer(),
 		Locker:     testx.Locker{},
 		Config:     config.NewLive(running),
 	})
@@ -134,7 +135,7 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 		running.Replication = *cfg
 	}
 	h.d.Ops.Replication = ops.NewReplication(ops.ReplicationDeps{
-		Replicator: newReplicator(t, repl),
+		Replicator: newReplicator(t, repl, running.Replication.Factor > 1),
 		OverRep:    newOverRep(t, over),
 		Backlog:    backlogStub{under: repl.pending, over: over.count, err: over.countErr},
 		Locker:     testx.Locker{},
@@ -179,9 +180,10 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 // that drive the bulk rewrite and key rotation endpoints.
 func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.RewriteStore) {
 	t.Helper()
-	h.d.Ops.Encryption = ops.NewEncryption(ops.EncryptionDeps{
+	h.d.Ops.Encryption = ops.NewEncryption(&ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
+		Buckets:   opstest.EveryLayer(),
 		Rewriter:  newOpsRewriter(t),
 		Locker:    testx.Locker{},
 	})
@@ -196,6 +198,7 @@ func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store o
 		Codec:    codec,
 		Config:   config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:    store,
+		Buckets:  opstest.EveryLayer(),
 		Rewriter: newOpsRewriter(t),
 		Locker:   testx.Locker{},
 	})
@@ -221,11 +224,12 @@ type replicatorStub struct {
 	err     error
 }
 
-// newReplicator builds a Replicator mock that reports cfg.created copies, and
-// cfg.queued keys from a rebuild.
-func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicator {
+// newReplicator builds a Replicator mock that reports cfg.created copies,
+// cfg.queued keys from a rebuild, and replicates when told it does.
+func newReplicator(t *testing.T, cfg replicatorStub, replicates bool) *opstest.MockReplicator {
 	t.Helper()
 	m := opstest.NewMockReplicator(gomock.NewController(t))
+	m.EXPECT().Replicates().Return(replicates).AnyTimes()
 	m.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 			trackN(observer, cfg.created, fixedKey(""))
@@ -318,7 +322,7 @@ func newCopyStore(t *testing.T, cfg *scrubberStub) *opstest.MockCopyStore {
 	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, f *core.FormFilter, _ int, _ core.Cursor) ([]core.ObjectLocation, error) {
 			cfg.listFilter = *f
-			if *f == core.UnreadableCopies {
+			if reflect.DeepEqual(*f, core.UnreadableCopies) {
 				return cfg.unreadable, nil
 			}
 			return cfg.unhashed, nil
@@ -379,16 +383,4 @@ func reconciled(imported, removed, scanned, failed int) *worker.ReconcileResult 
 		Imported: imported,
 		Removed:  removed,
 	}
-}
-
-// declaredBuckets builds the live bucket set the object operations resolve a
-// key against, holding the named buckets.
-func declaredBuckets(names ...string) *provisioning.Declared {
-	buckets := make([]provisioning.Bucket, 0, len(names))
-	for _, n := range names {
-		buckets = append(buckets, provisioning.Bucket{Name: n, Source: provisioning.SourceStore})
-	}
-	d := provisioning.NewDeclared()
-	d.Store(buckets)
-	return d
 }

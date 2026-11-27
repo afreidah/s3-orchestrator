@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/samber/do/v2"
@@ -69,8 +70,8 @@ func TestLoadProvisioning_MergesBothSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProvisioning: %v", err)
 	}
-	if got := p.registry.MaxMultipartUploads("stored"); got != 7 {
-		t.Errorf("stored bucket limit = %d, want 7", got)
+	if i := slices.IndexFunc(p.buckets, func(b provisioning.Bucket) bool { return b.Name == "stored" }); i < 0 || p.buckets[i].MaxMultipartUploads != 7 {
+		t.Errorf("loaded buckets %+v, want stored with a limit of 7", p.buckets)
 	}
 	if len(declared.Names()) != 0 {
 		t.Errorf("loading published %v", declared.Names())

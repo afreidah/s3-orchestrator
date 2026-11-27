@@ -26,6 +26,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -729,11 +730,11 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 		}),
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
+	st.Declared.Store([]provisioning.Bucket{{Name: "mybucket", MaxMultipartUploads: maxUploads}})
 
-	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, mustLiveRegistry(t, []config.BucketConfig{{
-		Name:                "mybucket",
-		MaxMultipartUploads: maxUploads,
-		Credentials:         []config.CredentialConfig{testCredential()},
+	ts := httptest.NewServer(st.Settled(stackServer(st, mustLiveRegistry(t, []config.BucketConfig{{
+		Name:        "mybucket",
+		Credentials: []config.CredentialConfig{testCredential()},
 	}}), 10*1024*1024)))
 	t.Cleanup(ts.Close)
 	return ts, mockStore

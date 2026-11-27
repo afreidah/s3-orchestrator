@@ -12,18 +12,26 @@ import (
 )
 
 const createBucket = `-- name: CreateBucket :exec
-INSERT INTO buckets (name, max_multipart_uploads, cors)
-VALUES ($1, $2, $3)
+INSERT INTO buckets (name, max_multipart_uploads, cors, stored_form, replication_factor)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateBucketParams struct {
 	Name                string
 	MaxMultipartUploads int32
 	Cors                []byte
+	StoredForm          *int64
+	ReplicationFactor   int32
 }
 
 func (q *Queries) CreateBucket(ctx context.Context, arg CreateBucketParams) error {
-	_, err := q.db.Exec(ctx, createBucket, arg.Name, arg.MaxMultipartUploads, arg.Cors)
+	_, err := q.db.Exec(ctx, createBucket,
+		arg.Name,
+		arg.MaxMultipartUploads,
+		arg.Cors,
+		arg.StoredForm,
+		arg.ReplicationFactor,
+	)
 	return err
 }
 
@@ -139,7 +147,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 
 const listBuckets = `-- name: ListBuckets :many
 
-SELECT name, max_multipart_uploads, cors, created_at
+SELECT name, max_multipart_uploads, cors, created_at, stored_form, replication_factor
 FROM buckets
 ORDER BY name
 `
@@ -172,6 +180,8 @@ func (q *Queries) ListBuckets(ctx context.Context) ([]Bucket, error) {
 			&i.MaxMultipartUploads,
 			&i.Cors,
 			&i.CreatedAt,
+			&i.StoredForm,
+			&i.ReplicationFactor,
 		); err != nil {
 			return nil, err
 		}
@@ -331,20 +341,30 @@ func (q *Queries) SetGrant(ctx context.Context, arg SetGrantParams) error {
 
 const updateBucket = `-- name: UpdateBucket :exec
 UPDATE buckets
-SET max_multipart_uploads = $1, cors = $2
-WHERE name = $3
+SET max_multipart_uploads = $1, cors = $2, stored_form = $3,
+    replication_factor = $4
+WHERE name = $5
 `
 
 type UpdateBucketParams struct {
 	MaxMultipartUploads int32
 	Cors                []byte
+	StoredForm          *int64
+	ReplicationFactor   int32
 	Name                string
 }
 
 // The name identifies the bucket and its objects, so only what a bucket carries
-// changes here. Both columns are written on every call: the caller declares
-// whole state, and an omitted CORS set means the bucket now has none.
+// changes here. Every column is written on every call: the caller declares
+// whole state, so an omitted CORS set means the bucket now has none and an
+// omitted stored form means it takes the deployment's.
 func (q *Queries) UpdateBucket(ctx context.Context, arg UpdateBucketParams) error {
-	_, err := q.db.Exec(ctx, updateBucket, arg.MaxMultipartUploads, arg.Cors, arg.Name)
+	_, err := q.db.Exec(ctx, updateBucket,
+		arg.MaxMultipartUploads,
+		arg.Cors,
+		arg.StoredForm,
+		arg.ReplicationFactor,
+		arg.Name,
+	)
 	return err
 }

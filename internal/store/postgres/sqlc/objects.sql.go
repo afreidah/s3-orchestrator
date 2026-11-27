@@ -502,14 +502,15 @@ WHERE (form & $1::bigint) = $1::bigint
   AND ($4::text = '' OR backend_name = $4::text)
   AND ($5::text = '' OR key_id = $5::text)
   AND ($6::text = '' OR key_id IS DISTINCT FROM $6::text)
-  AND object_size >= $7::bigint
-  AND ($8::text = ''
+  AND (split_part(object_key, '/', 1) = ANY($7::text[])) = $8::boolean
+  AND object_size >= $9::bigint
+  AND ($10::text = ''
        OR compression_probe_size IS NULL
-       OR compression_probe_level IS DISTINCT FROM $8::text
-       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= $9::float8)
-  AND (object_key, backend_name) > ($10::text, $11::text)
+       OR compression_probe_level IS DISTINCT FROM $10::text
+       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= $11::float8)
+  AND (object_key, backend_name) > ($12::text, $13::text)
 ORDER BY object_key, backend_name
-LIMIT $12
+LIMIT $14
 `
 
 type ListCopiesByFormParams struct {
@@ -519,6 +520,8 @@ type ListCopiesByFormParams struct {
 	BackendFilter string
 	KeyID         string
 	ExceptKeyID   string
+	BucketNames   []string
+	BucketsOnly   bool
 	MinSize       int64
 	ProbeLevel    string
 	MinRatio      float64
@@ -532,7 +535,8 @@ type ListCopiesByFormParams struct {
 // page to what the pass will act on, so row_limit is not spent on rows it
 // would decline: an empty backend_filter, key_id or except_key_id matches every
 // value, and a NULL managed matches copies whether or not the orchestrator
-// manages them.
+// manages them. bucket_names leaves out the copies under those buckets, or with
+// buckets_only keeps only them, so an empty list without it matches every key.
 //
 // Paged by cursor rather than offset, since a pass usually takes the copies it
 // acts on out of its own predicate, and an offset would step over the rows
@@ -553,6 +557,8 @@ func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormPara
 		arg.BackendFilter,
 		arg.KeyID,
 		arg.ExceptKeyID,
+		arg.BucketNames,
+		arg.BucketsOnly,
 		arg.MinSize,
 		arg.ProbeLevel,
 		arg.MinRatio,

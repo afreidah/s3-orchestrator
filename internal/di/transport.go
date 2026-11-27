@@ -72,14 +72,23 @@ func ProvideProvisioned(i do.Injector) (*Provisioned, error) {
 	return p, nil
 }
 
-// ProvideDeclared publishes the bucket set the process starts with.
+// ProvideDeclared publishes the bucket set the process starts with, and where a
+// bucket without settings of its own takes them. Encryption is read from the
+// config the process started with, since the encryptor is built once. The
+// store's writes then queue each key against its bucket's replication factor.
 func ProvideDeclared(i do.Injector) (*provisioning.Declared, error) {
-	p, err := do.Invoke[*Provisioned](i)
-	if err != nil {
-		return nil, err
+	r := NewResolver(i)
+	p := r.Resolve[*Provisioned]()
+	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
+	store := r.Resolve[metadataStore]()
+	if r.err != nil {
+		return nil, r.err
 	}
 	declared := provisioning.NewDeclared()
 	declared.Store(p.buckets)
+	declared.UseDeployment(live, cfg.Encryption.Enabled)
+	store.UseReplicationFactors(declared.Factors)
 	return declared, nil
 }
 
@@ -101,10 +110,17 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	objects := r.Resolve[*object.Manager]()
 	multipartManager := r.Resolve[*multipart.Manager]()
 	registry := r.Resolve[*auth.LiveRegistry]()
+	declared := r.Resolve[*provisioning.Declared]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return s3api.NewServer(objects, multipartManager, registry, cfg.Server.MaxObjectSize), nil
+	return s3api.NewServer(&s3api.ServerDeps{
+		Objects:       objects,
+		Multipart:     multipartManager,
+		Registry:      registry,
+		Buckets:       declared,
+		MaxObjectSize: cfg.Server.MaxObjectSize,
+	}), nil
 }
 
 // ProvideCORS creates the browser CORS policy with the rules the process

@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"strings"
@@ -232,10 +233,7 @@ func TestReform_EveryTransition(t *testing.T) {
 				l := newLayers(t)
 				stored, form := seed(t, l, plain, from)
 
-				out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, want)
-				if err != nil {
-					t.Fatalf("Reform: %v", err)
-				}
+				out := reformReleasingOnce(t, l, stored, form, want)
 				got := readAll(t, out.Body.Reader())
 				out.Release()
 				out.Release()
@@ -247,6 +245,21 @@ func TestReform_EveryTransition(t *testing.T) {
 			})
 		}
 	}
+}
+
+// reformReleasingOnce reforms stored into want and checks the reform released
+// its source exactly once, as a write handing over its buffer relies on.
+func reformReleasingOnce(t *testing.T, l *Layers, stored []byte, form *core.StoredForm, want core.StoredFlags) *Reformed {
+	t.Helper()
+	released := 0
+	out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, want, func() { released++ })
+	if err != nil {
+		t.Fatalf("Reform: %v", err)
+	}
+	if released != 1 {
+		t.Errorf("source released %d times, want once", released)
+	}
+	return out
 }
 
 // assertReformed checks reformed bytes match their reported size, carry the
@@ -278,7 +291,7 @@ func TestReform_KeptEncodingIsPassedThrough(t *testing.T) {
 	l := newLayers(t)
 	stored, form := seed(t, l, compressible(), core.StoredCompressed)
 
-	out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, core.StoredLayers)
+	out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, core.StoredLayers, nil)
 	if err != nil {
 		t.Fatalf("Reform: %v", err)
 	}
@@ -303,7 +316,7 @@ func TestReform_ReleaseFreesBuffers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			stored, form := seed(t, l, compressible(), tc.from)
-			out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, tc.want)
+			out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, tc.want, nil)
 			if err != nil {
 				t.Fatalf("Reform: %v", err)
 			}
@@ -321,7 +334,8 @@ func TestReform_ReleaseFreesBuffers(t *testing.T) {
 
 // TestReform_DeclinedEncoding verifies an encoding that misses the ratio is a
 // *Declined carrying the size it came to, with nothing returned to release,
-// whether or not the source was sealed.
+// whether or not the source was sealed. The source stays the caller's, so a
+// write can store it without the encoding.
 func TestReform_DeclinedEncoding(t *testing.T) {
 	t.Parallel()
 	for _, from := range []core.StoredFlags{0, core.StoredEncrypted} {
@@ -330,7 +344,8 @@ func TestReform_DeclinedEncoding(t *testing.T) {
 			l := newLayers(t)
 			stored, form := seed(t, l, incompressible(t), from)
 
-			out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, form.Form()|core.StoredCompressed)
+			out, err := l.Reform(context.Background(), bytes.NewReader(stored), int64(len(stored)), form, form.Form()|core.StoredCompressed,
+				func() { t.Error("a declined reform released its source") })
 			var declined *Declined
 			if !errors.As(err, &declined) {
 				t.Fatalf("error = %v, want *Declined", err)
@@ -375,7 +390,7 @@ func TestReform_MissingLayer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := tc.layers.Reform(context.Background(), bytes.NewReader(tc.stored), int64(len(tc.stored)), tc.form, tc.want)
+			out, err := tc.layers.Reform(context.Background(), bytes.NewReader(tc.stored), int64(len(tc.stored)), tc.form, tc.want, nil)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("error = %v, want %v", err, tc.wantErr)
 			}
@@ -414,7 +429,7 @@ func TestReform_StageFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := tc.layers.Reform(context.Background(), bytes.NewReader(tc.stored), int64(len(tc.stored)), tc.form, tc.want)
+			out, err := tc.layers.Reform(context.Background(), bytes.NewReader(tc.stored), int64(len(tc.stored)), tc.form, tc.want, nil)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("error = %v, want %v", err, tc.wantErr)
 			}
@@ -579,29 +594,46 @@ func TestOpen_StopsAtTheEnvelope(t *testing.T) {
 // COMPRESSION
 // -------------------------------------------------------------------------
 
-// TestShouldCompress verifies the gate: no codec or a disabled config never
-// compresses, a write under the minimum is declined and counted, and one at
-// the minimum is compressed.
+// TestShouldCompress verifies the gate: no codec, or a bucket whose layers
+// leave compression out, never compresses, whatever the config says; a write
+// under the minimum is declined and counted, and one at the minimum is
+// compressed.
 func TestShouldCompress(t *testing.T) {
 	codec := newCodec(t)
-	enabled := &config.CompressionConfig{Enabled: true, MinSize: 100}
+	cfg := &config.CompressionConfig{MinSize: 100}
 	skipped := telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize)
 
-	if ShouldCompress(enabled, nil, 1000) {
+	if ShouldCompress(core.StoredCompressed, cfg, nil, 1000) {
 		t.Error("compressed with no codec")
 	}
-	if ShouldCompress(&config.CompressionConfig{MinSize: 100}, codec, 1000) {
-		t.Error("compressed with compression disabled")
+	if ShouldCompress(core.StoredHashed, &config.CompressionConfig{Enabled: true, MinSize: 100}, codec, 1000) {
+		t.Error("compressed for a bucket that does not compress")
 	}
 	before := testutil.ToFloat64(skipped)
-	if ShouldCompress(enabled, codec, 99) {
+	if ShouldCompress(core.StoredCompressed, cfg, codec, 99) {
 		t.Error("compressed a write under the minimum")
 	}
 	if got := testutil.ToFloat64(skipped) - before; got != 1 {
 		t.Errorf("min-size skips moved by %v, want 1", got)
 	}
-	if !ShouldCompress(enabled, codec, 100) {
+	if !ShouldCompress(core.StoredCompressed, cfg, codec, 100) {
 		t.Error("declined a write at the minimum")
+	}
+}
+
+// TestContentHasher verifies a write records a SHA-256 content hash only when
+// its layers carry the hashed one, and gets a fresh hasher each time.
+func TestContentHasher(t *testing.T) {
+	t.Parallel()
+	if ContentHasher(core.StoredCompressed|core.StoredEncrypted) != nil {
+		t.Error("ContentHasher returned a hasher for layers without hashed")
+	}
+	h := ContentHasher(core.StoredHashed)
+	if h == nil || h.Size() != sha256.Size {
+		t.Fatalf("ContentHasher(hashed) = %v, want a SHA-256 hasher", h)
+	}
+	if h == ContentHasher(core.StoredHashed) {
+		t.Error("ContentHasher returned the same hasher twice")
 	}
 }
 

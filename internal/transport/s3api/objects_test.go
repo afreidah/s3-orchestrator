@@ -77,10 +77,18 @@ func newTestServerOver(
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, registry, 10*1024*1024)))
+	ts := httptest.NewServer(st.Settled(stackServer(st, registry, 10*1024*1024)))
 	t.Cleanup(ts.Close)
 
 	return ts, mockStore, backend
+}
+
+// stackServer builds a Server over the stack's managers and declared bucket
+// set, authenticating against registry.
+func stackServer(st *proxytest.Stack, registry *auth.LiveRegistry, maxObjectSize int64) *Server {
+	return NewServer(&ServerDeps{
+		Objects: st.Objects, Multipart: st.Multipart, Registry: registry, Buckets: st.Declared, MaxObjectSize: maxObjectSize,
+	})
 }
 
 // doReq sends an authenticated request using ts.Client(), not
@@ -410,7 +418,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	ts := httptest.NewServer(st.Settled(NewServer(st.Objects, st.Multipart, testRegistry(t), 10*1024*1024)))
+	ts := httptest.NewServer(st.Settled(stackServer(st, testRegistry(t), 10*1024*1024)))
 	t.Cleanup(ts.Close)
 	return ts
 }
