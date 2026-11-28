@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.191.0] - 2026-11-28
+
+### Fixed
+- fix the Nomad job and pack and bring them in line with the Helm chart (#1962)
+
+### Improved
+- update CHANGELOG.md for v0.189.0
+
+### Other
+- publish the job to its own repository on each release (#1963)
+- refresh the TUI dashboard and backends screenshots (#1960)
+- scroll the dashboard's backend blocks and show per-bucket replication and bucket defaults (#1959)
+
 ## [0.189.0] - 2026-11-27
 
 ### Added
