@@ -674,15 +674,17 @@ pack-check: ## Format-check the Nomad pack and job, and validate the jobs they p
 	nomad-pack fmt -check -recursive $(NOMAD_PACK)
 	nomad fmt -check $(NOMAD_JOB) $(NOMAD_JOB_VARS)
 	@out=$$(mktemp -d); trap 'rm -rf "$$out"' EXIT; \
-	for case in "" "-f deploy/nomad/local/s3-orchestrator.vars.hcl --var count=3"; do \
+	for case in "" "-f deploy/nomad/local/s3-orchestrator.vars.hcl --var count=3" "--var tls_mode=tls"; do \
 		echo "--- pack $${case:-defaults} ---"; \
 		nomad-pack render $(NOMAD_PACK) -o "$$out" -y $$case \
 			--var version=$(VERSION) --var config_file=deploy/local/config.yaml >/dev/null || exit 1; \
 		$(NOMAD_LOCAL) nomad job validate "$$out/s3_orchestrator/s3_orchestrator.nomad" || exit 1; \
 	done; \
-	echo "--- job with $(NOMAD_JOB_VARS) ---"; \
-	$(NOMAD_LOCAL) nomad job validate -var-file=$(NOMAD_JOB_VARS) -var=version=$(VERSION) \
-		-var=config_file=deploy/local/config.yaml $(NOMAD_JOB)
+	for case in "-var-file=$(NOMAD_JOB_VARS)" "-var=worker_count=1 -var=tls_mode=mtls"; do \
+		echo "--- job with $$case ---"; \
+		$(NOMAD_LOCAL) nomad job validate $$case -var=version=$(VERSION) \
+			-var=config_file=deploy/local/config.yaml $(NOMAD_JOB) || exit 1; \
+	done
 
 chart-package: ## Package the Helm chart at the release version into dist/
 	helm package $(HELM_CHART) --version $(CHART_VERSION) --app-version $(VERSION) -d dist

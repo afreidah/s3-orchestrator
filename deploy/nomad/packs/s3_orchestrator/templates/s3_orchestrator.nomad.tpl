@@ -10,6 +10,8 @@
 
 [[ template "preflight" . -]]
 [[- $static := gt (int (var "http_port" .)) 0 ]]
+[[- $canary := not (or $static (var "distinct_hosts" .)) ]]
+[[- $tls := var "tls_mode" . ]]
 
 # -------------------------------------------------------------------------------
 # Job
@@ -30,17 +32,19 @@ job [[ template "job_name" . ]] {
   # Update Strategy
   # ---------------------------------------------------------------------------
 
+  # --- A canary needs a spare placement, which a static port or distinct_hosts denies ---
+  # --- The deadline leaves room for the 5m startup grace first-boot migrations can use ---
   update {
     max_parallel = 1
-    [[- if $static ]]
-    canary = 0
-    [[- else ]]
+    [[- if $canary ]]
     canary       = 1
     auto_promote = true
+    [[- else ]]
+    canary = 0
     [[- end ]]
     health_check      = "checks"
     min_healthy_time  = "30s"
-    healthy_deadline  = "5m"
+    healthy_deadline  = "8m"
     progress_deadline = "10m"
     auto_revert       = true
   }
@@ -99,6 +103,11 @@ job [[ template "job_name" . ]] {
       [[- end ]]
     }
 
+    # --- Reserves room for the spill files in the task's tmp directory ---
+    ephemeral_disk {
+      size = [[ var "ephemeral_disk" . ]]
+    }
+
     # -------------------------------------------------------------------------
     # Services
     # -------------------------------------------------------------------------
@@ -113,25 +122,23 @@ job [[ template "job_name" . ]] {
 
       # --- Readiness: 503 until started and while draining ---
       check {
-        name      = "ready"
-        type      = "http"
-        path      = "/health/ready"
+        name = "ready"
+        [[- template "check_transport" (dict "tls" $tls "path" "/health/ready") ]]
         interval  = "5s"
         timeout   = "2s"
         on_update = "require_healthy"
       }
 
-      # --- Liveness: stays 200 through a database outage ---
+      # --- Liveness: stays 200 through a database outage; the grace covers first-boot migrations ---
       check {
-        name     = "alive"
-        type     = "http"
-        path     = "/health"
+        name = "alive"
+        [[- template "check_transport" (dict "tls" $tls "path" "/health") ]]
         interval = "10s"
         timeout  = "3s"
 
         check_restart {
           limit = 3
-          grace = "2m"
+          grace = "5m"
         }
       }
     }
@@ -175,12 +182,30 @@ job [[ template "job_name" . ]] {
         [[- else ]]
         ports = ["http"]
         [[- end ]]
+        readonly_rootfs = true
+        cap_drop        = ["all"]
+        security_opt    = ["no-new-privileges"]
 
         # --- Client, backend and database connections share one fd table ---
         ulimit {
           nofile = "65535:65535"
         }
+
+        # --- The OS temp directory, where server.spill_dir defaults ---
+        mount {
+          type   = "bind"
+          source = "tmp"
+          target = "/tmp"
+        }
       }
+      [[- if var "env" . ]]
+
+      env {
+        [[- range $k, $v := var "env" . ]]
+        [[ $k ]] = [[ $v | quote ]]
+        [[- end ]]
+      }
+      [[- end ]]
 
       # -----------------------------------------------------------------------
       # Templates: config, environment and extra files
@@ -208,7 +233,7 @@ EOH
       # --- Environment the config's $NAME references expand from ---
       template {
         data        = <<EOH
-[[ var "env_template" . ]]
+[[ template "hcl_escape" (var "env_template" .) ]]
 EOH
         destination = "secrets/env"
         env         = true
@@ -217,13 +242,27 @@ EOH
       [[- end ]]
       [[- range var "templates" . ]]
 
-      # --- Extra file the config points at ---
+      # --- Extra file the config points at, without the newline a heredoc adds ---
       template {
-        data        = <<EOH
-[[ .data ]]
+        data = trimsuffix(<<EOH
+[[ template "hcl_escape" .data ]]
 EOH
+        , "\n")
         destination = "secrets/[[ .destination ]]"
         change_mode = "restart"
+      }
+      [[- end ]]
+      [[- range var "cert_templates" . ]]
+
+      # --- TLS certificate or key, reloaded in place ---
+      template {
+        data = trimsuffix(<<EOH
+[[ template "hcl_escape" .data ]]
+EOH
+        , "\n")
+        destination   = "secrets/[[ .destination ]]"
+        change_mode   = "signal"
+        change_signal = "SIGHUP"
       }
       [[- end ]]
 

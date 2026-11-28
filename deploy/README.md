@@ -21,13 +21,13 @@ The pack in [`nomad/packs/s3_orchestrator`](nomad/packs/s3_orchestrator/README.m
 nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
 ```
 
-[`nomad/s3-orchestrator.nomad.hcl`](nomad/s3-orchestrator.nomad.hcl) is the same job as a plain job file that takes variables. Production values, with Consul, Traefik and Vault, are in `nomad/s3-orchestrator.vars.hcl`:
+[`nomad/s3-orchestrator.nomad.hcl`](nomad/s3-orchestrator.nomad.hcl) is the same job as a plain job file that takes variables. Its job ID is fixed, so it splits api and worker instances into two groups with `worker_count` where the pack runs twice. Production values, with Consul, Traefik and Vault, are in `nomad/s3-orchestrator.vars.hcl`:
 
 ```bash
-nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.178.0 s3-orchestrator.nomad.hcl
+nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.191.0 s3-orchestrator.nomad.hcl
 ```
 
-`make pack-check` format-checks both and validates the jobs they produce.
+Both need clients whose `max_kill_timeout` is at least the job's 90-second `kill_timeout`; the client default of 30 seconds cuts the shutdown drain short. `make pack-check` format-checks both and validates the jobs they produce.
 
 ## Local Demo Scripts
 
@@ -85,7 +85,7 @@ Sensitive values in the config use `${VAR}` environment variable expansion. The 
 | | Secrets as environment | Files the config points at (TLS, CA bundles) |
 |---|---|---|
 | Helm chart | `secrets`, `existingSecret`, `extraEnv`, `extraEnvFrom` | `extraVolumes` and `extraVolumeMounts` |
-| Nomad pack and job | `env_template`, from a Nomad Variable by default, or Vault or Consul KV | `templates`, rendered into `/secrets` |
+| Nomad pack and job | `env_template`, from a Nomad Variable by default, or Vault or Consul KV, and `env` | `templates`, rendered into `/secrets`, and `cert_templates`, reloaded on SIGHUP |
 
 ## PostgreSQL
 

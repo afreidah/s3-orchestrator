@@ -19,7 +19,7 @@ The orchestrator runs as a Docker container on Nomad. At startup, Nomad's templa
 
 ## Prerequisites
 
-- A running Nomad cluster with Docker driver enabled
+- A running Nomad cluster with Docker driver enabled, whose clients set `max_kill_timeout` to at least `90s` (the default of 30 seconds caps the job's `kill_timeout`)
 - Vault integrated with Nomad ([Nomad-Vault integration docs](https://developer.hashicorp.com/nomad/docs/integrations/vault-integration))
 - Consul for service discovery (optional but recommended)
 - PostgreSQL accessible from Nomad clients
@@ -357,7 +357,7 @@ EOH
 - **`change_mode = "restart"`** means the task restarts automatically if the Vault secret is updated or the lease is renewed with new values
 - **`token_file`** in the encryption config points at the Vault token Nomad writes into the task's secrets directory; the orchestrator uses it for ongoing Transit API calls and re-reads it on every renewal tick
 - **Volumes** bind-mount the rendered secrets from Nomad's secrets directory into the container at `/secrets/`
-- **`kill_timeout = "90s"`** covers the whole shutdown: the 5-second `shutdown_delay`, then up to 30 seconds draining HTTP requests, 30 seconds for uploads still writing, and 10 seconds for background services. A shorter timeout kills the task mid-drain
+- **`kill_timeout = "90s"`** covers the whole shutdown: the 5-second `shutdown_delay`, then up to 30 seconds draining HTTP requests, 30 seconds for uploads still writing, and 10 seconds for background services. A shorter timeout kills the task mid-drain, and so does a client whose `max_kill_timeout` is below it
 - **Two health checks**: `/health` (liveness) keeps the allocation alive during DB outages, `/health/ready` (readiness) with `on_update = "require_healthy"` gates rolling deploys
 - **`trusted_proxies`** ensures rate limiting uses the real client IP when behind a load balancer, not the proxy's IP
 - **`backend_circuit_breaker`** isolates individual backend failures so a single provider outage doesn't degrade the entire service

@@ -272,6 +272,10 @@ The provided Kubernetes manifests include several security measures:
 - **Dedicated metrics Service** - when `metrics.dedicatedListener.enabled: true`, the chart renders a separate `*-metrics` ClusterIP Service that is forced to `ClusterIP` regardless of the public Service type. This prevents the metrics surface (and any opted-in pprof) from accidentally being exposed externally if the public Service is upgraded to LoadBalancer/NodePort.
 - **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** - standard container hardening (see `deploy/helm/s3-orchestrator/templates/deployment.yaml`)
 
+### Nomad Hardening
+
+The Nomad pack and job run the container with `readonly_rootfs`, `cap_drop = ["all"]` and `no-new-privileges`, as the image's non-root user. `/tmp`, where large uploads spill, is bound to the task's tmp directory.
+
 ```
 Internet --> Reverse Proxy --> S3 Orchestrator --> PostgreSQL (private)
                                               --> Backends (private)
