@@ -97,6 +97,12 @@ variable "http_port" {
   default     = 0
 }
 
+variable "tls_mode" {
+  description = "What server.tls in the config turns on, which decides how the health checks connect: off, tls (cert_file and key_file) or mtls (client_ca_file as well)"
+  type        = string
+  default     = "off"
+}
+
 variable "service_provider" {
   description = "Service registration provider: nomad or consul"
   type        = string
@@ -139,6 +145,12 @@ variable "resources" {
   }
 }
 
+variable "ephemeral_disk" {
+  description = "Disk in MB reserved at placement for spill files, which land in the task's tmp directory; size for max_concurrent_writes times the largest upload. Nomad does not enforce it"
+  type        = number
+  default     = 300
+}
+
 variable "shutdown_delay" {
   description = "Time between deregistering the services and sending SIGTERM, so clients stop routing first"
   type        = string
@@ -146,7 +158,7 @@ variable "shutdown_delay" {
 }
 
 variable "kill_timeout" {
-  description = "SIGTERM to SIGKILL; covers up to 70s of HTTP, upload and background-service drains"
+  description = "SIGTERM to SIGKILL; covers up to 70s of HTTP, upload and background-service drains. A client caps it at its max_kill_timeout, 30s by default"
   type        = string
   default     = "90s"
 }
@@ -156,7 +168,7 @@ variable "kill_timeout" {
 # -------------------------------------------------------------------------------
 
 variable "config_file" {
-  description = "Path to the config.yaml to run, read when the pack renders; reference secrets in it as $NAME or $${NAME}"
+  description = "Path to the config.yaml to run, read when the pack renders and rendered as a Nomad template; reference secrets in it as $NAME or $${NAME}"
   type        = string
   default     = ""
 }
@@ -173,6 +185,12 @@ variable "config_wait" {
   }
 }
 
+variable "env" {
+  description = "Environment variables set on the task as given, such as GOMAXPROCS"
+  type        = map(string)
+  default     = {}
+}
+
 variable "env_template" {
   description = "Nomad template rendered as the task's environment; the default exports every item of the Nomad Variable at nomad/jobs/<job name>, and empty sets nothing"
   type        = string
@@ -186,7 +204,16 @@ EOH
 }
 
 variable "templates" {
-  description = "Extra files the config points at, such as TLS certificates or key files, rendered into secrets/<destination>: [{ data, destination }]"
+  description = "Extra files the config points at, such as a CA bundle or key file, rendered into secrets/<destination>; a change restarts the task: [{ data, destination }]"
+  type = list(object({
+    data        = string
+    destination = string
+  }))
+  default = []
+}
+
+variable "cert_templates" {
+  description = "The server.tls cert_file and key_file, rendered into secrets/<destination>; a renewal sends SIGHUP, which reloads them without a restart: [{ data, destination }]"
   type = list(object({
     data        = string
     destination = string
@@ -195,7 +222,7 @@ variable "templates" {
 }
 
 variable "vault_role" {
-  description = "Vault role the task logs in with through workload identity, for an env_template that reads Vault; empty leaves Vault out"
+  description = "Vault role the task logs in with through workload identity, which needs vault.default_identity in the server config; empty leaves Vault out"
   type        = string
   default     = ""
 }

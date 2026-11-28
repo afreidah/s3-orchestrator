@@ -62,7 +62,23 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.189.x (current)
+### v0.191.x (current)
+
+**The Nomad job and pack match what the server and the Helm chart need ([#1961](https://github.com/afreidah/s3-orchestrator/issues/1961), v0.191.0)**
+
+A config with `server.tls` failed every health check, since the checks spoke plain HTTP; `tls_mode` now makes them HTTPS, or TCP under mTLS. The pack wrote every `templates` file with a trailing newline, which a 32-byte key file cannot take. Two instances with `distinct_hosts` and a dynamic port started each rollout with a canary that had nowhere to go, and a first boot that spent more than about two minutes in migrations was restarted by the liveness check. The plain job's `mode` variable could not split a fleet, since its job ID is fixed; `worker_count` now adds a group of worker instances beside an api group.
+
+**Operator action items after upgrade:**
+
+- **Raise the clients' `max_kill_timeout` to at least 90 seconds.** It defaults to 30 and caps the job's `kill_timeout`, which cuts the shutdown drain short.
+- **The plain job's `mode` variable is gone.** Drop `-var=mode=...`, and set `worker_count` to split the fleet.
+- **The container runs on a read-only root filesystem with every capability dropped.** `/tmp`, where uploads over 32 MiB spill, is the task's tmp directory, so a `server.spill_dir` elsewhere on the image's filesystem has to move under `/tmp`, `/local` or `/alloc`.
+- **The pack refuses a config that selects SQLite.**
+- **Move the TLS certificate and key from `templates` to `cert_templates`** and set `tls_mode`, so a renewal reloads them on SIGHUP instead of restarting the task.
+- **`healthy_deadline` is 8 minutes and the liveness check's restart grace 5,** so a failed rollout takes longer to revert.
+- **`env`, `ephemeral_disk`, `constraints`, `config_wait` and `register_metrics_service`** are new variables on the plain job; `env`, `ephemeral_disk`, `tls_mode` and `cert_templates` are new on the pack.
+
+### v0.189.x
 
 **A virtual bucket chooses the layers its objects are stored with ([#1480](https://github.com/afreidah/s3-orchestrator/issues/1480), v0.189.0)**
 
