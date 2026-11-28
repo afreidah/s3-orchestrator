@@ -3,6 +3,100 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.189.0] - 2026-11-27
+
+### Added
+- add object-delete command for one key or a prefix (#1939)
+
+### Fixed
+- fix(web): escape the apostrophe that broke the architecture diagram (#1951)
+- fix(replication): hold a queued key whose only copy is an unpromoted intent (#1948)
+- fix(backend): learn a backend that signs ! unescaped and send it literal (#1946)
+- fix(metrics): count queue depths on every instance (#1591) (#1938)
+- fix(proxy): stop request waits at cancellation; publish usage limits and baselines together (#1821) (#1934)
+- fix(ops): run manual passes under their advisory lock (#1795) (#1933)
+- fix(backend): treat a CopyObject answered with no result as unsupported (#1824) (#1932)
+- fix(cli): stream the bulk rewrites and key rotation (#1853) (#1929)
+- fix(ui): refresh the dashboard's figures by name, not position (#1926) (#1927)
+- fix(ui): page the object browser's folders as well as its files (#1921) (#1923)
+- fix(replication): the pending reaper's drop requeues a key it leaves off the factor (#1917) (#1918)
+- fix(store): a delete clears the intents of a key with no copies (#1908) (#1909)
+- fix(deps): bump Go to 1.27.4 for GO-2026-6859 (#1910) (#1911)
+- fix(deps): bump golang.org/x/net to v0.62.0 for CVE-2026-78661 (#1898) (#1899)
+- fix(store): charge quota stripes in one global order, so concurrent batch deletes cannot deadlock (#1876) (#1885)
+- fix(rebalance): plan each key onto a destination and each copy off its source once, count declined moves as skips, share the planners' state (#1847) (#1874)
+- fix(config): validate fields through shared checks, own every default in config, report every startup-only field by path, keep admission on with one pool set, resolve always-registered services as required (#1866)
+- fix(admin): parse grant permissions without the stored-row rule, cut the dashboard JSON to listable buckets, refuse admin throttling in JSON, check reconcile's backend, validate API buckets as config does (#1864)
+- fix(write): classify claim and commit errors in the coordinator, carry tags on intents, charge backend calls where they are sent, publish cycle events from both entry points (#1863)
+- fix(api): refuse malformed admin and dashboard input, report changed on every bulk rewrite, share one count parser and tag order (#1848)
+- fix(ops): scope UI sync to its bucket, settle pass outcomes once for both response modes, admit scrub-key reads like client reads (#1845)
+- fix(reload): load provisioning without publishing and install it in one place (#1842)
+- fix(encryption): decrypt at the chunk size the object was written with (#1833)
+
+### Refactored
+- refactor(store): one ledger edit per transaction writes its cleanup rows and then its stripe charges (#1902) (#1914)
+- refactor(cli): render streams, backends, grants and limits once, check the status once, name parameters in adminapi, drive the TUI from one poll table and one section table, parse flags one way, open the store one way (#1860) (#1873)
+- refactor(s3api): dispatch every action through one switch, return failures as S3 errors, write every document through one XML writer, decide and record refusals as the other surfaces do, hold the live registry once, share the rate limiter and request attributes (#1871)
+- refactor(proxy): copy from any source through one loop, refuse a copy source of the wrong size, charge the probe reads, record writes from their intent, share object attributes, drop the runtime's dead logger (#1857) (#1870)
+- refactor(admin): define each pass once for the admin API and the dashboard, map rejections by kind, record refusals through one denial, take the ops services whole, fold the bulk rewrites onto one layer driver (#1869)
+- refactor(observe): share the usage triple, operation metrics and runtime hooks, fold the decrypt and codec entry points, gate every Redis call on its breaker, flatten grouped log attributes, stop the Vault provider on failed startup (#1868)
+- refactor(worker): report every pass through one cycle envelope, run every periodic loop on one schedule, share replica and scrub verification, put admission on the batch runner, move backfill into the scrubber (#1867)
+- refactor(store): read whole rows on both engines, fold single-key adapter methods into their batch forms, share the engines' encoders and timestamp checks, match SQLite prefixes by case (#1865)
+- refactor(logging): pass errors as "error", err and keep logfmt.Err for typed-attr and nil-able calls (#1849)
+- refactor(store): share repeated shapes in the store engines (#1839)
+- refactor(auth): verify SigV4 and look up signing secrets in one place (#1836)
+
+### Improved
+- update CHANGELOG.md for v0.178.3
+
+### Dependencies
+- chore(deps): bump the actions group with 5 updates (#1952)
+- chore(deps): bump the aws-sdk group with 3 updates (#1953)
+- chore(deps): bump the minor-and-patch group with 3 updates (#1954)
+- chore(deps): bump SonarSource/sonarqube-scan-action from 8.4.1 to 8.5.0 in the actions group (#1936)
+- chore(deps): bump the aws-sdk group with 2 updates (#1937)
+- chore(deps): bump go.opentelemetry.io/otel/trace from 1.44.0 to 1.47.0 in /terraform/terraform-provider-s3-orchestrator in the go_modules group across 1 directory (#1928)
+- chore(deps): bump the aws-sdk group across 1 directory with 4 updates (#1905)
+- chore(deps): bump the minor-and-patch group across 1 directory with 10 updates (#1912)
+- chore(deps): bump the actions group with 6 updates (#1904)
+- chore(deps): bump the actions group with 3 updates (#1889)
+- chore(deps): bump the aws-sdk group with 4 updates (#1890)
+- chore(deps): bump the minor-and-patch group with 3 updates (#1891)
+- chore(deps): bump the aws-sdk group with 4 updates (#1831)
+- chore(deps): bump the actions group with 4 updates (#1830)
+- chore(deps): bump the minor-and-patch group with 2 updates (#1832)
+
+### Other
+- let a virtual bucket choose its stored form and replication factor (#1955)
+- share a full pool fairly between virtual buckets (#1949)
+- convert each object's copies from one read (#1944)
+- stream prefix deletes so they run to the end (#1943)
+- try a slow backend after the others (#1431) (#1935)
+- refresh the TUI screenshots and add the Integrity pane (#1931)
+- list unhashed copies and count the unmanaged ones apart (#1684) (#1930)
+- refresh the TUI and dashboard screenshots (#1924) (#1925)
+- test(s3api): answer once a request's deletes have settled (#1919) (#1920)
+- perf(store): keep the fleet figures as counters the writes charge (#1883) (#1916)
+- perf(replication): drain a queue of keys off the factor instead of scanning the ledger (#1903) (#1915)
+- ledger, copy counts and quota agree with a recount after a mixed workload with failures (#1907) (#1913)
+- perf(multipart): record parts of one upload together, read completion parts ahead, charge stripes last (#1882) (#1901)
+- perf: settle client deletes after the response, keep workers from queuing ahead of clients for slots (#1881) (#1900)
+- perf(store): run bulk deletes in groups of 100 keys, queue cleanup and charge stripes in one statement (#1877) (#1897)
+- install the event emitter in every mode, bound the method label, hold bodies to their declared digests (#1884) (#1896)
+- perf(compression): give the codec a slot per core, stream whole compressed reads in one GET, unwrap a read's key once (#1880) (#1895)
+- perf(store): keep waiting claims off the connection pool, take locks in one statement, read the room sums only under a ceiling (#1879) (#1893)
+- docs(guides): add the Cloudflare edge proxy guide (#1888)
+- perf(store): list by byte range so a pooled connection keeps its prefix, stop the walk at the page, fold groups once in core, keep the key beside a group (#1878) (#1886)
+- keep every Deps whole, build workers over one fleet, provide the metrics collector on its own, scope loggers through logfmt, share the wait, backoff and comma-list helpers, name runners for themselves (#1872)
+- read every reloadable setting from one running-config store (#1844)
+- move Redis recovery onto the breaker prober and drop breaker leftovers (#1841)
+- share repeated shapes in the proxy, workers, backends and notifier (#1840)
+- share repeated shapes in config, DI, runtime and observe (#1835)
+- share repeated shapes across the transports and the CLI (#1834)
+- remove pass-through wrappers and dead state; share the pending-promotion audit (#1823)
+- list every backend's usage in every dimension, aligned with the capacity bars (#1816)
+- docs(web): add a Downloads page listing every published artifact; stop pushing the website image to ghcr.io (#1815)
+
 ## [0.178.3] - 2026-10-29
 
 ### Improved
