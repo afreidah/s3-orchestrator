@@ -41,6 +41,7 @@ var (
 	statusOKStyle    lipgloss.Style
 	statusErrStyle   lipgloss.Style
 	sidebarStyle     lipgloss.Style
+	ruleStyle        lipgloss.Style
 	navTitleStyle    lipgloss.Style
 	navItemStyle     lipgloss.Style
 	navActiveStyle   lipgloss.Style
@@ -79,6 +80,7 @@ func useTheme(t *theme) {
 
 	sidebarStyle = plain.Border(lipgloss.NormalBorder(), false, true, false, false).
 		BorderForeground(t.border).Padding(0, 1)
+	ruleStyle = plain.Foreground(t.border)
 	navTitleStyle = titleStyle
 	navItemStyle = plain.Foreground(t.text)
 	navActiveStyle = bold.Foreground(t.accent)

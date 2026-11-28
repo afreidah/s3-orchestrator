@@ -140,18 +140,26 @@ func TestDeclared_Wanting(t *testing.T) {
 }
 
 // TestDeploymentForm verifies each section a deployment enables gives the
-// layer it applies, and encryption follows the encryptor rather than config.
+// layer it applies, encryption follows the encryptor rather than config, and
+// a set told no deployment stores no layer.
 func TestDeploymentForm(t *testing.T) {
 	t.Parallel()
+	d := NewDeclared()
+	if got := d.DeploymentForm(); got != 0 {
+		t.Errorf("DeploymentForm(no deployment) = %v, want none", got)
+	}
 	cfg := &config.Config{}
-	if got := DeploymentForm(cfg, false); got != 0 {
+	d.UseDeployment(config.NewLive(cfg), false)
+	if got := d.DeploymentForm(); got != 0 {
 		t.Errorf("DeploymentForm(nothing enabled) = %v, want none", got)
 	}
 	cfg.Compression.Enabled, cfg.Integrity.Enabled, cfg.Encryption.Enabled = true, true, true
-	if got := DeploymentForm(cfg, false); got != core.StoredCompressed|core.StoredHashed {
+	d.UseDeployment(config.NewLive(cfg), false)
+	if got := d.DeploymentForm(); got != core.StoredCompressed|core.StoredHashed {
 		t.Errorf("DeploymentForm(no encryptor) = %v, want compressed,hashed", got)
 	}
-	if got := DeploymentForm(cfg, true); got != core.StoredCompressed|core.StoredEncrypted|core.StoredHashed {
+	d.UseDeployment(config.NewLive(cfg), true)
+	if got := d.DeploymentForm(); got != core.StoredCompressed|core.StoredEncrypted|core.StoredHashed {
 		t.Errorf("DeploymentForm(encryptor) = %v, want every layer", got)
 	}
 }

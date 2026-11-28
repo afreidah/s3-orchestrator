@@ -132,7 +132,7 @@ func (r usageFlushResult) describe() string { return "counters flushed to the da
 // terminal summary the server sends rather than decoding a final JSON body.
 
 // replicationRebuildResult reports how many keys a rebuild of the replication
-// queue found off the factor.
+// queue found off their factor, and how many virtual buckets set their own.
 type replicationRebuildResult struct {
 	adminapi.ReplicationRebuildResponse
 }
@@ -145,7 +145,11 @@ func (r replicationRebuildResult) skipReason() string {
 }
 
 func (r replicationRebuildResult) describe() string {
-	return fmt.Sprintf("queued %s off factor %d", humanize.Count(r.Queued, "key", "keys"), r.Factor)
+	text := fmt.Sprintf("queued %s off factor %d", humanize.Count(r.Queued, "key", "keys"), r.Factor)
+	if n := len(r.BucketFactors); n > 0 {
+		text += ", " + ownFactorsText(n)
+	}
+	return text
 }
 
 // requeueResult reports how many dead-lettered cleanups went back into the

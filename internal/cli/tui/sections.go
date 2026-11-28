@@ -57,6 +57,8 @@ func sectionSpecs() [sectionCount]sectionSpec {
 	return [sectionCount]sectionSpec{
 		sectionDashboard: {
 			label: "Dashboard", jump: "g",
+			keys:   fixedKeys(hintScroll, hintReload, hintNavBack),
+			handle: (*model).handleDashboardKey,
 			header: (*model).dashboardHeaderView, body: (*model).dashboardBody,
 			reload: (*model).refreshDashboard,
 		},

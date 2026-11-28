@@ -5,7 +5,8 @@
 //
 // Covers the replication pane's load commands, snapshot/error transitions, the
 // self-perpetuating auto-refresh ticker (runs while active, lapses on leave),
-// and the rendered summary across factor, backlog, and disabled states.
+// and the rendered summary across factor, bucket factor, backlog, and
+// disabled states.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -125,12 +126,30 @@ func TestReplicationBody(t *testing.T) {
 	}
 }
 
-// TestReplicationStats_Disabled renders the disabled notice when factor <= 1.
+// TestReplicationStats_Disabled renders the disabled notice when no key's
+// factor leaves anything to replicate.
 func TestReplicationStats_Disabled(t *testing.T) {
 	t.Parallel()
 	m := &model{replication: replicationView{snap: &adminapi.ReplicationStatusResponse{Factor: 1}}}
 	if got := m.replicationStats(); !strings.Contains(got, "disabled") {
-		t.Errorf("factor<=1 stats = %q, want disabled notice", got)
+		t.Errorf("factor 1 stats = %q, want disabled notice", got)
+	}
+}
+
+// TestReplicationStats_BucketFactors verifies a deployment at factor 1 whose
+// virtual buckets set their own still shows the backlog, with each bucket and
+// its factor listed in name order under one label.
+func TestReplicationStats_BucketFactors(t *testing.T) {
+	t.Parallel()
+	snap := &adminapi.ReplicationStatusResponse{Replicating: true, UnderReplicated: 7, ComputedAt: time.Now()}
+	snap.Factor, snap.BucketFactors = 1, map[string]int{"wal": 3, "photos": 2}
+	got := (&model{replication: replicationView{snap: snap}}).replicationStats()
+	assertContains(t, got, "bucket factors", "photos  2", "wal     3", "7 objects")
+	if strings.Contains(got, "disabled") {
+		t.Errorf("stats = %q, want no disabled notice while a bucket replicates", got)
+	}
+	if strings.Index(got, "photos") > strings.Index(got, "wal") || strings.Count(got, "bucket factors") != 1 {
+		t.Errorf("stats = %q, want the buckets in name order under one label", got)
 	}
 }
 

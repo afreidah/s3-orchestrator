@@ -330,8 +330,8 @@ var renderBuckets = provisioningTable([]string{"Bucket", "Multipart", "Stored fo
 		rows := make([][]string, len(p.Buckets))
 		for i, b := range p.Buckets {
 			rows[i] = []string{
-				b.Name, output.MultipartCap(b.MaxMultipartUploads), output.StoredForm(b.StoredForm),
-				output.ReplicationFactor(b.ReplicationFactor), b.Source,
+				b.Name, output.MultipartCap(b.MaxMultipartUploads), output.StoredForm(b.StoredForm, p.Defaults.StoredForm),
+				output.ReplicationFactor(b.ReplicationFactor, p.Defaults.ReplicationFactor), b.Source,
 			}
 		}
 		return rows

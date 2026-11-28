@@ -108,6 +108,25 @@ func TestDashboard_UsageShowsEachBackendsCycle(t *testing.T) {
 	}
 }
 
+// TestDashboard_ReplicationNamesBucketFactors verifies the Replication setting
+// shows the deployment's factor followed by each virtual bucket setting its
+// own, in name order.
+func TestDashboard_ReplicationNamesBucketFactors(t *testing.T) {
+	t.Parallel()
+	page := dashboardPage{
+		Data:   &dashboard.Data{},
+		Config: configSummary{ReplicationFactor: 2, ReplicationBuckets: map[string]int{"wal": 1, "traces": 1}},
+	}
+	var buf bytes.Buffer
+	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := `Replication</span>2 <span class="tag">traces 1</span> <span class="tag">wal 1</span></span>`
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("Replication setting missing %q:\n%s", want, buf.String())
+	}
+}
+
 // TestDashboard_RefreshMarksEveryFigure verifies, with every optional section
 // shown, that each figure Refresh swaps carries its own data-refresh name and
 // that none holds a button, whose click handler a swap would drop.

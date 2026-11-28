@@ -265,6 +265,10 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 		Buckets:     make([]adminapi.Bucket, 0, len(v.Buckets)),
 		Users:       make([]adminapi.User, 0, len(v.Users)),
 		Credentials: make([]adminapi.Credential, 0, len(v.Credentials)),
+		Defaults: adminapi.BucketDefaults{
+			StoredForm:        v.Defaults.StoredForm.Names(),
+			ReplicationFactor: v.Defaults.ReplicationFactor,
+		},
 	}
 	for i := range v.Buckets {
 		b := &v.Buckets[i]

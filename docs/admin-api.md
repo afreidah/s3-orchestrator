@@ -155,7 +155,9 @@ The confirmation token is signed and scoped to the backend it was issued for; it
 A deployment declares virtual buckets and the credentials that reach them in two
 places: the config file, and the store. `GET /admin/api/provisioning` returns
 both at once - every bucket, every user with the buckets it reaches, and every
-credential - each entry carrying a `source` of `config` or `store`.
+credential - each entry carrying a `source` of `config` or `store`. Its
+`defaults` hold the `stored_form` and `replication_factor` the deployment gives
+a bucket for whichever of the two it does not set itself.
 
 `source` is what tells you whether an entry can be changed. Config-declared
 entries are visible and read-only: the API answers `403` to any attempt to
@@ -242,7 +244,7 @@ To bring an object from outside every prefix under management, move it under a v
 
 Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why.
 
-An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip at factor 1, integrity endpoints skip when verification is disabled, rebalance skips when utilization is already within the threshold or the strategy plans no moves, and reconcile skips on an instance with no reconciler, such as one in `api` mode. A pass also skips while another run holds its advisory lock, with the reason `a <name> pass is already running`; see [manual triggers](background-services.md#manual-triggers). A skip is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
+An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip when the deployment is at factor 1 and no virtual bucket sets a factor of its own, integrity endpoints skip when verification is disabled, rebalance skips when utilization is already within the threshold or the strategy plans no moves, and reconcile skips on an instance with no reconciler, such as one in `api` mode. A pass also skips while another run holds its advisory lock, with the reason `a <name> pass is already running`; see [manual triggers](background-services.md#manual-triggers). A skip is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
 
 The four conversion passes (`encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing`) and key rotation differ: they answer `400` with the reason when there is nothing to run against - no encryptor for the encryption passes and rotation, no codec for the compression passes - and `409` while another of them is running. A codec is built whether or not compression is on for writes, so already-stored objects stay readable, and `compress-existing` is a legitimate thing to run on a fleet that has not turned compression on yet.
 

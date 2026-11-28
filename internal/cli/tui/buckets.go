@@ -16,6 +16,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -37,10 +38,12 @@ type bucketsView struct {
 }
 
 // bucketEntry is one bucket with the identities that reach it, resolved
-// against the users in the same snapshot when it loads.
+// against the users in the same snapshot when it loads, and what it takes
+// from the deployment for a setting it leaves unset.
 type bucketEntry struct {
 	adminapi.Bucket
 	reachedBy []string
+	defaults  adminapi.BucketDefaults
 }
 
 // newBucketsView builds the pane's empty state.
@@ -68,7 +71,11 @@ func (m *model) loadBuckets() tea.Cmd {
 func (m *model) applyBuckets(resp *adminapi.ProvisioningResponse) {
 	entries := make([]bucketEntry, len(resp.Buckets))
 	for i := range resp.Buckets {
-		entries[i] = bucketEntry{Bucket: resp.Buckets[i], reachedBy: usersReaching(resp.Users, resp.Buckets[i].Name)}
+		entries[i] = bucketEntry{
+			Bucket:    resp.Buckets[i],
+			reachedBy: usersReaching(resp.Users, resp.Buckets[i].Name),
+			defaults:  resp.Defaults,
+		}
 	}
 	m.buckets.list.setItems(entries)
 	m.buckets.notices = resp.Notices
@@ -87,26 +94,33 @@ func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // bucketColumns declares the buckets table's columns. The name is capped and
 // the grants take the rest, since a long list of identities is what needs the
-// width.
+// width. The stored form and factor fit a deployment default with its mark.
 var bucketColumns = []columnSpec{
 	{title: "BUCKET", min: 8, max: 32, priority: 4},
 	{title: "MULTIPART", min: 9, max: 9, priority: 1},
-	{title: "STORED FORM", min: 11, max: 27, priority: 0},
-	{title: "FACTOR", min: 7, max: 7, priority: 0},
+	{title: "STORED FORM", min: 11, max: 37, priority: 0},
+	{title: "FACTOR", min: 11, max: 11, priority: 0},
 	{title: "SOURCE", min: 6, max: 6, priority: 2},
 	{title: "REACHED BY", min: 8, max: 0, priority: 3},
 }
 
 // bucketSorts orders the buckets table by every column. A multipart cap of 0
-// means unlimited, so it sorts above every real cap; REACHED BY sorts by how
-// many identities reach the bucket.
+// means unlimited, so it sorts above every real cap; the stored form and
+// factor sort by the value in force; REACHED BY sorts by how many identities
+// reach the bucket.
 var bucketSorts = map[string]func(a, b *bucketEntry) int{
 	"BUCKET":      by(func(b *bucketEntry) string { return b.Name }),
 	"MULTIPART":   by(func(b *bucketEntry) int { return multipartRank(b.MaxMultipartUploads) }),
-	"STORED FORM": by(func(b *bucketEntry) string { return output.StoredForm(b.StoredForm) }),
-	"FACTOR":      by(func(b *bucketEntry) int { return b.ReplicationFactor }),
+	"STORED FORM": by(func(b *bucketEntry) string { return b.storedForm() }),
+	"FACTOR":      by(func(b *bucketEntry) int { return cmp.Or(b.ReplicationFactor, b.defaults.ReplicationFactor) }),
 	"SOURCE":      by(func(b *bucketEntry) string { return b.Source }),
 	"REACHED BY":  by(func(b *bucketEntry) int { return len(b.reachedBy) }),
+}
+
+// storedForm renders the bucket's stored form, or the deployment's marked as
+// the default when it sets none.
+func (b *bucketEntry) storedForm() string {
+	return output.StoredForm(b.StoredForm, b.defaults.StoredForm)
 }
 
 // multipartRank orders a multipart cap with 0, which means unlimited, above
@@ -123,8 +137,8 @@ func bucketRow(b *bucketEntry) table.Row {
 	return table.Row{
 		b.Name,
 		output.MultipartCap(b.MaxMultipartUploads),
-		output.StoredForm(b.StoredForm),
-		output.ReplicationFactor(b.ReplicationFactor),
+		b.storedForm(),
+		output.ReplicationFactor(b.ReplicationFactor, b.defaults.ReplicationFactor),
 		b.Source,
 		strings.Join(b.reachedBy, ", "),
 	}

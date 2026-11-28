@@ -34,20 +34,20 @@ const maxCleanBatchSize = 10000
 // TYPES
 // -------------------------------------------------------------------------
 
-// Backlog reports the queued replication backlog: how many objects hold fewer
-// copies than their factor calls for, and how many hold more. Factor is the
-// deployment's, which a bucket may set its own beside.
+// Backlog reports the queued replication backlog: the factors it is counted
+// against, how many objects hold fewer copies than their factor calls for, and
+// how many hold more.
 type Backlog struct {
-	Factor int
-	Under  int64
-	Over   int64
+	Factors core.ReplicationFactors
+	Under   int64
+	Over    int64
 }
 
-// QueueRebuild reports a rebuild of the replication queue: the factor it
+// QueueRebuild reports a rebuild of the replication queue: the factors it
 // counted against and how many keys it queued.
 type QueueRebuild struct {
-	Factor int
-	Queued int64
+	Factors core.ReplicationFactors
+	Queued  int64
 }
 
 // ReplicationDeps holds the collaborators Replication requires.
@@ -93,31 +93,38 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	})
 }
 
+// Factors returns the running factors: the deployment's, and each bucket's
+// own.
+func (r *Replication) Factors() core.ReplicationFactors {
+	return r.d.Replicator.Factors()
+}
+
 // CountBacklog reports the queued replication backlog. With replication
-// disabled it reports the factor alone, with ErrReplicationDisabled.
+// disabled it reports the factors alone, with ErrReplicationDisabled.
 func (r *Replication) CountBacklog(ctx context.Context) (Backlog, error) {
-	factor := r.d.Config.Load().Replication.Factor
-	if !r.d.Replicator.Replicates() {
-		return Backlog{Factor: factor}, ErrReplicationDisabled
+	factors := r.Factors()
+	if !factors.Replicates() {
+		return Backlog{Factors: factors}, ErrReplicationDisabled
 	}
 	backlog, err := r.d.Backlog.CountReplicationQueue(ctx)
 	if err != nil {
 		return Backlog{}, err
 	}
-	return Backlog{Factor: factor, Under: backlog.Under, Over: backlog.Over}, nil
+	return Backlog{Factors: factors, Under: backlog.Under, Over: backlog.Over}, nil
 }
 
 // RebuildQueue rebuilds the replication queue from the ledger at the running
-// factor, for an operator who suspects it drifted, and reports how many keys
+// factors, for an operator who suspects it drifted, and reports how many keys
 // it queued.
 func (r *Replication) RebuildQueue(ctx context.Context) (QueueRebuild, error) {
 	runCfg, err := r.runConfig()
 	if err != nil {
 		return QueueRebuild{}, err
 	}
+	factors := r.Factors()
 	return underLock(ctx, r.d.Locker, core.LockReplicator, ErrReplicationInProgress, func(lockCtx context.Context) (QueueRebuild, error) {
 		queued, err := r.d.Replicator.RebuildQueue(lockCtx, runCfg)
-		return QueueRebuild{Factor: runCfg.Factor, Queued: queued}, err
+		return QueueRebuild{Factors: factors, Queued: queued}, err
 	})
 }
 
@@ -141,7 +148,7 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 // the config loader filled. Reports ErrReplicationDisabled when no key's factor
 // leaves anything to replicate.
 func (r *Replication) runConfig() (config.ReplicationConfig, error) {
-	if !r.d.Replicator.Replicates() {
+	if factors := r.Factors(); !factors.Replicates() {
 		return config.ReplicationConfig{}, ErrReplicationDisabled
 	}
 	return r.d.Config.Load().Replication, nil

@@ -138,7 +138,7 @@ func TestReport_KeepsTheNewest(t *testing.T) {
 }
 
 // TestDashboard_ShowsRecentActions verifies the dashboard lists the session's
-// results once there are any, newest last, and only as many as fit.
+// results once there are any, newest last, and only the newest few.
 func TestDashboard_ShowsRecentActions(t *testing.T) {
 	t.Parallel()
 	m := dashboardModel(t)
@@ -152,7 +152,7 @@ func TestDashboard_ShowsRecentActions(t *testing.T) {
 	if !strings.Contains(view, "recent actions") || !strings.Contains(view, "action 39") {
 		t.Errorf("dashboard missing the newest action:\n%s", view)
 	}
-	if strings.Contains(view, "action 00") {
-		t.Error("the dashboard showed more actions than fit")
+	if strings.Contains(view, fmt.Sprintf("action %02d", 39-dashActionsShown)) {
+		t.Errorf("the dashboard showed more than the newest %d actions", dashActionsShown)
 	}
 }

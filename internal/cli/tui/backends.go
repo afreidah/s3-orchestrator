@@ -509,12 +509,8 @@ func (m *model) backendsBody() []pane {
 // is under when there are any, each of its limits as a bar against its
 // ceiling, and the instance whose view of the breakers and features this is.
 func (m *model) backendDetail(b *adminapi.BackendStatus) string {
-	storage := output.StorageCeiling(b)
-	rows := []meterRow{{Ceiling: storage, name: storage.Label}}
-	for _, u := range b.UsageLimits {
-		c := output.UsageCeiling(u)
-		rows = append(rows, meterRow{Ceiling: c, name: c.Label, markers: chargedCalls(u)})
-	}
+	rows := backendMeterRows(b, chargedCalls)
+	cols := m.meterColumns(rows)
 	fields := []field{
 		{"endpoint", profileText(b.Profile)},
 		{"holds", holdingsText(b)},
@@ -528,8 +524,8 @@ func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 	fields = append(fields, field{"instance", output.Instance(m.backends.instance)})
 	return strings.Join([]string{
 		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
-		fieldBlock(summaryLabelWidth, fields...),
-		meterBlock("usage   "+output.Cycle(b.UsageCycle), m.meterColumns(rows), rows),
+		fieldBlock(cols.name, fields...),
+		meterBlock("usage   "+output.Cycle(b.UsageCycle), cols, rows),
 	}, "\n")
 }
 

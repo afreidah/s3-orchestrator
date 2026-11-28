@@ -86,14 +86,20 @@ func (d *Declared) UseDeployment(live *config.Live, encrypts bool) {
 	d.deployment.Store(&deployment{live: live, encrypts: encrypts})
 }
 
-// DeploymentForm is the stored form cfg gives a bucket without its own: the
-// layers compression and integrity enable, and encrypted when encrypts.
-func DeploymentForm(cfg *config.Config, encrypts bool) core.StoredFlags {
+// DeploymentForm returns the stored form of a bucket without its own: the
+// layers compression and integrity enable, and encrypted when the process
+// encrypts. Before UseDeployment it is no layer at all.
+func (d *Declared) DeploymentForm() core.StoredFlags {
+	dep := d.dep()
+	if dep == nil {
+		return 0
+	}
+	cfg := dep.live.Load()
 	var form core.StoredFlags
 	if cfg.Compression.Enabled {
 		form |= core.StoredCompressed
 	}
-	if encrypts {
+	if dep.encrypts {
 		form |= core.StoredEncrypted
 	}
 	if cfg.Integrity.Enabled {
@@ -163,7 +169,7 @@ func (d *Declared) Form(bucket string) core.StoredFlags {
 			return form
 		}
 	}
-	return d.deploymentForm()
+	return d.DeploymentForm()
 }
 
 // Factors returns how many copies each key is kept at: its bucket's own
@@ -184,7 +190,7 @@ func (d *Declared) Factors() core.ReplicationFactors {
 // deployment's form carries it, that is every bucket but those whose own form
 // leaves it out; otherwise only those whose own form names it.
 func (d *Declared) Wanting(layer core.StoredFlags) core.BucketScope {
-	scope := core.BucketScope{Only: !d.deploymentForm().Has(layer)}
+	scope := core.BucketScope{Only: !d.DeploymentForm().Has(layer)}
 	if s := d.load(); s != nil {
 		for name, form := range s.forms {
 			if form.Has(layer) == scope.Only {
@@ -207,14 +213,6 @@ func (d *Declared) lookup(name string) (*Bucket, bool) {
 		return nil, false
 	}
 	return &s.buckets[i], true
-}
-
-// deploymentForm returns the stored form of a bucket without its own.
-func (d *Declared) deploymentForm() core.StoredFlags {
-	if dep := d.dep(); dep != nil {
-		return DeploymentForm(dep.live.Load(), dep.encrypts)
-	}
-	return 0
 }
 
 // dep returns where a bucket without settings of its own takes them, or nil

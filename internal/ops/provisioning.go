@@ -49,11 +49,13 @@ const (
 // TYPES
 // -------------------------------------------------------------------------
 
-// ProvisioningDeps holds the collaborators Provisioning requires.
+// ProvisioningDeps holds the collaborators Provisioning requires. Buckets
+// supplies the stored form a bucket without its own takes.
 type ProvisioningDeps struct {
 	Store    ProvisioningStore
 	Objects  NamespaceCounter
 	Registry RegistryPublisher
+	Buckets  DeploymentFormReader
 	Config   *config.Live
 }
 
@@ -83,10 +85,16 @@ type NewCredential struct {
 // -------------------------------------------------------------------------
 
 // View returns everything a deployment declares, from both sources, each entry
-// carrying where it came from.
+// carrying where it came from, and what a bucket without settings of its own
+// takes from the deployment.
 func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
 	cfg := p.d.Config.Load()
-	return provisioning.LoadMerged(ctx, p.d.Store, cfg.Buckets, cfg.Auth)
+	view, err := provisioning.LoadMerged(ctx, p.d.Store, cfg.Buckets, cfg.Auth)
+	if err != nil {
+		return view, err
+	}
+	view.Defaults = provisioning.Defaults{StoredForm: p.d.Buckets.DeploymentForm(), ReplicationFactor: cfg.Replication.Factor}
+	return view, nil
 }
 
 // -------------------------------------------------------------------------

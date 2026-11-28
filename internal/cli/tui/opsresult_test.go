@@ -93,6 +93,20 @@ func TestDecodeOneShot(t *testing.T) {
 			outcome: adminstream.OutcomeOK,
 			message: "requeued 1 row from all backends",
 		},
+		{
+			name:    "queue rebuild at the deployment's factor",
+			decode:  decodeOneShot[replicationRebuildResult],
+			body:    `{"status":"ok","factor":2,"queued":1204}`,
+			outcome: adminstream.OutcomeOK,
+			message: "queued 1,204 keys off factor 2",
+		},
+		{
+			name:    "queue rebuild with buckets at their own factor",
+			decode:  decodeOneShot[replicationRebuildResult],
+			body:    `{"status":"ok","factor":2,"bucket_factors":{"wal":1,"traces":1},"queued":3}`,
+			outcome: adminstream.OutcomeOK,
+			message: "queued 3 keys off factor 2, 2 buckets set their own",
+		},
 	}
 
 	for _, tc := range cases {

@@ -123,6 +123,7 @@ func New(d *Deps) *Services {
 			Store:    d.Provisioning,
 			Objects:  d.Store,
 			Registry: d.Registry,
+			Buckets:  d.Declared,
 			Config:   cfg,
 		}),
 	}

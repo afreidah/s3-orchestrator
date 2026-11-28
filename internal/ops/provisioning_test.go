@@ -75,6 +75,7 @@ func newProvFixtureCfg(t *testing.T, cfg *config.Config, rows *provStore) *provF
 		Store:    f.store,
 		Objects:  f.objects,
 		Registry: f.registry,
+		Buckets:  opstest.EveryLayer(),
 		Config:   config.NewLive(cfg),
 	})
 	return f
@@ -118,7 +119,7 @@ func TestProvisioning_ViewReadFailurePropagates(t *testing.T) {
 	store := opstest.NewMockProvisioningStore(ctrl)
 	store.EXPECT().ListBuckets(gomock.Any()).Return(nil, boom)
 
-	svc := NewProvisioning(ProvisioningDeps{Store: store, Config: config.NewLive(&config.Config{})})
+	svc := NewProvisioning(ProvisioningDeps{Store: store, Buckets: opstest.EveryLayer(), Config: config.NewLive(&config.Config{})})
 	if _, err := svc.View(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want a wrap of boom", err)
 	}
@@ -817,7 +818,7 @@ func TestProvisioning_NoPublisherIsTolerated(t *testing.T) {
 	store.EXPECT().ListGrants(a).Return(nil, nil)
 	store.EXPECT().CreateBucket(a, a).Return(nil)
 
-	svc := NewProvisioning(ProvisioningDeps{Store: store, Config: config.NewLive(&config.Config{})})
+	svc := NewProvisioning(ProvisioningDeps{Store: store, Buckets: opstest.EveryLayer(), Config: config.NewLive(&config.Config{})})
 	if err := svc.CreateBucket(context.Background(), &core.Bucket{Name: "photos"}); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
@@ -1408,8 +1409,9 @@ func TestProvisioning_UpdateSurfacesListingFailures(t *testing.T) {
 
 			f := &provFixture{store: store}
 			f.svc = NewProvisioning(ProvisioningDeps{
-				Store:  store,
-				Config: config.NewLive(&config.Config{}),
+				Store:   store,
+				Buckets: opstest.EveryLayer(),
+				Config:  config.NewLive(&config.Config{}),
 			})
 			if err := tc.call(f); !errors.Is(err, boom) {
 				t.Fatalf("err = %v, want a wrap of boom", err)
