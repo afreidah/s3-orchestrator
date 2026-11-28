@@ -74,10 +74,10 @@ nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
 
 ## Nomad Job
 
-Plain Nomad job file that takes variables, with production values for two instances behind Traefik through Consul and secrets from Vault.
+Plain Nomad job file that takes variables and runs the release's image by default, with example values for two instances behind Traefik through Consul and secrets from Vault.
 
-- **Download:** [s3-orchestrator.nomad.hcl](https://github.com/afreidah/s3-orchestrator/blob/main/deploy/nomad/s3-orchestrator.nomad.hcl), [s3-orchestrator.vars.hcl](https://github.com/afreidah/s3-orchestrator/blob/main/deploy/nomad/s3-orchestrator.vars.hcl), [Ramble](https://ramble.openwander.org/afreidah/s3-orchestrator)
-- **Docs:** [Deploying on Nomad with Vault](../guides/nomad-vault-deployment/)
+- **Download:** [afreidah/nomad-job-s3-orchestrator](https://github.com/afreidah/nomad-job-s3-orchestrator), [Ramble](https://ramble.openwander.org/afreidah/s3-orchestrator)
+- **Docs:** [Job README](https://github.com/afreidah/nomad-job-s3-orchestrator#readme), [Deploying on Nomad with Vault](../guides/nomad-vault-deployment/)
 
 ```bash
 nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v${VERSION} -var=config_file=./config.yaml s3-orchestrator.nomad.hcl

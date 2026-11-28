@@ -93,6 +93,7 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 | Static binary | Linux amd64 and arm64 from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
 | Helm chart | `oci://ghcr.io/afreidah/charts/s3-orchestrator`, also on [Artifact Hub](https://artifacthub.io/packages/helm/s3-orchestrator/s3-orchestrator) |
 | Nomad pack | [`afreidah/nomad-pack-s3-orchestrator`](https://github.com/afreidah/nomad-pack-s3-orchestrator), or the tarball on [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
+| Nomad job | [`afreidah/nomad-job-s3-orchestrator`](https://github.com/afreidah/nomad-job-s3-orchestrator) |
 | From source | `git clone && make build` |
 | Terraform provider | [`afreidah/s3-orchestrator`](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) on the Terraform Registry, or the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
 

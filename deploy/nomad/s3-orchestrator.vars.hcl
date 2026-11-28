@@ -1,13 +1,13 @@
 # -------------------------------------------------------------------------------
-# S3 Orchestrator - Production Job Variables
+# S3 Orchestrator - Example Job Variables
 #
 # Author: Alex Freidah
 #
-# Production values for s3-orchestrator.nomad.hcl: two instances on separate
+# Example values for s3-orchestrator.nomad.hcl: two instances on separate
 # nodes behind Traefik through Consul, secrets from Vault through workload
-# identity. The release to run is passed at submit time with -var=version.
-# Two instances need redis in config.yaml, so both enforce usage limits
-# against the same counters.
+# identity. Replace the host, the Vault path and the secret names with the
+# deployment's own. Two instances need redis in config.yaml, so both enforce
+# usage limits against the same counters.
 # -------------------------------------------------------------------------------
 
 # --- Placement ---

@@ -42,7 +42,7 @@ nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
 
 By default the task's environment is every item of the job's Nomad Variable, so the pack runs on a cluster without Vault. Vault through workload identity, Consul KV and extra files such as TLS certificates are set through its variables.
 
-For a plain job file, [`deploy/nomad/s3-orchestrator.nomad.hcl`](../deploy/nomad/s3-orchestrator.nomad.hcl) takes the same settings as variables, with production values in `s3-orchestrator.vars.hcl`. Setting `worker_count` adds a group of `worker` instances and runs the S3 group in `api` mode:
+For a plain job file, [`deploy/nomad/s3-orchestrator.nomad.hcl`](../deploy/nomad/s3-orchestrator.nomad.hcl) takes the same settings as variables, with example values in `s3-orchestrator.vars.hcl`. Setting `worker_count` adds a group of `worker` instances and runs the S3 group in `api` mode. Each release also pushes the job file, stamped with that release, to [afreidah/nomad-job-s3-orchestrator](https://github.com/afreidah/nomad-job-s3-orchestrator):
 
 ```bash
 nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.191.0 s3-orchestrator.nomad.hcl

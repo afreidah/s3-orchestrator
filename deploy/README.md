@@ -21,7 +21,7 @@ The pack in [`nomad/packs/s3_orchestrator`](nomad/packs/s3_orchestrator/README.m
 nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
 ```
 
-[`nomad/s3-orchestrator.nomad.hcl`](nomad/s3-orchestrator.nomad.hcl) is the same job as a plain job file that takes variables. Its job ID is fixed, so it splits api and worker instances into two groups with `worker_count` where the pack runs twice. Production values, with Consul, Traefik and Vault, are in `nomad/s3-orchestrator.vars.hcl`:
+[`nomad/s3-orchestrator.nomad.hcl`](nomad/s3-orchestrator.nomad.hcl) is the same job as a plain job file that takes variables. Its job ID is fixed, so it splits api and worker instances into two groups with `worker_count` where the pack runs twice. Its [README](nomad/README.md) covers its variables. Example values, with Consul, Traefik and Vault, are in `nomad/s3-orchestrator.vars.hcl`. Each release stamps the job file and pushes it, the example values and the README to [afreidah/nomad-job-s3-orchestrator](https://github.com/afreidah/nomad-job-s3-orchestrator) with the release's tag:
 
 ```bash
 nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.191.0 s3-orchestrator.nomad.hcl

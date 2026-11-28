@@ -653,7 +653,9 @@ HELM_CHART       := deploy/helm/s3-orchestrator
 NOMAD_PACK       := deploy/nomad/packs/s3_orchestrator
 NOMAD_JOB        := deploy/nomad/s3-orchestrator.nomad.hcl
 NOMAD_JOB_VARS   := deploy/nomad/s3-orchestrator.vars.hcl
+NOMAD_JOB_README := deploy/nomad/README.md
 PACK_REPO        ?= afreidah/nomad-pack-s3-orchestrator
+JOB_REPO         ?= afreidah/nomad-job-s3-orchestrator
 CHART_VERSION    := $(patsubst v%,%,$(VERSION))
 KUBECONFORM      := go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
 KUBECONFORM_CRDS := https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
@@ -710,6 +712,26 @@ pack-publish: pack-package ## Push the stamped Nomad pack to its own repository 
 	git -C dist/pack-repo commit --quiet -m "s3_orchestrator pack $(VERSION)"
 	git -C dist/pack-repo tag $(VERSION)
 	git -C dist/pack-repo push --quiet origin main $(VERSION)
+
+job-package: ## Stamp the Nomad job with the release and copy it into dist/
+	@rm -rf dist/job && mkdir -p dist/job
+	awk '/^variable "version"/ { inblock = 1 } inblock && /^  default / { sub(/""/, "\"$(VERSION)\""); inblock = 0 } { print }' \
+		$(NOMAD_JOB) > dist/job/s3-orchestrator.nomad.hcl
+	cp $(NOMAD_JOB_VARS) $(NOMAD_JOB_README) dist/job/
+	grep -q '^  default     = "$(VERSION)"$$' dist/job/s3-orchestrator.nomad.hcl
+
+# Ramble reads a job file from a repository of its own, so each release
+# replaces that repository's contents and tags it, as it does for the pack.
+job-publish: job-package ## Push the stamped Nomad job to its own repository and tag it
+	@rm -rf dist/job-repo
+	git clone --quiet git@github.com:$(JOB_REPO).git dist/job-repo
+	git -C dist/job-repo symbolic-ref HEAD refs/heads/main
+	find dist/job-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+	cp -r dist/job/. LICENSE dist/job-repo/
+	git -C dist/job-repo add -A
+	git -C dist/job-repo commit --quiet -m "s3-orchestrator job $(VERSION)"
+	git -C dist/job-repo tag $(VERSION)
+	git -C dist/job-repo push --quiet origin main $(VERSION)
 
 ##@ Website
 
