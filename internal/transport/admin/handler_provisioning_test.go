@@ -57,8 +57,9 @@ func provisioningWith(t *testing.T, h *Handler, cfgBuckets []config.BucketConfig
 	store.EXPECT().ListGrants(a).Return(rows.grants, nil).AnyTimes()
 
 	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
-		Store:  store,
-		Config: config.NewLive(&config.Config{Buckets: cfgBuckets}),
+		Store:   store,
+		Buckets: opstest.EveryLayer(),
+		Config:  config.NewLive(&config.Config{Buckets: cfgBuckets, Replication: config.ReplicationConfig{Factor: 2}}),
 	})
 	return store
 }
@@ -79,7 +80,8 @@ func jsonRequest(t *testing.T, method, target string, body any) *http.Request {
 
 // TestHandleProvisioning_ListsBothSources verifies the listing reports what each
 // source declares and marks which is which, since that is what tells a caller
-// whether an entry can be changed.
+// whether an entry can be changed, along with what a bucket setting no stored
+// form or factor takes from the deployment.
 func TestHandleProvisioning_ListsBothSources(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
@@ -110,6 +112,9 @@ func TestHandleProvisioning_ListsBothSources(t *testing.T) {
 	}
 	if len(got.Users) != 1 || len(got.Users[0].Buckets) != 1 {
 		t.Errorf("users = %+v, want one reaching one bucket", got.Users)
+	}
+	if want := []string{"compressed", "encrypted", "hashed"}; !slices.Equal(got.Defaults.StoredForm, want) || got.Defaults.ReplicationFactor != 2 {
+		t.Errorf("defaults = %+v, want %v at factor 2", got.Defaults, want)
 	}
 }
 
@@ -172,8 +177,9 @@ func TestHandleProvisioning_StoreFailureIs500(t *testing.T) {
 	store := opstest.NewMockProvisioningStore(gomock.NewController(t))
 	store.EXPECT().ListBuckets(gomock.Any()).Return(nil, context.DeadlineExceeded)
 	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
-		Store:  store,
-		Config: config.NewLive(&config.Config{}),
+		Store:   store,
+		Buckets: opstest.EveryLayer(),
+		Config:  config.NewLive(&config.Config{}),
 	})
 
 	w := httptest.NewRecorder()
@@ -360,6 +366,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 	h.d.Ops.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:   store,
 		Objects: objects,
+		Buckets: opstest.EveryLayer(),
 		Config:  config.NewLive(&config.Config{}),
 	})
 

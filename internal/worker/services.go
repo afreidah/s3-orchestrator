@@ -47,11 +47,14 @@ func passWork[T any](pass func(ctx context.Context) (T, error)) func(context.Con
 // factor for a whole interval.
 func NewReplicationService(rep *Replicator, c *OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
 	return tickrunner.New(tickrunner.Config{
-		Locker:       locker,
-		LockID:       core.LockReplicator,
-		Name:         string(audit.WorkloadReplication),
-		Interval:     rep.Config().WorkerInterval,
-		ShouldRun:    rep.Replicates,
+		Locker:   locker,
+		LockID:   core.LockReplicator,
+		Name:     string(audit.WorkloadReplication),
+		Interval: rep.Config().WorkerInterval,
+		ShouldRun: func() bool {
+			factors := rep.Factors()
+			return factors.Replicates()
+		},
 		RunAtStartup: true,
 		Work: func(ctx context.Context) error {
 			_, replicateErr := rep.Replicate(ctx, *rep.Config(), nil)

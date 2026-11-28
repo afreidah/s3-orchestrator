@@ -1541,6 +1541,19 @@ components:
                 - replication_factor
                 - source
             type: object
+        BucketDefaults:
+            properties:
+                replication_factor:
+                    format: int64
+                    type: integer
+                stored_form:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - stored_form
+                - replication_factor
+            type: object
         CORSRule:
             properties:
                 allowed_headers:
@@ -2341,6 +2354,11 @@ components:
             type: object
         OverReplicationStatusResponse:
             properties:
+                bucket_factors:
+                    additionalProperties:
+                        format: int64
+                        type: integer
+                    type: object
                 factor:
                     format: int64
                     type: integer
@@ -2402,6 +2420,8 @@ components:
                     items:
                         $ref: '#/components/schemas/Credential'
                     type: array
+                defaults:
+                    $ref: '#/components/schemas/BucketDefaults'
                 notices:
                     items:
                         $ref: '#/components/schemas/Notice'
@@ -2414,6 +2434,7 @@ components:
                 - buckets
                 - users
                 - credentials
+                - defaults
             type: object
         RebalanceResponse:
             properties:
@@ -2541,6 +2562,11 @@ components:
             type: object
         ReplicationRebuildResponse:
             properties:
+                bucket_factors:
+                    additionalProperties:
+                        format: int64
+                        type: integer
+                    type: object
                 factor:
                     format: int64
                     type: integer
@@ -2558,6 +2584,11 @@ components:
             type: object
         ReplicationStatusResponse:
             properties:
+                bucket_factors:
+                    additionalProperties:
+                        format: int64
+                        type: integer
+                    type: object
                 computed_at:
                     format: date-time
                     type: string
@@ -2567,11 +2598,14 @@ components:
                 over_replicated:
                     format: int64
                     type: integer
+                replicating:
+                    type: boolean
                 under_replicated:
                     format: int64
                     type: integer
             required:
                 - factor
+                - replicating
                 - under_replicated
                 - over_replicated
                 - computed_at

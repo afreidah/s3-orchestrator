@@ -73,15 +73,25 @@ type Notice struct {
 	Detail string `json:"detail"`
 }
 
+// BucketDefaults is what a virtual bucket takes from the deployment for a
+// setting it leaves unset: the layers its new objects are stored with, and its
+// replication factor.
+type BucketDefaults struct {
+	StoredForm        []string `json:"stored_form"`
+	ReplicationFactor int      `json:"replication_factor"`
+}
+
 // ProvisioningResponse is everything a deployment declares, from both sources.
 // One response rather than four endpoints, because the four are only meaningful
 // together: a credential names a user, and a user is only useful for the
-// buckets it reaches.
+// buckets it reaches. Defaults is what a bucket listed without a stored form or
+// factor of its own takes instead.
 type ProvisioningResponse struct {
-	Buckets     []Bucket     `json:"buckets"`
-	Users       []User       `json:"users"`
-	Credentials []Credential `json:"credentials"`
-	Notices     []Notice     `json:"notices,omitempty"`
+	Buckets     []Bucket       `json:"buckets"`
+	Users       []User         `json:"users"`
+	Credentials []Credential   `json:"credentials"`
+	Notices     []Notice       `json:"notices,omitempty"`
+	Defaults    BucketDefaults `json:"defaults"`
 }
 
 // CreateBucketRequest declares a virtual bucket and the settings it carries,

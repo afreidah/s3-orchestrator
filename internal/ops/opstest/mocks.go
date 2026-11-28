@@ -6,6 +6,7 @@
 //	mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,Rewriter,Replicator,Rebalancer,Reconciler,OverReplicationCleaner,ScrubberOps,RewriteStore,CopyStore,ProvisioningStore,NamespaceCounter,RegistryPublisher
 //
 
+// Package opstest is a generated GoMock package.
 package opstest
 
 import (
@@ -487,6 +488,20 @@ func (m *MockReplicator) EXPECT() *MockReplicatorMockRecorder {
 	return m.recorder
 }
 
+// Factors mocks base method.
+func (m *MockReplicator) Factors() core.ReplicationFactors {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Factors")
+	ret0, _ := ret[0].(core.ReplicationFactors)
+	return ret0
+}
+
+// Factors indicates an expected call of Factors.
+func (mr *MockReplicatorMockRecorder) Factors() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Factors", reflect.TypeOf((*MockReplicator)(nil).Factors))
+}
+
 // RebuildQueue mocks base method.
 func (m *MockReplicator) RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error) {
 	m.ctrl.T.Helper()
@@ -515,20 +530,6 @@ func (m *MockReplicator) Replicate(ctx context.Context, cfg config.ReplicationCo
 func (mr *MockReplicatorMockRecorder) Replicate(ctx, cfg, observer any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Replicate", reflect.TypeOf((*MockReplicator)(nil).Replicate), ctx, cfg, observer)
-}
-
-// Replicates mocks base method.
-func (m *MockReplicator) Replicates() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Replicates")
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// Replicates indicates an expected call of Replicates.
-func (mr *MockReplicatorMockRecorder) Replicates() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Replicates", reflect.TypeOf((*MockReplicator)(nil).Replicates))
 }
 
 // MockRebalancer is a mock of Rebalancer interface.

@@ -85,11 +85,18 @@ type BucketScopeSource interface {
 	Wanting(layer core.StoredFlags) core.BucketScope
 }
 
+// DeploymentFormReader returns the stored form a bucket without its own takes
+// from the deployment. *provisioning.Declared satisfies it.
+type DeploymentFormReader interface {
+	DeploymentForm() core.StoredFlags
+}
+
 // DeclaredBuckets is everything the operations layer asks of the declared
 // bucket set.
 type DeclaredBuckets interface {
 	BucketMatcher
 	BucketScopeSource
+	DeploymentFormReader
 }
 
 // NamespaceCounter answers how many objects live under a prefix, which is what
@@ -121,12 +128,12 @@ type Rewriter interface {
 // use. Replicate runs one cycle and returns the copies it created alongside the
 // per-item tally, so a caller can tell a cycle that did its work from one where
 // objects failed. RebuildQueue rebuilds the replication queue from the ledger
-// and reports how many keys it queued. Replicates reports whether any key's
-// factor leaves the workers anything to keep.
+// and reports how many keys it queued. Factors returns the running factors,
+// the deployment's and each bucket's own.
 type Replicator interface {
 	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error)
 	RebuildQueue(ctx context.Context, cfg config.ReplicationConfig) (int64, error)
-	Replicates() bool
+	Factors() core.ReplicationFactors
 }
 
 // Rebalancer is the slice of *worker.Rebalancer the rebalance operation uses.

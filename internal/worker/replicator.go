@@ -136,11 +136,10 @@ func (r *Replicator) RebuildQueue(ctx context.Context, cfg config.ReplicationCon
 	return r.d.Queue.rebuild(ctx, &factors, excluded, r.d.Ops.Backends())
 }
 
-// Replicates reports whether the running factors leave the replication
-// workers anything to keep, which is when they run.
-func (r *Replicator) Replicates() bool {
-	factors := r.d.Queue.Factors(r.d.Config.Config().Factor)
-	return factors.Replicates()
+// Factors returns the running factors: the deployment's, and each bucket's
+// own. The replication workers run when they leave anything to keep.
+func (r *Replicator) Factors() core.ReplicationFactors {
+	return r.d.Queue.Factors(r.d.Config.Config().Factor)
 }
 
 // AuditAttrs adds the copies created to the tally's attributes.

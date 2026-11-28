@@ -81,6 +81,7 @@ type model struct {
 	navCursor   int             // highlighted nav entry while the nav is focused
 	mode        viewMode        // Files sub-state: the listing (browse) or the inspector
 	insp        inspector       // inspector pane state, populated when mode is modeInspect
+	dashboard   dashboardView   // dashboard scroll state over the backend blocks
 	backends    backendsView    // backends pane state, populated when section is sectionBackends
 	buckets     bucketsView     // buckets pane state, populated when section is sectionBuckets
 	logs        logsView        // logs pane state, populated when section is sectionLogs

@@ -71,9 +71,11 @@ func counterVecTotal(v *prometheus.CounterVec) float64 {
 
 // configSummary holds non-sensitive configuration for display. The Enabled
 // flags drive which admin-action buttons render in the dashboard.
+// ReplicationBuckets names the virtual buckets setting a factor of their own.
 type configSummary struct {
 	RoutingStrategy           string
 	ReplicationFactor         int
+	ReplicationBuckets        map[string]int
 	RebalanceEnabled          bool
 	RebalanceStrategy         string
 	RateLimitEnabled          bool
@@ -106,6 +108,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.d.Config.Load()
+	factors := h.d.Ops.Replication.Factors()
 
 	var totalUsed, totalLimit, totalOrphan int64
 	unlimited := false
@@ -131,7 +134,8 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TotalOrphanBytes: totalOrphan,
 		Config: configSummary{
 			RoutingStrategy:           string(cfg.RoutingStrategy),
-			ReplicationFactor:         cfg.Replication.Factor,
+			ReplicationFactor:         factors.Default,
+			ReplicationBuckets:        factors.Buckets,
 			RebalanceEnabled:          cfg.Rebalance.Enabled,
 			RebalanceStrategy:         string(cfg.Rebalance.Strategy),
 			RateLimitEnabled:          cfg.RateLimit.Enabled,

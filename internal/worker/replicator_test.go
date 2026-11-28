@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -418,10 +419,11 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 	}
 }
 
-// TestReplicator_ReplicatesWhileAnyKeyHasCopiesToKeep verifies the workers run
-// at a deployment factor above one, and at one once any bucket sets a factor
-// of its own, since that bucket's keys, or the rest, may need copies trimmed.
-func TestReplicator_ReplicatesWhileAnyKeyHasCopiesToKeep(t *testing.T) {
+// TestReplicator_FactorsCarryTheDeploymentAndEachBucket verifies the running
+// factors pair the deployment's with each bucket's own, and replicate at a
+// deployment factor above one, and at one once any bucket sets a factor of its
+// own, since that bucket's keys, or the rest, may need copies trimmed.
+func TestReplicator_FactorsCarryTheDeploymentAndEachBucket(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	for _, tc := range []struct {
@@ -439,8 +441,12 @@ func TestReplicator_ReplicatesWhileAnyKeyHasCopiesToKeep(t *testing.T) {
 			Fleet: fleetOf(newMockOps(ctrl), NewMockPlacement(ctrl)), Store: ms, Queue: NewReplicationQueue(ms),
 			Config: syncutil.Fixed(&config.ReplicationConfig{Factor: tc.deployment}), Integrity: defaultIntegrity,
 		})
-		if got := r.Replicates(); got != tc.want {
-			t.Errorf("Replicates at %d with buckets %v = %v, want %v", tc.deployment, tc.buckets, got, tc.want)
+		got := r.Factors()
+		if got.Default != tc.deployment || !maps.Equal(got.Buckets, tc.buckets) {
+			t.Errorf("Factors at %d with buckets %v = %+v", tc.deployment, tc.buckets, got)
+		}
+		if got.Replicates() != tc.want {
+			t.Errorf("Replicates at %d with buckets %v = %v, want %v", tc.deployment, tc.buckets, got.Replicates(), tc.want)
 		}
 	}
 }

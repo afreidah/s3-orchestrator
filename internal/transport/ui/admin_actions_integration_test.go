@@ -295,7 +295,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	repl := opstest.NewMockReplicator(ctrl)
-	repl.EXPECT().Replicates().Return(true).AnyTimes()
+	repl.EXPECT().Factors().Return(core.ReplicationFactors{Default: 2}).AnyTimes()
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
 			Succeeded: created, Failed: failed,

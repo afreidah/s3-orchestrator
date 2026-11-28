@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Covers the replication-status endpoint: both sides of the queue with the
-// running factor, the zeroed counts of a disabled replication, and a failed
-// count.
+// running factor, a virtual bucket's own factor keeping replication running,
+// the zeroed counts of a disabled replication, and a failed count.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -45,13 +46,33 @@ func TestHandleReplicationStatus_ReportsTheQueue(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Factor != 2 || resp.UnderReplicated != 143 || resp.OverReplicated != 12 || resp.ComputedAt.IsZero() {
-		t.Errorf("resp = %+v, want factor 2, 143 under, 12 over, stamped", resp)
+	if resp.Factor != 2 || !resp.Replicating || resp.UnderReplicated != 143 || resp.OverReplicated != 12 || resp.ComputedAt.IsZero() {
+		t.Errorf("resp = %+v, want factor 2, replicating, 143 under, 12 over, stamped", resp)
+	}
+}
+
+// TestHandleReplicationStatus_BucketFactors verifies a deployment at factor 1
+// still replicates once a virtual bucket sets a factor of its own, and names
+// that bucket with its factor beside the backlog.
+func TestHandleReplicationStatus_BucketFactors(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	replicationWith(t, h, replicatorStub{buckets: map[string]int{"photos": 2}, pending: 5},
+		overRepStub{cfg: &config.ReplicationConfig{Factor: 1}})
+
+	w := replicationStatus(t, h)
+	var resp adminapi.ReplicationStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Factor != 1 || !resp.Replicating || resp.BucketFactors["photos"] != 2 || resp.UnderReplicated != 5 {
+		t.Errorf("resp = %+v, want factor 1, replicating, photos at 2, 5 under", resp)
 	}
 }
 
 // TestHandleReplicationStatus_Disabled verifies a disabled replication reports
-// its factor with zeroed counts rather than an error.
+// its factor with zeroed counts rather than an error, and leaves the bucket
+// factors out.
 func TestHandleReplicationStatus_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
@@ -60,8 +81,11 @@ func TestHandleReplicationStatus_Disabled(t *testing.T) {
 	w := replicationStatus(t, h)
 	var resp adminapi.ReplicationStatusResponse
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if w.Code != http.StatusOK || resp.Factor != 1 || resp.UnderReplicated != 0 || resp.OverReplicated != 0 {
-		t.Errorf("status = %d, resp = %+v; want 200 with factor 1 and no counts", w.Code, resp)
+	if w.Code != http.StatusOK || resp.Factor != 1 || resp.Replicating || resp.UnderReplicated != 0 || resp.OverReplicated != 0 {
+		t.Errorf("status = %d, resp = %+v; want 200 with factor 1, not replicating, and no counts", w.Code, resp)
+	}
+	if strings.Contains(w.Body.String(), "bucket_factors") {
+		t.Errorf("body names bucket factors while none is set: %s", w.Body.String())
 	}
 }
 

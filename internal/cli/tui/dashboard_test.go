@@ -3,15 +3,17 @@
 //
 // Author: Alex Freidah
 //
-// Covers that the TUI opens on the dashboard, what its capacity and summary
+// Covers that the TUI opens on the dashboard, what its summary and backend
 // blocks say for a loaded fleet, how figures that have not arrived yet read,
-// and that the pane fits the terminal at a narrow width.
+// that the blocks scroll beneath a summary that stays put, and that the pane
+// fits the terminal at a narrow width.
 // -------------------------------------------------------------------------------
 
 package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -90,52 +92,63 @@ func TestDashboard_IsWhereTheTUIOpens(t *testing.T) {
 	assertContains(t, m.contentView(), "dashboard", "loading")
 }
 
-// TestDashboard_Capacity verifies each backend gets a bar with its figures and
-// markers, a backend with no limit says so, and the fleet total counts only
-// the limits that exist.
-func TestDashboard_Capacity(t *testing.T) {
-	t.Parallel()
-	got, _ := dashboardModel(t).dashboardMeters()
-	assertContains(t, got,
-		"minio-a", "9.0 GiB / 10.0 GiB", "90%", "draining",
-		"minio-b", "no limit", "DEGRADED GetObject",
-		"minio-c", "DOWN",
-		"fleet", "10.0 GiB / 10.0 GiB", "100%",
-		"[", "#", "-]")
+// dashboardBlocks renders m's backend blocks and returns each one, keyed by
+// the backend its rule names.
+func dashboardBlocks(t *testing.T, m *model) map[string]string {
+	t.Helper()
+	blocks := map[string]string{}
+	for block := range strings.SplitSeq(m.dashboardBackends(m.dashboardColumns()), "\n\n") {
+		rule, _, _ := strings.Cut(block, "\n")
+		name := strings.Fields(strings.TrimLeft(rule, ruleRune+" "))[0]
+		blocks[name] = block
+	}
+	return blocks
 }
 
-// TestDashboard_UsageLimits verifies every backend that reports usage gets a
-// group with a row per dimension, named once, separated from the next by a
-// blank line: bytes for egress and ingress, a call count for requests, no
-// limit where the backend sets none, and a limit used up drawn as a full bar.
-func TestDashboard_UsageLimits(t *testing.T) {
+// TestDashboard_BackendBlocks verifies every backend gets a block opened by a
+// rule naming it with its health, flags and usage cycle, over its storage and
+// a row per usage dimension: bytes for egress and ingress, a call count for
+// requests, no limit where the backend sets none, and a limit used up drawn as
+// a full bar. A backend reporting no usage shows its storage alone and no
+// cycle.
+func TestDashboard_BackendBlocks(t *testing.T) {
 	t.Parallel()
-	_, got := dashboardModel(t).dashboardMeters()
-	assertContains(t, got,
-		"usage limits", "Oct 15 - Nov 15 America/Los_Angeles", "Oct 1 - Nov 1 UTC",
-		"egress", "5.0 GiB / 5.0 GiB", "100%", "[####",
-		"requests:writes", "1,200 / 4,800", "25%",
-		"minio-b", "3.0 GiB", "34", "no limit", "\n\n")
-	if n := strings.Count(got, "minio-a"); n != 1 {
-		t.Errorf("minio-a is named %d times, want once for its group:\n%s", n, got)
+	blocks := dashboardBlocks(t, dashboardModel(t))
+	if len(blocks) != 3 {
+		t.Fatalf("blocks = %d, want one per backend: %v", len(blocks), blocks)
 	}
-	if strings.Contains(got, "minio-c") {
-		t.Errorf("block shows minio-c, which reports no usage:\n%s", got)
+	a := blocks["minio-a"]
+	rule, rows, _ := strings.Cut(a, "\n")
+	assertContains(t, rule, "minio-a", "healthy", "draining", "Oct 15 - Nov 15 America/Los_Angeles", ruleRune)
+	assertContains(t, rows,
+		"storage", "9.0 GiB / 10.0 GiB", "90%",
+		"egress", "5.0 GiB / 5.0 GiB", "100%",
+		"ingress", "no limit", "1.0 GiB",
+		"requests:writes", "1,200 / 4,800", "25%")
+	if strings.Contains(rows, "Oct 15") {
+		t.Errorf("minio-a's rows repeat its cycle, which its rule carries:\n%s", rows)
 	}
-	for line := range strings.SplitSeq(got, "\n") {
-		if strings.Contains(line, "minio-a") && strings.Contains(line, "-]") {
+	for line := range strings.SplitSeq(rows, "\n") {
+		if strings.Contains(line, "egress") && strings.Contains(line, "-]") {
 			t.Errorf("the exhausted limit is not drawn as a full bar: %q", line)
 		}
 	}
+	assertContains(t, blocks["minio-b"], "DEGRADED GetObject", "Oct 1 - Nov 1 UTC", "storage", "no limit", "3.0 GiB", "34")
+	c := blocks["minio-c"]
+	assertContains(t, c, "DOWN", "storage")
+	if strings.Contains(c, "Oct") || strings.Count(c, "\n") != 1 {
+		t.Errorf("minio-c reports no usage, want its rule and storage alone:\n%s", c)
+	}
 }
 
-// TestDashboard_MetersAlign verifies the capacity and usage blocks share their
-// columns, so every bar starts in the same column in both.
+// TestDashboard_MetersAlign verifies the summary's fleet storage and every
+// backend block share their columns, so every bar starts in one column.
 func TestDashboard_MetersAlign(t *testing.T) {
 	t.Parallel()
-	capacity, usage := dashboardModel(t).dashboardMeters()
+	m := dashboardModel(t)
+	cols := m.dashboardColumns()
 	starts := map[int]bool{}
-	for _, block := range []string{capacity, usage} {
+	for _, block := range []string{m.dashboardSummary(cols), m.dashboardBackends(cols)} {
 		for line := range strings.SplitSeq(block, "\n") {
 			if i := strings.Index(line, "["); i >= 0 {
 				starts[i] = true
@@ -143,13 +156,13 @@ func TestDashboard_MetersAlign(t *testing.T) {
 		}
 	}
 	if len(starts) != 1 {
-		t.Errorf("bars start in %d different columns, want 1:\n%s\n\n%s", len(starts), capacity, usage)
+		t.Errorf("bars start in %d different columns, want 1: %v", len(starts), starts)
 	}
 }
 
-// TestDashboard_UsageLimitsMixedCycles verifies each backend's rows carry that
-// backend's own cycle, not one fleet-wide period.
-func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
+// TestDashboard_BlocksCarryTheirOwnCycle verifies each backend's rule carries
+// that backend's own cycle, not one fleet-wide period.
+func TestDashboard_BlocksCarryTheirOwnCycle(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 140, 30
@@ -158,48 +171,80 @@ func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
 		{Name: "c2", UsageLimits: egress, UsageCycle: wireCycle(15, "UTC", 0)},
 		{Name: "r2", UsageLimits: egress, UsageCycle: wireCycle(1, "America/Los_Angeles", -7)},
 	}})
-	want := map[string]string{"c2": "Oct 15 - Nov 15 UTC", "r2": "Oct 1 - Nov 1 America/Los_Angeles"}
-	_, usage := m.dashboardMeters()
-	for line := range strings.SplitSeq(usage, "\n") {
-		for name, cycle := range want {
-			if strings.Contains(line, name) && !strings.Contains(line, cycle) {
-				t.Errorf("%s line lacks its cycle %q: %q", name, cycle, line)
-			}
+	blocks := dashboardBlocks(t, m)
+	for name, cycle := range map[string]string{"c2": "Oct 15 - Nov 15 UTC", "r2": "Oct 1 - Nov 1 America/Los_Angeles"} {
+		if rule, _, _ := strings.Cut(blocks[name], "\n"); !strings.Contains(rule, cycle) {
+			t.Errorf("%s rule lacks its cycle %q: %q", name, cycle, rule)
 		}
 	}
 }
 
-// TestDashboard_NoUsageLimits verifies a fleet that reports no usage leaves
-// the block out of the dashboard instead of drawing an empty heading.
-func TestDashboard_NoUsageLimits(t *testing.T) {
+// TestDashboard_RuleDropsTheCycleWhenCramped verifies a rule too narrow for a
+// backend's name and cycle together keeps the name and fits the width.
+func TestDashboard_RuleDropsTheCycleWhenCramped(t *testing.T) {
 	t.Parallel()
-	m := initialModel(&fakeLister{})
-	m.width, m.height = 120, 30
-	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{{Name: "b1", BytesUsed: 1}}})
-	if _, got := m.dashboardMeters(); got != "" {
-		t.Errorf("usage limits = %q, want nothing", got)
-	}
-	if strings.Contains(bodyText(m.dashboardBody()), "usage limits") {
-		t.Error("dashboard drew a usage-limits block for a fleet with none")
+	got := ruleLine("minio-a  healthy", "Oct 15 - Nov 15 America/Los_Angeles", 30)
+	if !strings.Contains(got, "minio-a") || strings.Contains(got, "Oct") || lipgloss.Width(got) != 30 {
+		t.Errorf("ruleLine = %q (%d wide), want the name alone across 30 cells", got, lipgloss.Width(got))
 	}
 }
 
-// TestDashboard_SummaryBeforeUsage verifies the summary renders above the
-// usage block, so a short terminal cuts off usage rows rather than it.
-func TestDashboard_SummaryBeforeUsage(t *testing.T) {
+// TestDashboard_ScrollsTheBackends verifies on a terminal too short for every
+// block that the summary stays at the top while the down key scrolls the
+// blocks, until the last backend comes into view.
+func TestDashboard_ScrollsTheBackends(t *testing.T) {
 	t.Parallel()
-	body := bodyText(dashboardModel(t).dashboardBody())
-	if s, u := strings.Index(body, "nearest limit"), strings.Index(body, "usage limits"); s < 0 || u < 0 || s > u {
-		t.Errorf("summary at %d, usage at %d, want the summary first:\n%s", s, u, body)
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 24
+	backends := make([]adminapi.BackendStatus, 12)
+	for i := range backends {
+		backends[i] = adminapi.BackendStatus{Name: fmt.Sprintf("backend-%02d", i), BytesUsed: 1,
+			UsageLimits: []adminapi.UsageMeter{{Kind: "egress", Used: 1, Limit: 10}}}
+	}
+	m.applyStatus(&adminapi.StatusResponse{DBHealthy: true, Backends: backends})
+
+	first, last := ruleRune+ruleRune+" backend-00", ruleRune+ruleRune+" backend-11"
+	view := m.contentView()
+	assertContains(t, view, "fleet storage", first)
+	if strings.Contains(view, last) {
+		t.Fatalf("every block fit a 24-row terminal, so nothing scrolls:\n%s", view)
+	}
+	for range 60 {
+		m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+		_ = m.contentView()
+	}
+	view = m.contentView()
+	assertContains(t, view, "fleet storage", last)
+	if strings.Contains(view, first) {
+		t.Errorf("scrolled to the end and the first block still shows:\n%s", view)
+	}
+	if got := lipgloss.Height(view); got != m.height {
+		t.Errorf("rendered %d lines, want %d", got, m.height)
+	}
+}
+
+// TestDashboard_SummaryAboveTheBlocks verifies the summary is its own pane
+// above the scrolling blocks, so scrolling never moves it.
+func TestDashboard_SummaryAboveTheBlocks(t *testing.T) {
+	t.Parallel()
+	body := dashboardModel(t).dashboardBody()
+	if first := body[0].render(body[0].height); !strings.Contains(first, "nearest limit") {
+		t.Errorf("first pane = %q, want the summary", first)
+	}
+	if last := body[len(body)-1]; !last.grows {
+		t.Error("the backend blocks are not the growing pane at the bottom")
 	}
 }
 
 // TestDashboard_Summary verifies the summary block reports every fleet-wide
-// figure from the three snapshots.
+// figure from the three snapshots, the fleet's storage counting only the
+// limits that exist.
 func TestDashboard_Summary(t *testing.T) {
 	t.Parallel()
-	got := dashboardModel(t).dashboardSummary()
+	m := dashboardModel(t)
+	got := m.dashboardSummary(m.dashboardColumns())
 	assertContains(t, got,
+		"fleet storage", "10.0 GiB / 10.0 GiB",
 		"nearest limit", "minio-a egress", "100%", "5.0 GiB / 5.0 GiB", "resets in",
 		"database", "healthy",
 		"factor 2", "12 under", "0 over",
@@ -260,9 +305,28 @@ func TestDashboard_QuietFleet(t *testing.T) {
 	m.applyReplication(&adminapi.ReplicationStatusResponse{Factor: 1})
 	m.applyCleanup(cleanupListings{queue: &adminapi.CleanupQueueResponse{}, dlq: &adminapi.CleanupDLQResponse{}})
 
-	assertContains(t, m.dashboardSummary(),
+	assertContains(t, m.dashboardSummary(m.dashboardColumns()),
 		"UNAVAILABLE", "disabled", "every copy encrypted", "nothing stored compressed",
 		"0 pending", "0 dead-lettered")
+}
+
+// TestDashboard_ReplicationNamesBucketFactors verifies a deployment at factor
+// 1 whose virtual buckets set their own reads as replicating, with how many
+// set their own beside the backlog.
+func TestDashboard_ReplicationNamesBucketFactors(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	snap := &adminapi.ReplicationStatusResponse{Replicating: true, UnderReplicated: 4}
+	snap.Factor, snap.BucketFactors = 1, map[string]int{"photos": 2}
+	m.applyReplication(snap)
+	got := m.dashboardReplication()
+	assertContains(t, got, "factor 1", "1 bucket sets its own", "4 under", "0 over")
+	if strings.Contains(got, "disabled") {
+		t.Errorf("replication = %q, want it running while a bucket sets a factor", got)
+	}
+
+	snap.BucketFactors["wal"] = 1
+	assertContains(t, m.dashboardReplication(), "2 buckets set their own")
 }
 
 // TestDashboard_StatusError verifies a failed status fetch takes the body.

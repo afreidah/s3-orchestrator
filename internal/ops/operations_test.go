@@ -384,7 +384,7 @@ func servicesLockedBy(t *testing.T, l testx.Locker) *Services {
 	ctrl := gomock.NewController(t)
 	store := opstest.NewMockRewriteStore(ctrl)
 	repl := opstest.NewMockReplicator(ctrl)
-	repl.EXPECT().Replicates().Return(true).AnyTimes()
+	repl.EXPECT().Factors().Return(runningFactors).AnyTimes()
 	return &Services{
 		Integrity: NewIntegrity(&IntegrityDeps{
 			Scrubber:   opstest.NewMockScrubberOps(ctrl),
@@ -1315,7 +1315,7 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 }
 
 // TestCountBacklog_ReportsBothSides asserts the backlog is the queue's two
-// sides, reported with the running factor.
+// sides, reported with the running factors.
 func TestCountBacklog_ReportsBothSides(t *testing.T) {
 	t.Parallel()
 	svc := replicationCounting(t, opstest.NewMockReplicator(gomock.NewController(t)),
@@ -1328,13 +1328,13 @@ func TestCountBacklog_ReportsBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountBacklog: %v", err)
 	}
-	if res != (Backlog{Factor: 2, Under: 3, Over: 7}) {
-		t.Errorf("res = %+v, want factor=2 under=3 over=7", res)
+	if res.Under != 3 || res.Over != 7 || !res.Factors.Equal(&runningFactors) {
+		t.Errorf("res = %+v, want %v under=3 over=7", res, &runningFactors)
 	}
 }
 
 // TestCountBacklog_DisabledReportsTheFactor asserts a disabled replication
-// reports its factor with ErrReplicationDisabled and reads nothing.
+// reports its factors with ErrReplicationDisabled and reads nothing.
 func TestCountBacklog_DisabledReportsTheFactor(t *testing.T) {
 	t.Parallel()
 	svc := NewReplication(ReplicationDeps{
@@ -1349,7 +1349,7 @@ func TestCountBacklog_DisabledReportsTheFactor(t *testing.T) {
 	})
 
 	res, err := svc.CountBacklog(context.Background())
-	if !errors.Is(err, ErrReplicationDisabled) || res != (Backlog{Factor: 1}) {
+	if !errors.Is(err, ErrReplicationDisabled) || res.Factors.Default != 1 || res.Under != 0 || res.Over != 0 {
 		t.Errorf("CountBacklog = %+v, %v; want factor 1 with ErrReplicationDisabled", res, err)
 	}
 }
@@ -1433,7 +1433,7 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 }
 
 // TestReplication_RebuildQueueReportsWhatItQueued asserts a rebuild runs at the
-// running factor and reports it with the keys the replicator queued, and
+// running factors and reports them with the keys the replicator queued, and
 // declines when replication is meaningless.
 func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
 	t.Parallel()
@@ -1445,8 +1445,8 @@ func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
 	svc := replicationOver(t, repl, opstest.NewMockOverReplicationCleaner(gomock.NewController(t)))
 
 	res, err := svc.RebuildQueue(context.Background())
-	if err != nil || res != (QueueRebuild{Factor: 2, Queued: 20}) {
-		t.Errorf("RebuildQueue = %+v, %v; want factor 2 and 20 queued", res, err)
+	if err != nil || res.Queued != 20 || !res.Factors.Equal(&runningFactors) {
+		t.Errorf("RebuildQueue = %+v, %v; want %v and 20 queued", res, err, &runningFactors)
 	}
 
 	off := NewReplication(ReplicationDeps{
@@ -1463,9 +1463,13 @@ func TestReplication_RebuildQueueReportsWhatItQueued(t *testing.T) {
 func replicatingNothing(t *testing.T) *opstest.MockReplicator {
 	t.Helper()
 	repl := opstest.NewMockReplicator(gomock.NewController(t))
-	repl.EXPECT().Replicates().Return(false).AnyTimes()
+	repl.EXPECT().Factors().Return(core.ReplicationFactors{Default: 1}).AnyTimes()
 	return repl
 }
+
+// runningFactors is what the stubbed replicators run at: the deployment at
+// factor 2 and one bucket keeping a single copy.
+var runningFactors = core.ReplicationFactors{Default: 2, Buckets: map[string]int{"logs": 1}}
 
 // emptyBacklog reports an empty replication queue.
 var emptyBacklog = backlogFunc(func(context.Context) (core.ReplicationBacklog, error) {
@@ -1480,10 +1484,10 @@ func replicationOver(t *testing.T, repl *opstest.MockReplicator, over OverReplic
 }
 
 // replicationCounting builds a replication service whose backlog count
-// comes from backlog, running at factor 2 under a lock it always takes.
+// comes from backlog, running at runningFactors under a lock it always takes.
 func replicationCounting(t *testing.T, repl *opstest.MockReplicator, over OverReplicationCleaner, backlog BacklogCounter) *Replication {
 	t.Helper()
-	repl.EXPECT().Replicates().Return(true).AnyTimes()
+	repl.EXPECT().Factors().Return(runningFactors).AnyTimes()
 	return NewReplication(ReplicationDeps{
 		Replicator: repl,
 		OverRep:    over,

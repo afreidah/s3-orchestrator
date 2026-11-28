@@ -104,26 +104,35 @@ func MultipartCap(n int) string {
 	return strconv.Itoa(n)
 }
 
-// StoredForm renders a bucket's stored form: its layers joined by commas,
-// "none" for a bucket storing objects with no layer, and "default" for one
-// taking the deployment's.
-func StoredForm(layers *[]string) string {
-	switch {
-	case layers == nil:
-		return "default"
-	case len(*layers) == 0:
-		return "none"
+// defaultMark follows a bucket setting it takes from the deployment.
+const defaultMark = " (default)"
+
+// StoredForm renders a bucket's stored form: its layers joined by commas, or
+// "none" for a bucket storing objects with no layer. A bucket setting none of
+// its own shows the deployment's, marked as the default.
+func StoredForm(layers *[]string, deployment []string) string {
+	if layers == nil {
+		return layerList(deployment) + defaultMark
 	}
-	return strings.Join(*layers, ",")
+	return layerList(*layers)
 }
 
-// ReplicationFactor renders a bucket's replication factor, and "default" for
-// zero, which takes the deployment's.
-func ReplicationFactor(n int) string {
+// ReplicationFactor renders a bucket's replication factor. Zero takes the
+// deployment's, which shows marked as the default.
+func ReplicationFactor(n, deployment int) string {
 	if n == 0 {
-		return "default"
+		return strconv.Itoa(deployment) + defaultMark
 	}
 	return strconv.Itoa(n)
+}
+
+// layerList joins stored-form layers with commas, and reads "none" for no
+// layer at all.
+func layerList(layers []string) string {
+	if len(layers) == 0 {
+		return "none"
+	}
+	return strings.Join(layers, ",")
 }
 
 // Figures renders what has been used against the limit, as "used / limit".

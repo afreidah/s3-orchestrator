@@ -135,7 +135,7 @@ func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRep
 		running.Replication = *cfg
 	}
 	h.d.Ops.Replication = ops.NewReplication(ops.ReplicationDeps{
-		Replicator: newReplicator(t, repl, running.Replication.Factor > 1),
+		Replicator: newReplicator(t, repl, core.ReplicationFactors{Default: running.Replication.Factor, Buckets: repl.buckets}),
 		OverRep:    newOverRep(t, over),
 		Backlog:    backlogStub{under: repl.pending, over: over.count, err: over.countErr},
 		Locker:     testx.Locker{},
@@ -213,10 +213,12 @@ func newDashboardOps(t *testing.T, data *dashboard.Data, err error) *MockDashboa
 }
 
 // replicatorStub configures the Replicator mock. failed stands for the
-// objects the cycle could not bring up to factor, and queued for the keys a
-// rebuild of the replication queue finds.
+// objects the cycle could not bring up to factor, queued for the keys a
+// rebuild of the replication queue finds, and buckets for the virtual buckets
+// setting a factor of their own.
 type replicatorStub struct {
 	cfg     *config.ReplicationConfig
+	buckets map[string]int
 	created int
 	failed  int
 	queued  int64
@@ -225,11 +227,11 @@ type replicatorStub struct {
 }
 
 // newReplicator builds a Replicator mock that reports cfg.created copies,
-// cfg.queued keys from a rebuild, and replicates when told it does.
-func newReplicator(t *testing.T, cfg replicatorStub, replicates bool) *opstest.MockReplicator {
+// cfg.queued keys from a rebuild, and runs at factors.
+func newReplicator(t *testing.T, cfg replicatorStub, factors core.ReplicationFactors) *opstest.MockReplicator {
 	t.Helper()
 	m := opstest.NewMockReplicator(gomock.NewController(t))
-	m.EXPECT().Replicates().Return(replicates).AnyTimes()
+	m.EXPECT().Factors().Return(factors).AnyTimes()
 	m.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 			trackN(observer, cfg.created, fixedKey(""))

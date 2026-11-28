@@ -90,18 +90,27 @@ type Credential struct {
 	Source      Source
 }
 
+// Defaults is what a bucket without settings of its own takes from the
+// deployment: the stored form of its new objects and its replication factor.
+type Defaults struct {
+	StoredForm        core.StoredFlags
+	ReplicationFactor int
+}
+
 // View is the whole of what a deployment has declared, from both sources.
 //
 // Shadowed holds stored buckets that config declares too. Config wins, so these
 // are left out of Buckets and nothing authorizes or routes against them. A
 // bucket moves out of the config file without a gap by writing the store row
-// first, then removing the config entry.
+// first, then removing the config entry. Defaults is what a bucket takes for
+// each of those settings it leaves unset.
 type View struct {
 	Buckets     []Bucket
 	Shadowed    []Bucket
 	Users       []User
 	Credentials []Credential
 	Notices     []Notice
+	Defaults    Defaults
 }
 
 // -------------------------------------------------------------------------

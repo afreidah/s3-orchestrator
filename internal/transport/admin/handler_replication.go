@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -48,9 +49,9 @@ func (h *Handler) handleReplicationRebuild(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicationRebuildResponse{
-		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
-		Factor:  res.Factor,
-		Queued:  res.Queued,
+		Outcome:            adminapi.Outcome{Status: adminstream.OutcomeOK},
+		ReplicationFactors: wireFactors(&res.Factors),
+		Queued:             res.Queued,
 	})
 }
 
@@ -73,9 +74,9 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-		Outcome: adminapi.Outcome{Status: adminstream.OutcomeOK},
-		Factor:  res.Factor,
-		Pending: res.Over,
+		Outcome:            adminapi.Outcome{Status: adminstream.OutcomeOK},
+		ReplicationFactors: wireFactors(&res.Factors),
+		Pending:            res.Over,
 	})
 }
 
@@ -90,7 +91,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 }
 
 // handleReplicationStatus returns the replication backlog, the under- and
-// over-replicated counts plus the factor, read from the replication queue so
+// over-replicated counts plus the factors, read from the replication queue so
 // every instance gives the same answer. With replication disabled the counts
 // are zero.
 func (h *Handler) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
@@ -100,9 +101,20 @@ func (h *Handler) handleReplicationStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicationStatusResponse{
-		Factor:          backlog.Factor,
-		UnderReplicated: backlog.Under,
-		OverReplicated:  backlog.Over,
-		ComputedAt:      time.Now(),
+		ReplicationFactors: wireFactors(&backlog.Factors),
+		Replicating:        backlog.Factors.Replicates(),
+		UnderReplicated:    backlog.Under,
+		OverReplicated:     backlog.Over,
+		ComputedAt:         time.Now(),
 	})
+}
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
+// wireFactors renders the running factors as the replication responses carry
+// them.
+func wireFactors(f *core.ReplicationFactors) adminapi.ReplicationFactors {
+	return adminapi.ReplicationFactors{Factor: f.Default, BucketFactors: f.Buckets}
 }

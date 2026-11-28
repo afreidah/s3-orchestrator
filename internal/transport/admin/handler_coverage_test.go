@@ -142,11 +142,13 @@ func TestHandleReplicationRebuild(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestHandleOverReplicationStatus_Configured exercises the factor > 1
-// path that the existing skip-only test never reaches.
+// path that the existing skip-only test never reaches, with a virtual bucket
+// setting a factor of its own reported beside the deployment's.
 func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, count: 7})
+	replicationWith(t, h, replicatorStub{buckets: map[string]int{"logs": 1}},
+		overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, count: 7})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -156,8 +158,8 @@ func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	}
 	var resp adminapi.OverReplicationStatusResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Pending != 7 || resp.Factor != 2 {
-		t.Errorf("got factor=%d pending=%d, want 2/7", resp.Factor, resp.Pending)
+	if resp.Pending != 7 || resp.Factor != 2 || resp.BucketFactors["logs"] != 1 {
+		t.Errorf("got factor=%d buckets=%v pending=%d, want 2, logs at 1, 7", resp.Factor, resp.BucketFactors, resp.Pending)
 	}
 	// Status reports "ok" on the configured branch so the field means the same
 	// thing here as on the endpoints that act.

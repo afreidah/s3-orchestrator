@@ -307,7 +307,7 @@
     <div class="settings">
       <span class="setting"><span class="setting-label">Buckets</span>{{range .Buckets}}<span class="tag">{{.}}</span>{{end}}</span>
       <span class="setting"><span class="setting-label">Routing</span>{{.Config.RoutingStrategy}}</span>
-      <span class="setting"><span class="setting-label">Replication</span>{{.Config.ReplicationFactor}}</span>
+      <span class="setting"><span class="setting-label">Replication</span>{{.Config.ReplicationFactor}}{{range $bucket, $factor := .Config.ReplicationBuckets}} <span class="tag">{{$bucket}} {{$factor}}</span>{{end}}</span>
       <span class="setting"><span class="setting-label">Rebalancer</span>{{if .Config.RebalanceEnabled}}<span class="toggle-on">on</span>{{.Config.RebalanceStrategy}}{{else}}<span class="setting-off">off</span>{{end}}</span>
       <span class="setting"><span class="setting-label">Rate limiting</span>{{if .Config.RateLimitEnabled}}<span class="toggle-on">on</span>{{else}}<span class="setting-off">off</span>{{end}}</span>
       <span class="setting"><span class="setting-label">Encryption</span>{{if .Config.EncryptionEnabled}}<span class="toggle-on">on</span>{{else}}<span class="setting-off">off</span>{{end}}</span>

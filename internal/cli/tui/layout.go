@@ -33,6 +33,10 @@ const tableCellPad = 2
 // rule beneath it, and one data row.
 const tableMinHeight = 3
 
+// ruleRune is the cell a block's opening rule is drawn with, the same line the
+// nav's border and the table headers use.
+var ruleRune = lipgloss.NormalBorder().Top
+
 // -------------------------------------------------------------------------
 // COLUMNS
 // -------------------------------------------------------------------------
@@ -179,6 +183,23 @@ func fieldBlock(width int, fields ...field) string {
 		lines[i] = fmt.Sprintf("%-*s %s", width, f.label, f.value)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ruleLine renders a horizontal rule width cells wide with left set into its
+// start and right into its end, so a block opens under a line naming it.
+// right is dropped when the two do not fit on the line together.
+func ruleLine(left, right string, width int) string {
+	edge := ruleStyle.Render(strings.Repeat(ruleRune, 2))
+	head := edge + " " + left + " "
+	tail := ""
+	if right != "" {
+		tail = " " + right + " " + edge
+	}
+	fill := width - lipgloss.Width(head) - lipgloss.Width(tail)
+	if fill < 1 {
+		tail, fill = "", width-lipgloss.Width(head)
+	}
+	return head + ruleStyle.Render(strings.Repeat(ruleRune, max(fill, 0))) + tail
 }
 
 // tablePane is a growing block over a table. The table is sized when it is

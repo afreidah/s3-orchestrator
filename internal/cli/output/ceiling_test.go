@@ -113,3 +113,37 @@ func TestMultipartCap(t *testing.T) {
 		t.Errorf("MultipartCap(4) = %q, want 4", got)
 	}
 }
+
+// TestStoredForm verifies a bucket's own layers render joined, an empty set
+// as none, and a bucket setting none of its own as the deployment's, marked as
+// the default.
+func TestStoredForm(t *testing.T) {
+	t.Parallel()
+	deployment := []string{"compressed", "hashed"}
+	for _, tc := range []struct {
+		layers     *[]string
+		deployment []string
+		want       string
+	}{
+		{&[]string{"encrypted"}, deployment, "encrypted"},
+		{&[]string{}, deployment, "none"},
+		{nil, deployment, "compressed,hashed (default)"},
+		{nil, nil, "none (default)"},
+	} {
+		if got := StoredForm(tc.layers, tc.deployment); got != tc.want {
+			t.Errorf("StoredForm(%v, %v) = %q, want %q", tc.layers, tc.deployment, got, tc.want)
+		}
+	}
+}
+
+// TestReplicationFactor verifies a bucket's own factor renders as itself and
+// zero as the deployment's, marked as the default.
+func TestReplicationFactor(t *testing.T) {
+	t.Parallel()
+	if got := ReplicationFactor(1, 2); got != "1" {
+		t.Errorf("ReplicationFactor(1, 2) = %q, want 1", got)
+	}
+	if got := ReplicationFactor(0, 2); got != "2 (default)" {
+		t.Errorf("ReplicationFactor(0, 2) = %q, want 2 (default)", got)
+	}
+}

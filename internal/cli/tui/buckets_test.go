@@ -92,22 +92,54 @@ func TestBucketsTable_ShowsWhoReachesEach(t *testing.T) {
 }
 
 // TestBucketsTable_ShowsTheStoredForm verifies a bucket with no stored form of
-// its own reads as taking the deployment's, one with an empty form as storing
-// no layer, and one naming layers as those layers.
+// its own reads as the deployment's marked as the default, one with an empty
+// form as storing no layer, and one naming layers as those layers.
 func TestBucketsTable_ShowsTheStoredForm(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		form *[]string
-		want string
+		form       *[]string
+		deployment []string
+		want       string
 	}{
-		{nil, "default"},
-		{&[]string{}, "none"},
-		{&[]string{"compressed", "hashed"}, "compressed,hashed"},
+		{nil, []string{"compressed", "encrypted"}, "compressed,encrypted (default)"},
+		{nil, nil, "none (default)"},
+		{&[]string{}, []string{"compressed"}, "none"},
+		{&[]string{"compressed", "hashed"}, nil, "compressed,hashed"},
 	} {
-		entry := &bucketEntry{Bucket: adminapi.Bucket{Name: "b", StoredForm: tc.form}}
-		if got := bucketRow(entry)[2]; got != tc.want {
-			t.Errorf("stored form %v renders %q, want %q", tc.form, got, tc.want)
+		entry := &bucketEntry{
+			Bucket:   adminapi.Bucket{Name: "b", StoredForm: tc.form},
+			defaults: adminapi.BucketDefaults{StoredForm: tc.deployment},
 		}
+		if got := bucketRow(entry)[2]; got != tc.want {
+			t.Errorf("stored form %v over %v renders %q, want %q", tc.form, tc.deployment, got, tc.want)
+		}
+	}
+}
+
+// TestBucketsTable_ShowsTheFactorInForce verifies a bucket setting no factor
+// reads as the deployment's marked as the default, sorts by that factor, and
+// one setting its own reads as that factor.
+func TestBucketsTable_ShowsTheFactorInForce(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 160, 20
+	m.applyBuckets(&adminapi.ProvisioningResponse{
+		Buckets: []adminapi.Bucket{
+			{Name: "photos", ReplicationFactor: 3},
+			{Name: "logs"},
+			{Name: "wal", ReplicationFactor: 1},
+		},
+		Defaults: adminapi.BucketDefaults{ReplicationFactor: 2},
+	})
+	want := map[string]string{"photos": "3", "logs": "2 (default)", "wal": "1"}
+	for i := range m.buckets.list.received {
+		e := &m.buckets.list.received[i]
+		if got := bucketRow(e)[3]; got != want[e.Name] {
+			t.Errorf("%s factor renders %q, want %q", e.Name, got, want[e.Name])
+		}
+	}
+	if got := bucketSorts["FACTOR"](&m.buckets.list.received[1], &m.buckets.list.received[0]); got >= 0 {
+		t.Errorf("logs at the default 2 sorts at or after photos at 3: %d", got)
 	}
 }
 
