@@ -6,7 +6,7 @@
 # Runs the orchestrator as a service job with its config read from a file when
 # the job is submitted. Secrets stay out of the file and reach the task as
 # environment variables, by default from the Nomad Variable at
-# nomad/jobs/s3-orchestrator. Production values are in s3-orchestrator.vars.hcl:
+# nomad/jobs/s3-orchestrator. Example values are in s3-orchestrator.vars.hcl:
 #   nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.191.0 s3-orchestrator.nomad.hcl
 # Clients need a max_kill_timeout of at least kill_timeout, or they cut the
 # drain short at their 30s default.
@@ -87,8 +87,9 @@ variable "image" {
 }
 
 variable "version" {
-  description = "Container image tag, such as v0.191.0"
+  description = "Container image tag, such as v0.191.0; a released job file defaults to its own release"
   type        = string
+  default     = ""
 
   validation {
     condition     = var.version != "" && var.version != "latest"
