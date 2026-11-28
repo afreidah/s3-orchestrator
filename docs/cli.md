@@ -476,7 +476,7 @@ export S3O_SECRET_ACCESS_KEY="$(your-secret-tool get secret-key)"
 s3-orchestrator tui
 ```
 
-![The TUI Dashboard, where it opens: a usage bar per backend and the fleet-wide backlogs](/docs/images/tui-dashboard.png)
+![The TUI Dashboard, where it opens: the fleet summary above a block per backend](/docs/images/tui-dashboard.png)
 
 ![The TUI Files section browsing a prefix](/docs/images/tui-files.png)
 

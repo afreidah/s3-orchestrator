@@ -18,7 +18,7 @@ Most applications talk to one S3 backend, which ties them to that provider's upt
 Clients see one endpoint and one namespace. The backends never learn the orchestrator exists - they see ordinary S3 calls, so any provider the AWS SDK can talk to works.
 
 <p align="center">
-  <img src="docs/images/tui-backends.png" alt="The terminal browser's Backends view: twelve backends listed with health, state flags, quota used against limit and object count, above the selected backend's endpoint, holdings, answering instance and usage against each limit" width="900">
+  <img src="docs/images/tui-backends.png" alt="The terminal browser's Backends view: fourteen backends listed with health, state flags, quota used against limit and object count, above the selected backend's endpoint, holdings, answering instance and usage against each limit" width="900">
 </p>
 
 <details>
